@@ -59,8 +59,8 @@ pub fn run(args: &SpeedrunArgs) -> u8 {
 }
 
 fn run_inner(args: &SpeedrunArgs) -> Result<u8, String> {
-    let rom =
-        std::fs::read(&args.rom).map_err(|e| format!("cannot read {}: {e}", args.rom.display()))?;
+    let rom = crate::bounded_read::read(&args.rom)
+        .map_err(|e| format!("cannot read {}: {e}", args.rom.display()))?;
     let mut nes =
         Nes::from_rom(&rom).map_err(|e| format!("cannot load {}: {e}", args.rom.display()))?;
     let mut host = SpeedrunHost::new(&SpeedrunOptions {
@@ -74,8 +74,8 @@ fn run_inner(args: &SpeedrunArgs) -> Result<u8, String> {
 
     let mut finished = false;
     if let Some(path) = &args.movie {
-        let bytes =
-            std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let bytes = crate::bounded_read::read(path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let movie = Movie::deserialize(&bytes)
             .map_err(|e| format!("{} is not a valid movie: {e}", path.display()))?;
         movie

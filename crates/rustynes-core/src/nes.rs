@@ -6539,6 +6539,65 @@ mod tests {
         assert_eq!(nes.nsf_current_song(), 2, "clamped to last song");
     }
 
+    /// v3.6.0 — a standard 60 Hz NSF must have its `play` called once per
+    /// frame. It was not, from v2.9.8 to v3.5.x: the driver enabled the vblank
+    /// NMI with its very first `$2000` write, inside the PPU's post-reset
+    /// warm-up window (v2.9.8 modelled it), so the write was dropped and no
+    /// NMI ever came; and it ran `CLI` without inhibiting the APU frame IRQ,
+    /// so the CPU then spun in the driver's `RTI` stub. Only `init` ever ran.
+    /// Found by the NSF ripper's gate (`nsf_rip`), which plays a ripped tune
+    /// back. The 50 Hz timer driver below already inhibited the frame IRQ and
+    /// needs no NMI, so it was unaffected.
+    #[test]
+    fn nsf_standard_rate_calls_play_every_frame() {
+        let mut f = synth_counting_nsf_50hz();
+        // Back to the hardware 60 Hz divider (0 = default): the NMI driver.
+        f[0x6E] = 0;
+        f[0x6F] = 0;
+        let mut nes = Nes::from_nsf(&f).expect("valid nsf");
+        for _ in 0..120 {
+            nes.run_frame();
+        }
+        // `play` increments $00. Two frames go to the warm-up wait, one to
+        // power-on's empty first frame; every other frame calls play once.
+        let calls = nes.peek(0x0000);
+        assert!(
+            (114..=118).contains(&calls),
+            "play ran {calls} times in 120 frames"
+        );
+        assert!(!nes.is_jammed());
+        // The frame IRQ is inhibited before `CLI`. Without that the NMI still
+        // reaches `play`, but between frames the CPU services an IRQ nobody
+        // acknowledges, through the `RTI` stub, for the rest of the run.
+        assert!(
+            !nes.apu_snapshot().frame_irq,
+            "the frame IRQ is never raised under the driver"
+        );
+    }
+
+    /// v3.6.0: the same 60 Hz NSF declaring MMC5 audio (header `$7B` bit 3).
+    /// The player's driver image sat at `$5000-$504F` with its NMI entry at
+    /// `$5015`, which is also the MMC5's status port; `NsfExpansion` answers
+    /// that port first, so the NMI fetched the status byte as its first
+    /// opcode and `play` never ran on any MMC5 NSF.
+    #[test]
+    fn an_mmc5_nsf_calls_play_every_frame() {
+        let mut f = synth_counting_nsf_50hz();
+        f[0x6E] = 0;
+        f[0x6F] = 0;
+        f[0x7B] = 0x08;
+        let mut nes = Nes::from_nsf(&f).expect("valid nsf");
+        for _ in 0..120 {
+            nes.run_frame();
+        }
+        let calls = nes.peek(0x0000);
+        assert!(
+            (114..=118).contains(&calls),
+            "play ran {calls} times in 120 frames on an MMC5 NSF"
+        );
+        assert!(!nes.is_jammed());
+    }
+
     /// A minimal non-60-Hz NSF whose `play` routine increments zero-page `$00`,
     /// so a test can count how many times the cycle-timer IRQ drove `play`.
     fn synth_counting_nsf_50hz() -> Vec<u8> {

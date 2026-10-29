@@ -365,6 +365,19 @@ fn real_time_running_pauses_and_stops_at_breakpoints() {
     );
     // Observation still answers while running.
     ok(&h, "cpu_state", Value::Null);
+    // So does read-only Lua (v3.5.1, `T-V350-REVIEW-RESIDUE`: Antigravity on
+    // #624 asked whether it is safe mid-run). It runs under the session lock
+    // the runner takes for every frame, so it sees one frame boundary and the
+    // runner waits; its breach check compares two snapshots taken under that
+    // lock. The `movie_verify` below then proves the run's journal is intact.
+    let lua = call(
+        &h,
+        "lua_eval",
+        json!({ "source": "emu.onFrame(function() emu.log(emu.read(0)) end)" }),
+    )
+    .expect("Lua answers while running");
+    assert_eq!(lua.json["ok"], true, "{}", lua.json);
+    assert_eq!(lua.json["state_unchanged"], true, "{}", lua.json);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     while h.is_running() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));

@@ -132,7 +132,8 @@ only what needs cpal.
 
 - **Battery saves** (`BatterySave.swift`): `Application Support/RustyNES/battery/<rom-sha256>.sav`,
   the desktop's and Android's rules (battery bit only; size checked before
-  reading; a wrong-size file never loaded or overwritten; atomic writes). Loaded
+  reading; a wrong-size file never loaded or overwritten; atomic writes, durable
+  from v3.6.0 through `DurableWrite`). Loaded
   before the first frame, compared once a second, written on close, on a game
   switch, and inside a background task when the app backgrounds.
 - **Background tasks** (`BackgroundTask.swift`, IOS-04): CloudKit uploads and the
@@ -430,6 +431,27 @@ persistence; no iOS or bridge source changed after it; the v2.9.7 Swift's
 run was 37242884341 on `c0b04195`) **and none of it has run on a device**;
 the Rust bridge and the Android half are tested. The device checks are
 rows T5-T7, T10 and T12 of `docs/mobile-v2.9.3-run-sheet.md`.
+
+**Durable writes and the FDS disk check (v3.6.0, `T-IOS-DURABLE-WRITE`,
+`T-IOS-FDS-PERIODIC`).** Every file the app writes goes through
+`DurableWrite.write(_:to:)` (`DurableWrite.swift`), the Swift counterpart of the
+desktop's `atomic_write.rs`: an exclusively created sibling scratch file named
+with the pid and a counter, every byte written, `fcntl(F_FULLFSYNC)` (falling
+back to `fsync`), `rename(2)` over the target, and an `fsync` of the directory;
+on a failure the scratch file is removed and the error propagates. Foundation's
+`.atomic` option, used until then, renames a scratch file into place but syncs
+neither it nor the directory, so a power loss could leave an empty or
+truncated save under the new name. FDS saves, battery saves, per-game
+overrides, movies, HD packs and palettes (the ticket's list) and every other
+writer (save states, the library index, the RA sidecar, the key migration,
+crash reports) use it. An FDS disk is now also checked **once a second** while
+a game runs (`AppModel.startFdsPoll`, `FdsDiskSaver`, writing off the main
+actor and retrying a failed write), as Android has since #605's review; until
+v3.6.0 iOS wrote it only on backgrounding, a game switch and close.
+`crates/rustynes-test-harness/tests/ios_source_audit.rs` pins the wiring (no
+other Swift file writes with `Data.write(to:)`, the sequence's order, the
+ticket's sites, the timer's life). **Not compiled on the machine that wrote it**
+(Linux); the device rows are T13-T14 of `docs/mobile-v2.9.3-run-sheet.md`.
 
 **The game database's load-time corrections (v2.9.8).** The shared bridge now
 corrects a cartridge before the core parses it (`rustynes_gamedb::correct_rom`:

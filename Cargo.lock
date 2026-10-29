@@ -780,9 +780,9 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "clipboard-win"
-version = "5.4.1"
+version = "5.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4"
+checksum = "052af7878466feccda12ba7a6a67d019d712f296809559b47c12c8cc196d3a9a"
 dependencies = [
  "error-code",
 ]
@@ -1162,9 +1162,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.3"
+version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03bb0e1cc970d482d121d9a1744999169b69a07470b3d644a7894e53fcaf4574"
+checksum = "a2376ffd6f96d8a9db59875b4b6b0237d6900b5baf64279714e05493ce64828a"
 dependencies = [
  "cmov",
 ]
@@ -1903,6 +1903,15 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
  "windows",
+]
+
+[[package]]
+name = "gimli"
+version = "0.34.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1033caf0b349c518623b5396bfb2cf0bddf44f0306d543a250e5743297aafd10"
+dependencies = [
+ "stable_deref_trait",
 ]
 
 [[package]]
@@ -3373,6 +3382,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd229a0361b9d0d4396176e02d65897f487eebeab7caa6d443855ee152ca0b9c"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "ogg"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4512,7 +4530,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-android"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "android-activity",
  "android_logger",
@@ -4530,7 +4548,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-apu"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -4543,7 +4561,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cheevos"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "cc",
  "libc",
@@ -4552,7 +4570,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-core"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -4569,7 +4587,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-cpu"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -4579,8 +4597,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustynes-dap"
+version = "3.6.0"
+dependencies = [
+ "base64 0.23.1",
+ "gimli",
+ "object",
+ "rustynes-core",
+ "serde_json",
+]
+
+[[package]]
 name = "rustynes-frontend"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "anstyle",
  "arboard",
@@ -4641,18 +4670,18 @@ dependencies = [
 
 [[package]]
 name = "rustynes-gamedb"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "rustynes-core",
 ]
 
 [[package]]
 name = "rustynes-gfx-shaders"
-version = "3.5.0"
+version = "3.6.0"
 
 [[package]]
 name = "rustynes-hdpack"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "lewton",
  "png",
@@ -4663,7 +4692,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-ios"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "bytemuck",
  "cpal",
@@ -4677,7 +4706,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-libretro"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "libc",
  "rust-libretro",
@@ -4687,7 +4716,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mappers"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -4699,7 +4728,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mcp"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "base64 0.23.1",
  "hex",
@@ -4716,7 +4745,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-mobile"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "getrandom 0.2.17",
  "rustynes-core",
@@ -4733,7 +4762,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-netplay"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "criterion",
  "futures-util",
@@ -4754,7 +4783,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-ppu"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "bitflags 2.13.2",
  "criterion",
@@ -4766,21 +4795,21 @@ dependencies = [
 
 [[package]]
 name = "rustynes-probe"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "rustynes-core",
 ]
 
 [[package]]
 name = "rustynes-ra"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "rustynes-cheevos",
 ]
 
 [[package]]
 name = "rustynes-script"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "mlua",
  "piccolo",
@@ -4791,7 +4820,7 @@ dependencies = [
 
 [[package]]
 name = "rustynes-test-harness"
-version = "3.5.0"
+version = "3.6.0"
 dependencies = [
  "insta",
  "png",

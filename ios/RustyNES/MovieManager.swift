@@ -48,7 +48,7 @@ final class MovieManager: ObservableObject {
         ensureDirectory()
         let stem = Self.fileStem(gameName: gameName)
         let url = uniqueURL(stem: stem)
-        try data.write(to: url, options: .atomic)
+        try DurableWrite.write(data, to: url)
         reload()
         return url
     }

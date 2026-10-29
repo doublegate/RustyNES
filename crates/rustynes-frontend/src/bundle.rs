@@ -360,7 +360,8 @@ pub fn read_rom_or_bundle(
     slot: usize,
 ) -> Result<(Vec<u8>, Option<LoadedBundle>), BundleError> {
     if !is_bundle_path(path) {
-        let bytes = std::fs::read(path).map_err(|e| BundleError::Io(path.to_path_buf(), e))?;
+        let bytes =
+            crate::bounded_read::read(path).map_err(|e| BundleError::Io(path.to_path_buf(), e))?;
         return Ok((bytes, None));
     }
     let bundle = Bundle::open(path)?;

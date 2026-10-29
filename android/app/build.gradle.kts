@@ -44,16 +44,23 @@ val rustAbis: List<String> = (builtAbis + shipAbi).distinct()
 
 android {
     namespace = "com.doublegate.rustynes"
-    // v1.8.8 "Atlas" (Workstream A): Android 16 QPR (API 37). The Play mandate
-    // requires new submissions/updates to target Android 16 (API 36) after
-    // 2026-08-31; we compile against the newer 37 SDK (AGP 9.2 supports it) so the
+    // v1.8.8 "Atlas" (Workstream A): compile against API 37 (Android 17; the
+    // comment here said "Android 16 QPR" until v3.6.0, but the SDK platform's
+    // own source.properties reads "Android SDK Platform 17", API 37.0), so the
     // latest AndroidX (core 1.19 / lifecycle 2.11, which require compileSdk 37) link.
     compileSdk = 37
 
     defaultConfig {
         applicationId = "com.doublegate.rustynes"
         minSdk = 26 // AAudio floor.
-        targetSdk = 36 // Play mandate (Android 16) from 2026-08-31.
+        // v3.6.0 (`T-ANDROID-API37`): Android 17. Two behaviours follow it, both
+        // handled: local-network traffic needs the ACCESS_LOCAL_NETWORK runtime
+        // permission (LAN netplay, LocalNetwork.kt), and background audio needs
+        // a while-in-use foreground service, which RustyNES does not have because
+        // it plays only while visible or in PiP (audioMayPlay, AudioPacing.kt).
+        // Play's API 37 deadline is about 2027-08-31 (an inference from the
+        // yearly pattern; it was API 36 from 2026-08-31).
+        targetSdk = 37
         // v2.0.2 was a desktop-only PPU/AccuracyCoin cut, so the Android host stayed at
         // 20001/"2.0.1"; v2.0.3 bumped it to 20003. v2.0.4 "Harbor" is the Android
         // release-candidate cut (release signing scaffold + crash/ANR hardening +
@@ -65,8 +72,8 @@ android {
         // `scripts/release-automation/bump_release.py` from now on, starting
         // with the 3.0.0 cut. versionCode = MAJOR * 10000 + MINOR * 100 +
         // PATCH, so 20909 still rises past 20004.
-        versionCode = 30500
-        versionName = "3.5.0"
+        versionCode = 30600
+        versionName = "3.6.0"
         // No abiFilters here — set per buildType so release ships arm64 only
         // while debug keeps x86_64 for the emulator.
         // PLAY_BUILD is set per-flavor below (`false` for `foss`, `true` for `play`),
@@ -460,6 +467,18 @@ dependencies {
     // from the Macrobenchmark module. The baselineprofile plugin wires the produced
     // `baseline-prof.txt` / `startup-prof.txt` into this variant's merged assets.
     baselineProfile(project(":baselineprofile"))
+}
+
+// v3.6.0: some JVM tests read sources rather than classes -- the manifest's
+// ACCESS_LOCAL_NETWORK declaration, this file's targetSdk, MainActivity's
+// wiring (LocalNetworkAccessTest, AudioPacingTest). Declared as inputs so a
+// change to any of them re-runs the tests: without this an edit to the manifest
+// alone left the test task UP-TO-DATE and its old pass standing (found by the
+// v3.6.0 mutation pass, where removing the permission was "not caught").
+tasks.withType<Test>().configureEach {
+    inputs.file(layout.projectDirectory.file("src/main/AndroidManifest.xml"))
+    inputs.file(layout.projectDirectory.file("build.gradle.kts"))
+    inputs.dir(layout.projectDirectory.dir("src/main/java"))
 }
 
 // v1.8.8 "Atlas" (Workstream J): how :app consumes the generated profile.

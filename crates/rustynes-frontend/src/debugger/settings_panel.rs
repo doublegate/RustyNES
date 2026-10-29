@@ -1011,7 +1011,7 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
                 && let Some(path) = rfd::FileDialog::new()
                     .add_filter(crate::t!(SetNesPaletteFilter), &["pal"])
                     .pick_file()
-                && let Some(base) = std::fs::read(&path)
+                && let Some(base) = crate::bounded_read::read(&path)
                     .ok()
                     .and_then(|b| crate::config::parse_pal(&b))
             {
@@ -1313,7 +1313,7 @@ pub fn shader_stack_section(
                         .add_filter(crate::t!(SetRaPresetFilter), &["slangp", "cgp"])
                         .pick_file()
                 {
-                    match std::fs::read_to_string(&path) {
+                    match crate::bounded_read::read_to_string(&path) {
                         Ok(text) => match crate::slang_preset::import_preset(&text) {
                             Ok(result) => {
                                 let mapped = result.stack.passes.len();

@@ -251,6 +251,86 @@ pub enum CliCommand {
         #[arg(long, value_name = "N", default_value_t = crate::dump_check::DEFAULT_FRAMES)]
         frames: u32,
     },
+
+    /// Write each audio channel as its own WAV: pulse 1 and 2, triangle,
+    /// noise, DMC, the cartridge's expansion chip, and the mixer's
+    /// interaction term, beside the console's mix.
+    ///
+    /// v3.6.0 (`T-AUDIO-STEMS`). Headless, one emulation pass. The eight
+    /// files are 32-bit float, mono and the same length; the seven tracks sum
+    /// to the mix. See `docs/audio-stems.md`.
+    ///
+    /// Exit codes: 0 written, 4 the re-rendered mix differs from the
+    /// console's (written, but not to be trusted), 1 an error.
+    Stems {
+        /// The ROM, NSF or FDS image.
+        #[arg(value_name = "ROM", value_hint = clap::ValueHint::FilePath)]
+        rom: PathBuf,
+
+        /// The directory to write the WAVs into (created if missing).
+        #[arg(long, value_name = "DIR", default_value = "stems", value_hint = clap::ValueHint::DirPath)]
+        out: PathBuf,
+
+        /// A `.rnm` movie to replay instead of running input-free frames.
+        #[arg(long, value_name = "MOVIE", value_hint = clap::ValueHint::FilePath, conflicts_with = "frames")]
+        movie: Option<PathBuf>,
+
+        /// Input-free frames to run (default 3600, one NTSC minute).
+        #[arg(long, value_name = "N")]
+        frames: Option<u64>,
+
+        /// Output sample rate in Hz.
+        #[arg(long, value_name = "HZ", default_value_t = crate::stems_cli::DEFAULT_RATE)]
+        rate: u32,
+
+        /// The analog output filter: nes (front-loader RF), famicom or clean.
+        #[arg(long, value_name = "MODEL", default_value = "nes", value_parser = crate::stems_cli::parse_filter)]
+        filter: rustynes_core::rustynes_apu::FilterModel,
+
+        /// The FDS BIOS, for a disk image.
+        #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+        bios: Option<PathBuf>,
+    },
+
+    /// Find a game's music driver and write it as an NSF.
+    ///
+    /// v3.6.0 (`T-AUDIO-STEMS`). Traces the run, proposes the driver's init
+    /// and play routines with the evidence for each, and with `--out` writes
+    /// the NSF, plays it back and checks that its play calls make the game's
+    /// APU writes. Boards without PRG banking only (mappers 0 and 3).
+    ///
+    /// Exit codes: 0 proposed (and, with `--out`, written and verified), 4 no
+    /// driver found, a board that cannot be imaged, or a failed check, 1 an
+    /// error.
+    NsfRip {
+        /// The cartridge ROM.
+        #[arg(value_name = "ROM", value_hint = clap::ValueHint::FilePath)]
+        rom: PathBuf,
+
+        /// Write the NSF here.
+        #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+        out: Option<PathBuf>,
+
+        /// A `.rnm` movie to replay (to reach the music).
+        #[arg(long, value_name = "MOVIE", value_hint = clap::ValueHint::FilePath, conflicts_with = "frames")]
+        movie: Option<PathBuf>,
+
+        /// Input-free frames to trace (default 3600).
+        #[arg(long, value_name = "N")]
+        frames: Option<u64>,
+
+        /// The NSF's title (31 bytes at most).
+        #[arg(long, value_name = "TEXT", default_value = "")]
+        name: String,
+
+        /// The NSF's artist.
+        #[arg(long, value_name = "TEXT", default_value = "")]
+        artist: String,
+
+        /// The NSF's copyright line.
+        #[arg(long, value_name = "TEXT", default_value = "")]
+        copyright: String,
+    },
 }
 
 /// Parse `std::env::args`, returning the typed [`Cli`].
@@ -628,6 +708,65 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn stems_and_nsf_rip_subcommands_parse() {
+        let cli = Cli::try_parse_from([
+            "rustynes", "stems", "g.nes", "--out", "d", "--frames", "60", "--rate", "44100",
+            "--filter", "famicom",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(CliCommand::Stems {
+                rom,
+                out,
+                movie,
+                frames,
+                rate,
+                filter,
+                bios,
+            }) => {
+                assert_eq!(rom, PathBuf::from("g.nes"));
+                assert_eq!(out, PathBuf::from("d"));
+                assert_eq!(movie, None);
+                assert_eq!(frames, Some(60));
+                assert_eq!(rate, 44_100);
+                assert_eq!(filter, rustynes_core::rustynes_apu::FilterModel::Famicom);
+                assert_eq!(bios, None);
+            }
+            other => panic!("expected stems, got {other:?}"),
+        }
+        assert!(
+            Cli::try_parse_from(["rustynes", "stems", "g.nes", "--filter", "loud"]).is_err(),
+            "an unknown filter is a usage error"
+        );
+        assert!(
+            Cli::try_parse_from([
+                "rustynes", "stems", "g.nes", "--movie", "m.rnm", "--frames", "1"
+            ])
+            .is_err(),
+            "a movie and a frame count conflict"
+        );
+        let cli = Cli::try_parse_from([
+            "rustynes", "nsf-rip", "g.nes", "--out", "g.nsf", "--name", "T",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(CliCommand::NsfRip {
+                rom,
+                out,
+                name,
+                frames,
+                ..
+            }) => {
+                assert_eq!(rom, PathBuf::from("g.nes"));
+                assert_eq!(out, Some(PathBuf::from("g.nsf")));
+                assert_eq!(name, "T");
+                assert_eq!(frames, None);
+            }
+            other => panic!("expected nsf-rip, got {other:?}"),
+        }
     }
 
     #[test]

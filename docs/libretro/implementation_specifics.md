@@ -26,8 +26,25 @@ test, the test is named; the tests are the spec.
 * **Controller info:** ports 1-2 offer the NES controller or the Zapper;
   ports 3-4 the controller only (Four Score players, or a Vs. cabinet's second
   console).
-* **Core option:** `rustynes_four_score` (`disabled|enabled`), declared with
-  `SET_VARIABLES` and read in `on_options_changed`.
+* **Emulation options (v3.6.0, `T-LIBRETRO-EMU-OPTIONS`):**
+  `rustynes_cpu_overclock` (`1`-`4`, labelled x1 (stock) to x4) and
+  `rustynes_remove_sprite_limit` (`disabled|enabled`), in the "Emulation"
+  category: the desktop's v3.1.0 options (`Nes::set_cpu_overclock`,
+  `Nes::set_sprite_limit_disabled`). Applied at the top of every frame,
+  compare-then-set, to the console or both consoles of a cabinet, as the
+  desktop applies them (`apply_console_options`), and recorded in every save
+  state (see "Save States"). At their defaults nothing is written, and the
+  frames equal a bare console's (`the_default_options_leave_the_output_byte_identical`).
+* **Core options:** one table (`crates/rustynes-libretro/src/options.rs`),
+  declared with `SET_CORE_OPTIONS_V2` (categories, sublabels, value labels)
+  when `GET_CORE_OPTIONS_VERSION` reports 2 or more, else with
+  `SET_VARIABLES` (v3.6.0); read by key in `on_options_changed` either way.
+  `SET_CORE_OPTIONS_V2`'s return value says only whether the frontend shows
+  categories (libretro.h), so `false` from it is not a refusal. A version-1
+  frontend gets `SET_VARIABLES`, not v1: v1 adds no categories and every v1
+  frontend accepts v0. Keys never change once shipped; the v3.5.0 key,
+  `rustynes_four_score` (`disabled|enabled`), keeps its v0 string byte for
+  byte (`core_options_v2_with_a_v0_fallback_keep_every_key`).
 * **Disk control:** registered, for FDS side swapping.
 
 ## Game Loading (`retro_load_game`)
@@ -81,6 +98,28 @@ spans about `-0.385..0.223` and expansion audio reaches further (Namco 163,
 (`expansion_audio_is_not_clipped`). The frontend's dynamic rate control
 resamples. While RetroArch fast-forwards, the conversion is skipped.
 
+**Float audio (v3.6.0).** At the end of `retro_load_game` the core asks
+`RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT` (`85 |
+RETRO_ENVIRONMENT_EXPERIMENTAL`). The command is newer than the vendored
+`libretro.h`, so its number and the two types it uses
+(`retro_audio_sample_batch_float_t`, `struct
+retro_audio_sample_float_callback`) are transcribed in `lib.rs` from upstream's
+header (`libretro/RetroArch`, `libretro-common/include/libretro.h`, added by
+commit `28f4c9c6a361` on 2026-06-29; MIT, read at `master` on 2026-10-23). When
+the frontend answers `true` with a callback, every sample of that game goes
+through it as the mixer made it (`sample_to_f32`: the same full scale `1.0`,
+clamped to libretro's `[-1.0, 1.0]`, NaN as `0.0`), duplicated to stereo, and
+no sample goes through the `int16_t` callback, as libretro.h requires ("must
+not mix int16 and float batch calls"). The choice holds for the loaded game;
+the next load asks again, and unloading drops the callback, which libretro.h
+says is valid only until `retro_unload_game`. A frontend that answers `false`,
+whatever it left in the struct, or does not know the command, gets the
+`int16_t` stream byte for byte as before: no RetroArch release offers the
+command yet (1.22.2, 2025-11, predates it). Tests:
+`float_audio_when_offered_and_the_int16_stream_unchanged_when_not` (a tone
+cartridge against a bare console's samples, for each kind of frontend) and
+`float_samples_keep_the_int16_scale_and_saturate_the_same_way`.
+
 ## Save States (`retro_serialize` / `retro_unserialize`)
 
 For a single console, `retro_serialize_size` is the loaded state's size plus
@@ -92,6 +131,42 @@ save-state reader treats an all-zero tail as padding. The snapshot that
 measures the size at load is taken into the buffer `retro_serialize` reuses,
 with that headroom reserved for a single console, so no serialize reallocates it (v2.9.2 audit
 AUD-17; `no_serialize_reallocates_the_buffer_sized_at_load`).
+
+**The options record (v3.6.0, `T-LIBRETRO-EMU-OPTIONS`).** The last 16 bytes
+of every state the core writes record the options that change what the
+console does: `RNLROPTS`, a layout version (1), a flags byte (bit 0 Four
+Score, bit 1 sprite limit removed), the CPU overclock (1-4), the Vs. DIP
+switches forced and their positions, three zero bytes
+(`options::OptionValues::trailer`). `retro_serialize_size` includes them. The
+desktop records the same options in a movie's header and a netplay
+handshake (`HardwareOptions`, `config_digest`); a libretro frontend replays a
+movie from a state and starts a netplay peer from the host's state, so the
+state is where they have to be. `retro_unserialize` applies a state's record
+with it, replacing the menu's values until the frontend next reports an
+option change, and says so in the log when they differ. The overclock goes in
+before the restore, because the state holds the position inside the
+overclocked cycle pattern and the core keeps a restored position only under a
+multiplier that could have produced it; a refused restore puts the
+multiplier and the machine back. A state without a record (every state from
+before v3.6.0: its last 16 bytes are zero padding, or a cabinet's section
+data) loads as before and leaves the options alone; a record with a value no
+menu offers (an overclock of 9, a DIP position outside its mask, a non-zero
+reserved byte) refuses the state. Tests: `a_state_carries_its_emulation_options`,
+`states_without_a_record_load_and_bad_records_refuse`,
+`tests::a_refused_restore_under_a_new_multiplier_puts_the_console_back`,
+`tests::a_cabinet_restores_under_the_state_multiplier_on_both_consoles`.
+
+**Found, not fixed: a cabinet's state under the overclock.** A Vs.
+`DualSystem` state saved and restored at x2, with no option change at all,
+runs on to a state ten frames later that differs from the straight run's in
+64 bytes: the two consoles' OAM-decay ages (32 `u64` each, encoded as
+`dot_counter / 3 - timestamp`), each one larger after the restore. At x1 the
+round trip is exact, and a single console's (slim) state is exact at x2. The
+decay model is off by default, so the ages are inert and the game computes
+the same thing, but RetroArch's netplay compares state CRCs and would report
+a desync. It is a core issue, outside this wrapper; the expected-fail probe
+`a_cabinet_state_round_trips_byte_for_byte_under_the_overclock` (`#[ignore]`)
+pins it.
 
 `retro_unserialize` refuses a state, returns `false`, and leaves the running
 game exactly as it was (re-audit NL-01;

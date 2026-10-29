@@ -26,6 +26,269 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-10-28 - "Octave" (the noise channel at its documented pitch, PAL and Dendy at full speed on the MiSTer core, a source-level debugger, audio stems and NSF ripping, and libretro Core Options v2)
+
+### Breaking
+
+- **Emulation epoch 8**: movies recorded on v3.5.1 (epoch 7) are refused,
+  and a v3.5.1 netplay peer is refused, each with a message naming both
+  epochs. The two NSF fixes below change what the core outputs for an NSF
+  from the same inputs: 60 Hz NSFs call `play` every frame again, and MMC5
+  NSFs play at all. No recorded test output moved (no golden or fingerprint
+  covers an NSF), but a movie of an NSF would otherwise replay differently
+  without warning (the maintainer's call, 2026-10-24). The noise-channel
+  fix below changes the sound of every game that uses the noise channel,
+  which the epoch also covers. Pictures and timing are unchanged; save
+  states are unaffected.
+- **MiSTer core: a v3.5.x save state is refused on both builds.** PAL and
+  Dendy need a wider PPU access counter, so the save-state chain is one bit
+  longer (4,098 bits on the die, 4,737 off it) and the layout fingerprint
+  moved; an older state is refused for its header rather than misread.
+
+### Added
+
+- **The libretro core declares its options as Core Options v2**, with
+  categories, a sublabel per option and a label per value, when the frontend
+  reports core-options version 2 or more
+  (`RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION`); any other frontend gets
+  `SET_VARIABLES` as before (`T-LIBRETRO-OPTIONS-V2`). Both forms come from one
+  table, so their keys, values and defaults cannot differ, and the Four Score
+  option keeps its key and its v3.5.0 `SET_VARIABLES` string byte for byte: a
+  frontend stores the user's choice by key. The C-ABI harness answers versions
+  2, 1 and none and checks which command each gets, that the keys match the
+  v3.5.0 list, and that every v2 option has a category, a sublabel and labelled
+  values.
+- **Vs. System DIP switches as libretro core options** (LR-03): eight options,
+  `rustynes_vs_dip_1` to `_8`, each "Game default" (the Vs. database's factory
+  setting, which is what the core applied before and still applies by
+  default), Off or On. A forced switch replaces that bit of the factory bank on
+  a Vs. cartridge and on both consoles of a `DualSystem` cabinet, each against
+  its own bank. A C-ABI test reads the switches back through `$4016` / `$4017`
+  on a probe cartridge and compares with a bare console set to the same bank.
+- **The CPU overclock and the sprite-limit option in the libretro core**
+  (`T-LIBRETRO-EMU-OPTIONS`): `rustynes_cpu_overclock` (x1 to x4) and
+  `rustynes_remove_sprite_limit`, the desktop's v3.1.0 options, in an
+  "Emulation" category. A C-ABI test counts how far a counting cartridge gets
+  in ten frames (twice as far at x2, four times at x4) and counts the pixels of
+  sixteen sprites on one line (64 stock, 128 with the option); at their
+  defaults the frames are a bare console's, byte for byte.
+- **Float audio for libretro frontends that offer it**: the core asks for
+  `GET_AUDIO_SAMPLE_BATCH_FLOAT` (added to upstream `libretro.h` on 2026-06-29,
+  transcribed into the core because the vendored header predates it) at each
+  load, and when the frontend gives a float callback it sends the mixer's
+  samples unconverted, at the same full scale, for that game. Every other
+  frontend, which today is every released one, gets the `int16_t` stream byte
+  for byte as before; a C-ABI test compares both streams with a bare console's
+  samples.
+- **A source-level debugger for homebrew, `rustynes-dap`** (`T-DEBUG-DAP`,
+  ADR 0049, `docs/dap-debugger.md`): a Debug Adapter Protocol server on stdio
+  that an editor launches, reading cc65's `ld65 --dbgfile` output and the
+  DWARF in llvm-mos's ELF. Breakpoints on source lines, functions and
+  addresses; `next`, `stepIn`, `stepOut`, instruction steps and `pause`; a
+  call stack recorded from frame hooks with each caller's call line;
+  parameters and locals per frame, globals, registers, hover evaluation and
+  `readMemory`. It drives the core's own exec breakpoints, and a stop adds no
+  cycle: a debugged machine equals the bare core byte for byte at the same
+  stop. With `--gdb 127.0.0.1:<port>` it is instead a GDB Remote Serial
+  Protocol stub, loopback only, with a target description in llvm-mos's DWARF
+  register order (`rcN` / `rsN` added from an ELF). Neither protocol can
+  write memory or registers. Gate: a scripted DAP client stops a cc65 and an
+  llvm-mos build of the new fixture `tests/roms/dap/dapdemo.c` (CC0-1.0,
+  built by `build.py`, ROMs and debug files committed) at a source
+  breakpoint, steps a line and reads `v == 5`, `r == 8`, `main`'s `local`
+  and the global `counter`; the new CI job `dap-fixtures` rebuilds the
+  fixtures with cc65 at commit `034f73a9e1` and the llvm-mos SDK v23.3.0 and
+  reruns the tests on that build. 14 mutants, all caught (three after the
+  tests were extended). Not done: no released GDB or LLDB has a MOS target,
+  so the stub has only been driven by the tests' protocol client; no VS Code
+  extension ships (the page has a `package.json` sketch, untried in VS Code);
+  cc65 records no C types, so cc65 variables show as one byte. New
+  dependencies `gimli` and `object` (MIT / Apache-2.0), reached only from
+  `rustynes-dap`.
+- **Audio stems** (`T-AUDIO-STEMS`): `rustynes stems <ROM>` writes pulse 1,
+  pulse 2, triangle, noise, DMC and the cartridge's expansion chip (VRC6, VRC7,
+  Namco 163, Sunsoft 5B, MMC5, FDS, or an NSF's chips) as separate 32-bit float
+  WAVs beside the console's mix, from one emulation pass. The stems are
+  re-rendered offline from the APU's existing per-cycle mix trace, each source
+  alone through the console's own mixer, band-limited buffer and filter, so
+  nothing is added to the APU's per-cycle work and a run without the capture
+  is unchanged. The 2A03 mixer is non-linear, so a seventh track carries its
+  interaction term and the seven sum to the mix (largest error measured
+  3.6e-7 over 650 frames of the VRC6 test ROM, f32 rounding). Every run checks
+  that its re-rendered mix equals the console's output bit for bit, and the
+  tests check each stem against the console with only that channel unmasked
+  (0 differing samples for all five 2A03 channels, the VRC6 and the FDS).
+  An NSF with several chips gets them summed into one expansion stem, and a
+  chip's own voices are not split. Library API: `rustynes_core::stems`
+  (`debug-hooks`). See `docs/audio-stems.md`.
+- **NSF ripping** (`T-AUDIO-STEMS`): `rustynes nsf-rip <ROM>` traces the run
+  with a shadow call stack, proposes the music driver's `play` (the innermost
+  routine enclosing every APU write of a frame) and `init` (the one enclosing
+  the writes made outside play) with the counts behind each, and with `--out`
+  writes a version 1 NSF, plays it back and reports it verified only when its
+  `play` calls make the game's APU writes, call for call. Boards without PRG
+  banking (mappers 0 and 3) only; a bank-switched board or a driver that runs
+  from RAM is refused with the reason. Library API: `rustynes_core::nsf_rip`.
+  Not done: a desktop menu entry for either tool (both are headless passes
+  over a fresh console; running them from the window would need their own
+  thread and progress UI, which was not cheap).
+- **MiSTer core: PAL and Dendy consoles, at full speed** (FB-7,
+  `T-MISTER-VMODE`, MiSTer Phase F4a), on both builds. An OSD "Region" option
+  (Auto, NTSC, PAL, Dendy; Auto follows the image's header) selects the console:
+  the 2C07's 312 lines and 3.2 dots per CPU cycle, the Dendy's 312 lines at
+  NTSC's 3 dots, the 2A07's APU tables, each console's video timing, and
+  `new_vmode` so the framework re-reads the video mode. A 50 Hz console runs at
+  its own 26.6017125 MHz master clock with the SDRAM at exactly 3x, switched at
+  run time through a reconfigurable PLL ([ADR 0050](docs/adr/0050-a-50-hz-console-runs-at-its-own-master-clock.md),
+  amending ADR 0039); without it a 50 Hz game would have run at 80.7 % speed.
+  NTSC is unchanged bit for bit. Every console and region table is checked
+  against the oracle's PAL and Dendy exports cycle for cycle, and the clock
+  plan is checked in simulation (frame rate and tone pitch timed against the
+  programmed clock). No board has run it.
+
+### Changed
+
+- **libretro save states record the emulation options** and a restore applies
+  them (`T-LIBRETRO-EMU-OPTIONS`). The desktop records the overclock, the
+  sprite limit, the Four Score and the Vs. DIP switches in a movie header and
+  the netplay handshake; RetroArch replays movies from a state and starts a
+  netplay peer from the host's state, so the core now ends every state with a
+  16-byte record of them (`retro_serialize_size` grows by 16 bytes) and a state
+  brings its options with it until a core option is changed. States written
+  before v3.6.0 have no record, still load, and leave the options alone; a
+  record holding a value no menu offers refuses the state. A state taken at x2
+  and restored into a core running stock goes on exactly as the x2 run did.
+- **Found, not fixed:** a Vs. `DualSystem` cabinet's state does not
+  round-trip byte for byte under the CPU overclock (64 bytes of inert
+  OAM-decay ages differ ten frames on, with no option change); the game is
+  unaffected, but a frontend comparing state CRCs would see a desync. A core
+  issue, pinned by an ignored expected-fail probe in the libretro harness.
+- **The Android app targets Android 17 (API 37)** (`T-ANDROID-API37`). LAN and
+  direct-IP netplay now ask for the `ACCESS_LOCAL_NETWORK` permission (the
+  "Nearby devices" prompt) before hosting or joining, since Android 17 blocks
+  local-network traffic for an app that targets it; a refusal is explained in
+  the netplay sheet, and older devices and room-code play are never asked.
+  Audio plays only while the app is on screen or in picture-in-picture, which
+  Android 17 now requires of an app without a foreground service; a focus
+  request refused in the background no longer leaves the game muted when it
+  returns. Checked on two Android 17 emulators: the prompt, a refusal (no
+  socket opened) and a LAN session in game on both; not yet on a device
+  (run-sheet rows L1-L5).
+- **Android audio is written without blocking, with its own pacing**
+  (`T-ANDROID-AUDIO-NONBLOCKING`, audit AND-R2-01). The blocking `AudioTrack`
+  write that v3.2.0 kept was what paced the emulation loop; the loop now
+  sleeps, cancellably and off the shared worker pool, until the track is back
+  to about two frames of audio, keeps any bytes the track did not take, and
+  falls back to the wall clock when the play head stops. JVM tests run it
+  against a simulated sound card; drift on a real device is not measured yet
+  (row L4).
+- **iOS saves are written durably** (`T-IOS-DURABLE-WRITE`). Every file the
+  iOS app writes (FDS and battery saves, per-game overrides, movies, HD packs,
+  palettes, save states, the library) now goes through one helper that syncs
+  the file through the drive's cache before renaming it into place and then
+  syncs its folder, like the desktop's; Foundation's atomic write synced
+  neither, so a power loss could leave an empty or cut-short save. The Swift
+  has not been compiled on the machine that wrote it; a source audit pins the
+  wiring, and the device check is run-sheet row T13.
+- **iOS writes an FDS game's disk once a second** (`T-IOS-FDS-PERIODIC`), as
+  Android does; it was written only when the app went to the background or
+  switched games, so a crash or a kill while playing lost every in-game save
+  since. The device check is run-sheet row T14.
+
+### Fixed
+
+- **The noise channel plays at its documented pitch.** The NESdev page gives
+  each noise period in CPU cycles between shifts of the noise generator, and
+  RustyNES loaded that number into a timer that counts every other CPU
+  cycle, so since v1.0.0 the noise ran at about half its rate, roughly an
+  octave low, on every region; PAL's second period also read 7 where the
+  page gives 8. Both are corrected, with a test of every period in both
+  tables. Found by the MiSTer core's PAL work (its ledger findings 9.1 and
+  9.2). Every game that uses the noise channel sounds different: 112
+  recorded audio checksums moved with the fix, and no picture or cycle count;
+  the cut re-recorded 558 more, the coverage suite's checksums for local
+  commercial dumps (the dumps are not committed), each in its audio checksum
+  alone. Checked
+  against Nestopia, run as a black box through its libretro core: with the
+  noise channel held in its short (periodic) mode, RustyNES and Nestopia
+  both shift every 160, 202, 380 and 762 CPU cycles at periods 7, 8, 10 and
+  12, the page's values; v3.5.1 shifted every 322, 406, 762 and 1,526. The
+  MiSTer core had the same defect and takes the same fix on both builds.
+
+- **MMC5 NSF files play**: the NSF player's driver sat at `$5000-$504F` with
+  its NMI entry at `$5015`, which is also the MMC5's status port, and an NSF
+  declaring MMC5 audio answers that port before the driver, so the NMI ran the
+  status byte as an instruction and `play` was never called (2 calls in 120
+  frames, measured). The driver now sits at `$5100`, clear of every expansion
+  chip an NSF can declare; moving the whole page keeps its timing. Found while
+  reviewing the 60 Hz fix below; a test pins it.
+- **NSF files play again at the standard 60 Hz rate**: from v2.9.8 to v3.5.x
+  an NSF's `play` routine never ran, so a tune played only what its `init`
+  routine wrote (usually silence, or one held note). The player's driver
+  enabled the vblank NMI with its first `$2000` write, inside the PPU's
+  post-reset warm-up window that v2.9.8 began modelling, so the write was
+  dropped; and it enabled interrupts without inhibiting the APU frame IRQ, so
+  the CPU then spent the rest of the run servicing that IRQ. The driver now
+  writes `$40` to `$4017` before `init` and waits two vblanks before enabling
+  the NMI, as nesdev's "NSF" and "PPU power up state" pages describe. NSF
+  output changes (it now plays); cartridges and FDS are untouched. 50 Hz and
+  custom-rate NSFs used the timer driver, which already inhibited the frame
+  IRQ and needs no NMI, and were not affected. Found by the NSF ripper's
+  playback gate (`T-AUDIO-STEMS`); pinned by
+  `nsf_standard_rate_calls_play_every_frame`.
+
+### Documentation
+
+- **Switch, PS Vita and 3DS for the libretro core: no-go, recorded**
+  (`T-LIBRETRO-CONSOLES`, D28). The Switch's Rust target has no `std`, and a
+  `-Zbuild-std` build fails in `std` (the reason v2.9.8 dropped
+  `platform=libnx`, now checked by building). The Vita and 3DS staticlibs
+  compile with nightly `-Zbuild-std`, but the libretro buildbot has no Rust
+  template or image for a console, nothing was linked, and the core is
+  expected, not measured, to run well below full speed on those CPUs. No
+  buildbot job was added; `docs/libretro/architecture.md` records the checks
+  and what would reopen it.
+
+## [3.5.1] - 2026-10-23 - "Reprise" (the MMC5 outside rendering in both cores, and the v3.5.0 review's residue)
+
+### Breaking
+
+- **Emulation epoch 7**: movies recorded on v3.5.0 (epoch 6) are refused,
+  and a v3.5.0 netplay peer is refused, each with a message naming both
+  epochs. The MMC5 fix below changes what a `$2007` CHR read in vertical
+  blank returns. No recorded test output moved, and a probe found no
+  affected read in the three MMC5 games measured, but a movie of a game that
+  makes that read would otherwise replay differently without warning (the
+  maintainer's call). Save states are unaffected; netplay protocol 9 and
+  `.rnm` format 7 are unchanged.
+
+### Fixed
+
+- **MMC5 CHR reads outside rendering** (`T-MMC5-LATCH-VBLANK`): a split-screen
+  or extended-attribute (ExGrafix) tile's CHR bank stayed in force after the
+  frame ended, so a `$2007` read of CHR in vertical blank, or with rendering
+  switched off, read the last tile's bank instead of the bank registers. The
+  NESdev MMC5 page describes both substitutions as made to background fetches
+  while the PPU renders, and `$2007` as using "the last set of registers
+  written to"; the page names Bandit Kings of Ancient China and Uchuu Keibitai
+  SDF as reading data from CHR through `$2007`, and the Koei games keep
+  extended attributes on throughout. The split's nametable substitution had
+  the same defect: a `$2007` nametable read after a split frame returned the
+  split's ExRAM bytes instead of the table `$5105` maps there. It was found by
+  the MiSTer core's new `$2007` stimulus, and it is fixed the same way.
+- **A device key held while it is rebound no longer stays held**: rebinding a
+  Power Pad, Hyper Shot, microphone, controller or Family BASIC key while it
+  was down left its input pressed for good, because its release no longer
+  matched the position its press had set. A rebind now releases every
+  keyboard-held input.
+- **Opening a device or a pipe no longer hangs the desktop app**: every ROM,
+  patch, FDS BIOS, movie, TAS project, symbol file, source map, script,
+  palette, splits file and per-game sidecar was read whole with no bound, so
+  a FIFO blocked the window thread in `open` and a device such as `/dev/zero`
+  (by name or through a symlink) filled memory. These are now refused if they
+  are not regular files, and read up to 64 MiB, as are `rustynes verify`'s
+  and `rustynes speedrun`'s inputs.
+
 ### Changed
 
 - **CI runs the shared-memory store's Windows and macOS tests**: the Lua IPC

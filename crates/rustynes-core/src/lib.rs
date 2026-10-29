@@ -59,6 +59,13 @@ pub mod scheduler;
 // v3.5.0 (`T-SPEEDRUN-MEMIF`) — speedrun auto-timing: RetroAchievements-
 // grammar RAM predicates, times in master-clock cycles. Read-only over `Nes`.
 pub mod speedrun;
+// v3.6.0 (`T-AUDIO-STEMS`) — per-channel stems re-rendered offline from the
+// APU's mix trace; output-only, so it needs the `debug-hooks` recording.
+#[cfg(feature = "debug-hooks")]
+pub mod stems;
+// v3.6.0 (`T-AUDIO-STEMS`) — trace-assisted NSF ripping (needs the access log).
+#[cfg(feature = "debug-hooks")]
+pub mod nsf_rip;
 pub mod vs_db;
 // v2.0.0 beta.5 (Workstream C) — the Vs. DualSystem dual-core wrapper: two
 // complete Nes instances + the cabinet's $4016-bit-1 comms protocol, the
