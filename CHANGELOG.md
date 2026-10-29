@@ -205,7 +205,10 @@ cycle-accurate core later replaced.
   page gives 8. Both are corrected, with a test of every period in both
   tables. Found by the MiSTer core's PAL work (its ledger findings 9.1 and
   9.2). Every game that uses the noise channel sounds different: 112
-  recorded audio checksums moved, and no picture or cycle count. Checked
+  recorded audio checksums moved with the fix, and no picture or cycle count;
+  the cut re-recorded 558 more, the coverage suite's checksums for local
+  commercial dumps (the dumps are not committed), each in its audio checksum
+  alone. Checked
   against Nestopia, run as a black box through its libretro core: with the
   noise channel held in its short (periodic) mode, RustyNES and Nestopia
   both shift every 160, 202, 380 and 762 CPU cycles at periods 7, 8, 10 and
