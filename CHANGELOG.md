@@ -26,6 +26,46 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.5.1] - 2026-10-23 - "Reprise" (the MMC5 outside rendering in both cores, and the v3.5.0 review's residue)
+
+### Breaking
+
+- **Emulation epoch 7**: movies recorded on v3.5.0 (epoch 6) are refused,
+  and a v3.5.0 netplay peer is refused, each with a message naming both
+  epochs. The MMC5 fix below changes what a `$2007` CHR read in vertical
+  blank returns. No recorded test output moved, and a probe found no
+  affected read in the three MMC5 games measured, but a movie of a game that
+  makes that read would otherwise replay differently without warning (the
+  maintainer's call). Save states are unaffected; netplay protocol 9 and
+  `.rnm` format 7 are unchanged.
+
+### Fixed
+
+- **MMC5 CHR reads outside rendering** (`T-MMC5-LATCH-VBLANK`): a split-screen
+  or extended-attribute (ExGrafix) tile's CHR bank stayed in force after the
+  frame ended, so a `$2007` read of CHR in vertical blank, or with rendering
+  switched off, read the last tile's bank instead of the bank registers. The
+  NESdev MMC5 page describes both substitutions as made to background fetches
+  while the PPU renders, and `$2007` as using "the last set of registers
+  written to"; the page names Bandit Kings of Ancient China and Uchuu Keibitai
+  SDF as reading data from CHR through `$2007`, and the Koei games keep
+  extended attributes on throughout. The split's nametable substitution had
+  the same defect: a `$2007` nametable read after a split frame returned the
+  split's ExRAM bytes instead of the table `$5105` maps there. It was found by
+  the MiSTer core's new `$2007` stimulus, and it is fixed the same way.
+- **A device key held while it is rebound no longer stays held**: rebinding a
+  Power Pad, Hyper Shot, microphone, controller or Family BASIC key while it
+  was down left its input pressed for good, because its release no longer
+  matched the position its press had set. A rebind now releases every
+  keyboard-held input.
+- **Opening a device or a pipe no longer hangs the desktop app**: every ROM,
+  patch, FDS BIOS, movie, TAS project, symbol file, source map, script,
+  palette, splits file and per-game sidecar was read whole with no bound, so
+  a FIFO blocked the window thread in `open` and a device such as `/dev/zero`
+  (by name or through a symlink) filled memory. These are now refused if they
+  are not regular files, and read up to 64 MiB, as are `rustynes verify`'s
+  and `rustynes speedrun`'s inputs.
+
 ### Changed
 
 - **CI runs the shared-memory store's Windows and macOS tests**: the Lua IPC

@@ -328,7 +328,7 @@ fn load_startup_rom(
         if patch_path == base {
             continue;
         }
-        let Ok(patch_bytes) = std::fs::read(&patch_path) else {
+        let Ok(patch_bytes) = crate::bounded_read::read(&patch_path) else {
             continue;
         };
         match crate::patch::detect_and_apply(&bytes, &patch_bytes, ext) {
@@ -2066,7 +2066,7 @@ impl App {
             if patch_path == base {
                 continue;
             }
-            let Ok(patch_bytes) = std::fs::read(&patch_path) else {
+            let Ok(patch_bytes) = crate::bounded_read::read(&patch_path) else {
                 continue;
             };
             match crate::patch::detect_and_apply(&bytes, &patch_bytes, ext) {
@@ -2649,7 +2649,7 @@ impl App {
     fn resolve_fds_bios(&mut self) -> Option<Vec<u8>> {
         // 1) Try the configured path first.
         if let Some(path) = self.config.fds.bios_path.clone() {
-            match std::fs::read(&path) {
+            match crate::bounded_read::read(&path) {
                 Ok(bytes) if bytes.len() == FDS_BIOS_SIZE => return Some(bytes),
                 Ok(bytes) => eprintln!(
                     "rustynes: configured FDS BIOS {} is {} bytes (expected {FDS_BIOS_SIZE}); re-prompting",
@@ -2672,7 +2672,7 @@ impl App {
             eprintln!("rustynes: FDS BIOS selection cancelled; cannot load disk image");
             return None;
         };
-        let bytes = match std::fs::read(&path) {
+        let bytes = match crate::bounded_read::read(&path) {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("rustynes: failed to read FDS BIOS {}: {e}", path.display());
@@ -3398,7 +3398,7 @@ impl App {
         else {
             return;
         };
-        let bytes = match std::fs::read(&path) {
+        let bytes = match crate::bounded_read::read(&path) {
             Ok(b) => b,
             Err(e) => {
                 eprintln!("rustynes: movie open failed {}: {e}", path.display());
@@ -3657,7 +3657,7 @@ impl App {
             .to_ascii_lowercase();
         match ext.as_str() {
             "bk2" => {
-                let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+                let bytes = crate::bounded_read::read(path).map_err(|e| e.to_string())?;
                 let (header, input_log) = Self::read_bk2_members(&bytes)?;
                 let (movie, _meta) =
                     rustynes_core::bk2_interop::import_bk2(&header, &input_log, rom_sha)
@@ -3668,7 +3668,7 @@ impl App {
             // binary header + per-frame input; the core parses bytes -> Movie and
             // reuses the canonical power-on alignment (so replay is bit-identical).
             "fcm" | "fmv" | "vmv" | "mc2" => {
-                let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+                let bytes = crate::bounded_read::read(path).map_err(|e| e.to_string())?;
                 let (movie, _meta) = match ext.as_str() {
                     "fcm" => rustynes_core::import_fcm(&bytes, rom_sha),
                     "fmv" => rustynes_core::import_fmv(&bytes, rom_sha),
@@ -3681,7 +3681,7 @@ impl App {
             }
             // `.fm2` (or any other extension): flat text.
             _ => {
-                let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+                let text = crate::bounded_read::read_to_string(path).map_err(|e| e.to_string())?;
                 let (movie, _meta) = rustynes_core::movie_interop::import_fm2(&text, rom_sha)
                     .map_err(|e| e.to_string())?;
                 Ok(movie)
@@ -4271,7 +4271,7 @@ impl App {
         else {
             return;
         };
-        let bytes = match std::fs::read(&path) {
+        let bytes = match crate::bounded_read::read(&path) {
             Ok(b) => b,
             Err(e) => {
                 eprintln!(
@@ -6004,7 +6004,7 @@ impl App {
             ));
             return;
         };
-        let text = match std::fs::read_to_string(&path) {
+        let text = match crate::bounded_read::read_to_string(&path) {
             Ok(t) => t,
             Err(e) => {
                 self.ui
@@ -6039,7 +6039,7 @@ impl App {
     /// map (annotates the disassembly). Display-only; never touches the core.
     #[cfg(not(target_arch = "wasm32"))]
     fn load_source_map_file(&mut self, path: &std::path::Path) {
-        let text = match std::fs::read_to_string(path) {
+        let text = match crate::bounded_read::read_to_string(path) {
             Ok(t) => t,
             Err(e) => {
                 self.ui
@@ -6789,7 +6789,7 @@ impl App {
         // old script's callbacks + overlay running behind an error (gemini #48).
         self.script = None;
         self.script_draws.clear();
-        let src = match std::fs::read_to_string(path) {
+        let src = match crate::bounded_read::read_to_string(path) {
             Ok(s) => s,
             Err(e) => {
                 if let Some(dbg) = self.debugger.as_mut() {
@@ -7310,7 +7310,7 @@ impl App {
         else {
             return;
         };
-        let Some(pal) = std::fs::read(&path)
+        let Some(pal) = crate::bounded_read::read(&path)
             .ok()
             .and_then(|b| crate::config::parse_pal(&b))
         else {
@@ -12172,6 +12172,13 @@ impl ApplicationHandler<AppEvent> for App {
                     .is_some_and(DebuggerOverlay::take_input_bindings_dirty)
                 {
                     self.input.reload_bindings(&self.config.input);
+                    // v3.5.1: the Family BASIC matrix is the app's half of
+                    // the keyboard-held state `reload_bindings` releases; a
+                    // key held across a rebind would otherwise stay down.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        self.family_keyboard = [0; 9];
+                    }
                     // v1.7.0 — the Four Score checkbox flags the bindings
                     // dirty too, so push its (possibly changed) state to
                     // the running `Nes` here on the same reload path.
