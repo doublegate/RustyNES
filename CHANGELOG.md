@@ -211,6 +211,18 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **Netplay no longer desyncs when a player changes buttons while the game
+  waits for a peer** (`T-NETPLAY-UI-SYNC-FLAKE`). The desktop, browser and
+  mobile frontends hand the session the buttons held on every tick, and a tick
+  on which the session stalled for a slow peer named the same frame again. The
+  session overwrote its own input for that frame and sent the new value, while
+  every peer had already kept the first, so the two sides ran different input
+  and the session ended with a desync at the next checksum. The first input
+  recorded for a frame is now final, as a remote player's already was, and the
+  newer buttons apply from the next frame. Present since the rollback session
+  was written; found as a three-player test that failed only on CI's slow macOS
+  runner. Gate: `mesh_sync::a_stalled_tick_does_not_re_author_the_local_input`,
+  which desyncs at frame 60 without the fix. Netplay protocol 9 is unchanged.
 - **The browser builds load ROMs from `.zip` archives.** The web demo and the
   canvas embed passed the picked or dropped file straight to the core, so a
   dump kept zipped failed to parse, and the picker did not offer `.zip` at

@@ -252,6 +252,89 @@ fn three_peers_stay_in_sync_every_frame_in_memory() {
     );
 }
 
+/// v3.6.0 (`T-NETPLAY-UI-SYNC-FLAKE`) — the session driven the way every
+/// frontend drives it: ONE `add_local_input` per tick, with whatever the
+/// player is holding on that tick, whether or not the previous tick produced a
+/// frame.
+///
+/// The harness above authors each frame's input exactly once (`authored`
+/// advances with `current_frame`), so it could never see what the desktop
+/// (`netplay_ui.rs`), the browser (`wasm_netplay.rs`) and the mobile bridge do
+/// on a STALLED tick: `current_frame` has not moved, so the call names the
+/// same target frame again, with the buttons held now. Until v3.6.0 the
+/// session overwrote its own cell with the newer value and sent it, while
+/// every peer had already kept the first one (a remote cell's first real value
+/// is final), so the two sides ran different input for that frame. Found as
+/// `netplay_ui::tests::three_players_from_the_ui_stay_in_sync` failing only on
+/// the slow macOS CI runner, the one place the UDP test stalled.
+///
+/// Latency of 14 polls against a rollback window of 8 forces a stall on every
+/// peer; the per-tick input changes on every tick, so each stall re-authors.
+#[test]
+fn a_stalled_tick_does_not_re_author_the_local_input() {
+    let rom = four_score_probe_rom();
+    let cfg = SessionConfig::default();
+    for players in [2u8, 3] {
+        let link = LinkConditions::fixed_latency(14);
+        let transports = MeshTransport::mesh(players, link, 0x57A1);
+        let mut nes: Vec<Nes> = (0..players)
+            .map(|_| Nes::from_rom(&rom).expect("rom parses"))
+            .collect();
+        let id = SessionIdentity::of(&nes[0]);
+        let mut sessions: Vec<RollbackSession<MeshTransport>> = transports
+            .into_iter()
+            .zip(0u8..)
+            .map(|(t, p)| {
+                RollbackSession::new(
+                    SessionConfig {
+                        num_players: players,
+                        local_player: p,
+                        ..cfg
+                    },
+                    t,
+                    id,
+                )
+            })
+            .collect();
+        let mut rng = SplitMix64::new(0x5EED ^ u64::from(players));
+        let mut digests: Vec<Vec<u64>> = vec![Vec::new(); players as usize];
+        let mut stalls = 0u32;
+        let want = 240usize;
+        let mut ticks = 0u32;
+        while digests.iter().any(|d| d.len() < want) && ticks < 20_000 {
+            ticks += 1;
+            for (p, s) in sessions.iter_mut().enumerate() {
+                s.add_local_input(Buttons::from_bits_truncate(rng.next_u8()));
+                let out = s.advance(&mut nes[p]).expect("no desync");
+                stalls += u32::from(!out.produced_frame);
+                let d = &mut digests[p];
+                while let Some(x) =
+                    s.confirmed_entering_digest(u32::try_from(d.len()).unwrap_or(u32::MAX))
+                {
+                    d.push(x);
+                }
+            }
+        }
+        assert!(
+            digests.iter().all(|d| d.len() >= want),
+            "{players} peers confirmed {want} frames within {ticks} ticks: {:?}",
+            digests.iter().map(Vec::len).collect::<Vec<_>>()
+        );
+        assert!(
+            stalls > 0,
+            "the link must stall the session for the gate to bite"
+        );
+        for f in 0..want {
+            for (p, d) in digests.iter().enumerate().skip(1) {
+                assert_eq!(
+                    d[f], digests[0][f],
+                    "{players} peers: peer {p} differs from peer 0 at frame {f}"
+                );
+            }
+        }
+    }
+}
+
 /// A transport wrapper that loses, delays and reorders what the wrapped
 /// transport receives, from a seeded PRNG: the injected faults are
 /// reproducible even though the sockets under them are real.
