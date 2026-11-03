@@ -80,6 +80,17 @@ pub fn regular_file_metadata(path: &Path) -> io::Result<std::fs::Metadata> {
     }
 }
 
+/// The bound for a `TAStudio` project (`.rnmproj`): 1 GiB.
+///
+/// A project stores every branch's input log and save state, so its size
+/// grows with the branches and has no natural cap near [`MAX_USER_FILE`]:
+/// 64 branches of an hour's input already pass 64 MiB in frame records
+/// alone. Until v3.5.1's review the load read projects at the generic bound,
+/// so a project the app had saved itself could fail to reopen (`CodeRabbit`
+/// and `Codex` on #630). The save path refuses to write past this bound, so
+/// the two agree.
+pub const MAX_TAS_PROJECT: u64 = 1024 * 1024 * 1024;
+
 /// [`read_limited`] at [`MAX_USER_FILE`].
 ///
 /// # Errors

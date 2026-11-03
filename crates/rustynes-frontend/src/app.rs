@@ -4207,6 +4207,16 @@ impl App {
         else {
             return;
         };
+        // A project the loader would refuse is not written (v3.5.1 review):
+        // the two share `MAX_TAS_PROJECT`.
+        if bytes.len() as u64 > crate::bounded_read::MAX_TAS_PROJECT {
+            eprintln!(
+                "rustynes: TAStudio project is {} bytes, over the {} MiB a project may be; not saved",
+                bytes.len(),
+                crate::bounded_read::MAX_TAS_PROJECT / (1024 * 1024)
+            );
+            return;
+        }
         let Some(path) = rfd::FileDialog::new()
             .add_filter("TAStudio project", &["rnmproj"])
             .set_file_name("project.rnmproj")
@@ -4232,16 +4242,17 @@ impl App {
         else {
             return;
         };
-        let bytes = match crate::bounded_read::read(&path) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!(
-                    "rustynes: TAStudio project read failed {}: {e}",
-                    path.display()
-                );
-                return;
-            }
-        };
+        let bytes =
+            match crate::bounded_read::read_limited(&path, crate::bounded_read::MAX_TAS_PROJECT) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!(
+                        "rustynes: TAStudio project read failed {}: {e}",
+                        path.display()
+                    );
+                    return;
+                }
+            };
         if let Some(e) = self
             .debugger
             .as_mut()
@@ -12172,6 +12183,12 @@ impl ApplicationHandler<AppEvent> for App {
                     {
                         self.family_keyboard = [0; 9];
                     }
+                    // Publish the released state to the emulation thread at
+                    // once: paused, it produces no `EmuFrame` to republish on,
+                    // so the first frame after resuming would still see the old
+                    // held buttons and fast-forward (CodeRabbit on #630).
+                    #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+                    self.publish_shared_input();
                     // v1.7.0 — the Four Score checkbox flags the bindings
                     // dirty too, so push its (possibly changed) state to
                     // the running `Nes` here on the same reload path.

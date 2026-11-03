@@ -355,7 +355,9 @@ fn real_time_running_pauses_and_stops_at_breakpoints() {
         "a RAM write while running is refused"
     );
     ok(&h, "pause", Value::Null);
-    ok(&h, "resume", json!({ "max_frames": 30 }));
+    // 600 frames, so the run cannot end before the Lua call below lands in it
+    // (CodeRabbit on #630: at 30 it could, and the test still passed).
+    ok(&h, "resume", json!({ "max_frames": 600 }));
     assert!(
         matches!(
             call(&h, "step_frames", json!({ "frames": 1 })),
@@ -378,13 +380,14 @@ fn real_time_running_pauses_and_stops_at_breakpoints() {
     .expect("Lua answers while running");
     assert_eq!(lua.json["ok"], true, "{}", lua.json);
     assert_eq!(lua.json["state_unchanged"], true, "{}", lua.json);
+    assert!(h.is_running(), "the run was still going after lua_eval");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     while h.is_running() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     let p = ok(&h, "pause", Value::Null);
-    assert_eq!(p["realtime_frames"], 30, "{p}");
-    assert_eq!(p["last_stop"], "ran max_frames (30)");
+    assert_eq!(p["realtime_frames"], 600, "{p}");
+    assert_eq!(p["last_stop"], "ran max_frames (600)");
     let v = ok(&h, "movie_verify", json!({ "source": "main" }));
     assert_eq!(v["identical"], true, "real-time frames are journalled: {v}");
 
