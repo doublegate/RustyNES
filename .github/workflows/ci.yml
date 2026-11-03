@@ -1177,10 +1177,60 @@ jobs:
   # a PR) never blocks, AND a docs-only change (every heavy job skipped via the
   # `changes` gate) still reports this check green so the PR can merge. KEEP the
   # `needs:` list exhaustive: a job missing from it silently stops being gated.
+  dap-fixtures:
+    name: dap fixtures (cc65 + llvm-mos rebuild)
+    # v3.6.0 T-DEBUG-DAP (ADR 0049). The `rustynes-dap` tests in the OS-matrix
+    # `test` job drive the COMMITTED fixtures in tests/roms/dap/. This job
+    # rebuilds them from dapdemo.c with both toolchains at pinned versions and
+    # runs the same end-to-end tests against that fresh build, so the gate
+    # covers what cc65 and llvm-mos produce, not only what was committed.
+    # Pins: cc65 at a commit (cc65's last tag, V2.19, predates the `c_sp`
+    # rename the fixture's toolchain has; the reader accepts both names), the
+    # llvm-mos SDK at a release whose archive digest is checked.
+    needs: [changes, setup]
+    if: ${{ needs.changes.outputs.code == 'true' && needs.setup.outputs.heavy == 'true' }}
+    runs-on: ubuntu-26.04
+    # Typical: ~6 min (cc65 build ~2 min, SDK download, crate compile).
+    # Bounded so a hung job cannot hold the concurrency group -- see the
+    # block comment above `concurrency`.
+    timeout-minutes: 30
+    env:
+      CC65_COMMIT: 034f73a9e199685a99eaf36e77a25455e2fe5ebc
+      LLVM_MOS_SDK_TAG: v23.3.0
+      LLVM_MOS_SDK_SHA256: 9f694497bc93a7c876d8c62325c7d74e7860346d80fbcd0555e19ba6856658c8
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          apt: "false"
+          cache-key: dap-fixtures
+      - name: Build cc65 at the pinned commit
+        run: |
+          git init -q "$RUNNER_TEMP/cc65"
+          git -C "$RUNNER_TEMP/cc65" fetch -q --depth 1 https://github.com/cc65/cc65 "$CC65_COMMIT"
+          git -C "$RUNNER_TEMP/cc65" checkout -q FETCH_HEAD
+          make -C "$RUNNER_TEMP/cc65" -j"$(nproc)" >/dev/null
+          echo "CC65_HOME=$RUNNER_TEMP/cc65" >> "$GITHUB_ENV"
+      - name: Install the llvm-mos SDK at the pinned release
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/llvm-mos.tar.xz" \
+            "https://github.com/llvm-mos/llvm-mos-sdk/releases/download/$LLVM_MOS_SDK_TAG/llvm-mos-linux.tar.xz"
+          echo "$LLVM_MOS_SDK_SHA256  $RUNNER_TEMP/llvm-mos.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/llvm-mos.tar.xz" -C "$RUNNER_TEMP"
+          echo "LLVM_MOS=$RUNNER_TEMP/llvm-mos" >> "$GITHUB_ENV"
+      - name: Rebuild the fixtures
+        run: python3 tests/roms/dap/build.py --out "$RUNNER_TEMP/dap-fixtures"
+      - name: End-to-end tests against the rebuilt fixtures
+        run: cargo test -p rustynes-dap
+        env:
+          RUSTYNES_DAP_FIXTURES: ${{ runner.temp }}/dap-fixtures
+
   ci-success:
     name: CI success
     if: ${{ always() }}
-    needs: [changes, setup, lint, test, full-build, test-roms, no_std, wasm, libretro-cross, bench, fuzz, coverage]
+    needs: [changes, setup, lint, test, full-build, test-roms, no_std, wasm, libretro-cross, bench, fuzz, coverage, dap-fixtures]
     runs-on: ubuntu-26.04
     # Typical: instant. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.

@@ -336,6 +336,18 @@ Three lessons worth carrying:
   observation is what redirected the investigation from layout to inlining, after
   the layout fix had already been built and measured.
 
+## Consumers beyond the panel
+
+Since v3.6.0 the mix trace also feeds **audio stems**
+([`audio-stems.md`](audio-stems.md)): `rustynes_core::stems::StemCapture` arms
+provenance for a whole run, reads each frame's trace, and re-renders every
+channel alone through a private copy of the output pipeline. It relies on two
+properties this document already promises, and checks both on every run: the
+trace has one record per CPU cycle with no gaps between frames (a
+`first_cycle` that does not continue the last frame is refused), and the
+record's `mixed` is exactly what the mixer makes of its channel fields (the
+re-rendered mix must equal the console's output bit for bit).
+
 ## Verification
 
 - `cargo test -p rustynes-apu --features debug-hooks provenance` — 9 unit tests.

@@ -143,6 +143,7 @@ nav:
       - Creator Tools: creator-tools.md
       - Pixel Provenance: pixel-provenance.md
       - Audio Provenance: audio-provenance.md
+      - Audio Stems and NSF Ripping: audio-stems.md
       - Latency Oracle: latency-oracle.md
       - RAM Atlas: ram-atlas.md
       - Divergence Lens: divergence-lens.md

@@ -13,7 +13,8 @@
 //  only a cartridge whose header sets the battery bit is persisted; a file of the
 //  wrong size is never loaded and, that session, never overwritten (it is more
 //  likely another game's or another emulator's than a damaged one of ours);
-//  "clean" means equal to the last bytes written; writes are atomic.
+//  "clean" means equal to the last bytes written; writes are atomic and, from
+//  v3.6.0, durable (`DurableWrite.swift`).
 //
 
 import Foundation
@@ -104,7 +105,8 @@ final class BatterySaver: @unchecked Sendable {
     }
 
     /// Runs on `queue`. A failed write leaves the baseline alone, so the next
-    /// flush retries; `.atomic` keeps the previous file intact.
+    /// flush retries; `DurableWrite` keeps the previous file intact (v3.6.0:
+    /// it also syncs the file and its directory, which `.atomic` never did).
     private func writeIfChanged(_ current: Data) {
         guard !disabled, !current.isEmpty, current != last else { return }
         do {
@@ -112,7 +114,7 @@ final class BatterySaver: @unchecked Sendable {
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            try current.write(to: url, options: .atomic)
+            try DurableWrite.write(current, to: url)
             last = current
         } catch {
             NSLog("RustyNES: battery save failed: \(error)")

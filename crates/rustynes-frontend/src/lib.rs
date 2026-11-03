@@ -47,6 +47,9 @@ pub mod battery_save;
 pub mod bounded_read;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod bundle;
+/// v3.6.0 — a ROM inside a `.zip` archive, for the desktop and the browser
+/// builds alike (the desktop's v1.2.0 extraction, moved here).
+pub mod rom_archive;
 /// v2.9.9 (NF-11) — which timeline-changing actions a running movie, netplay
 /// session or RA hardcore session refuses.
 ///
@@ -300,8 +303,12 @@ pub mod shm;
 pub mod memif;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod speedrun_cli;
+// v3.6.0 (`T-AUDIO-STEMS`) — `rustynes stems` and `rustynes nsf-rip`, the
+// headless front ends to the core's stem capture and NSF ripper.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod speedrun_host;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod stems_cli;
 // v1.4.0 Workstream D (D1) — debugger symbol/label file loading
 // (`.sym` / Mesen `.mlb` / FCEUX `.nl`). Frontend display aid only; the parsed
 // `address -> label` map annotates the disassembler / breakpoint / trace views

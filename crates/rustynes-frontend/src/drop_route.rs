@@ -18,16 +18,19 @@
 //!
 //! | dropped file | route |
 //! |---|---|
-//! | `.nes`, `.fds`, `.unf`, `.unif` | a ROM: the same path as the picker |
+//! | `.nes`, `.fds`, `.unf`, `.unif`, `.zip` | a ROM: the same path as the picker |
 //! | `.rnm` | a movie: the same path as the F7 movie picker |
 //! | `.rom` / `.bin` of exactly 8 KiB | the FDS BIOS (`disksys.rom`) |
 //! | anything else | refused, with the name logged |
 //!
 //! The ROM list is the desktop drop handler's list, which it now reads from
 //! [`is_rom_name`] too, so the two cannot drift. It is deliberately
-//! narrower than the desktop's File → Open (no `.zip`, no `.nsf`): the
-//! browser load path extracts no archive and plays no NSF, and a file the
-//! picker's `accept` list would not offer should not get in by dragging.
+//! narrower than the desktop's File → Open (no `.nsf`): the browser load path
+//! plays no NSF, and a file the picker's `accept` list would not offer should
+//! not get in by dragging. `.zip` joined in v3.6.0, when the browser builds
+//! began unpacking archives (`crate::rom_archive`); the desktop drop, which
+//! loads through the same File → Open path, refused a dropped archive until
+//! then for the same list's sake.
 //! The BIOS rule keys on the size as well as the extension because `.bin`
 //! is a generic name: only an 8 KiB file can be the 8 KiB BIOS, and the
 //! core refuses any other size anyway (`FDS_BIOS_LEN`).
@@ -60,12 +63,13 @@ fn extension(name: &str) -> Option<String> {
 }
 
 /// Whether `name` carries one of the ROM extensions a drop accepts
-/// (`.nes`, `.fds`, `.unf`, `.unif`, case-insensitive).
+/// (`.nes`, `.fds`, `.unf`, `.unif`, or a `.zip` holding one;
+/// case-insensitive).
 #[must_use]
 pub fn is_rom_name(name: &str) -> bool {
     matches!(
         extension(name).as_deref(),
-        Some("nes" | "fds" | "unf" | "unif")
+        Some("nes" | "fds" | "unf" | "unif" | "zip")
     )
 }
 
@@ -94,6 +98,8 @@ mod tests {
             "board.unf",
             "board.Unif",
             "a.b.c.NES",
+            "Game (U).zip",
+            "SET.ZIP",
         ] {
             assert_eq!(classify(name, 40_976), DropKind::Rom, "{name}");
             assert!(is_rom_name(name), "{name}");
@@ -119,8 +125,8 @@ mod tests {
 
     #[test]
     fn what_the_browser_cannot_load_is_refused() {
-        // `.zip` and `.nsf` open on the desktop's File menu, not in a browser.
-        for name in ["game.zip", "tune.nsf", "patch.ips", "readme", ".nes", "nes"] {
+        // `.nsf` opens on the desktop's File menu, not in a browser.
+        for name in ["tune.nsf", "patch.ips", "game.7z", "readme", ".nes", "nes"] {
             assert_eq!(classify(name, 40_976), DropKind::Unsupported, "{name}");
             assert!(!is_rom_name(name), "{name}");
         }

@@ -60,7 +60,7 @@ final class HDPackStore: ObservableObject {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         try await Task.detached(priority: .userInitiated) {
             let data = try Data(contentsOf: url)
-            try data.write(to: dest, options: .atomic)
+            try DurableWrite.write(data, to: dest)
         }.value
         reload()
         return id

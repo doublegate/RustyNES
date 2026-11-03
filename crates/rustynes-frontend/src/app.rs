@@ -198,53 +198,14 @@ fn is_fds_image(bytes: &[u8]) -> bool {
     bytes.starts_with(b"FDS\x1A") || bytes.starts_with(b"\x01*NINTENDO-HVC*")
 }
 
-/// Extract the first NES / FDS / NSF entry from a `.zip` archive, returning its
-/// base file name and bytes. Returns `None` if the archive is unreadable or
-/// holds no recognized ROM entry. Native-only (uses the `zip` crate, which is in
-/// the `cfg(not(wasm))` dependency table).
+/// Extract the first NES / FDS / NSF / UNIF entry from a `.zip` archive,
+/// returning its base file name and bytes; `None` if the archive is unreadable
+/// or holds no such entry. The desktop's entry point to
+/// [`crate::rom_archive::extract_rom`], which the browser builds share since
+/// v3.6.0 (the browser's list leaves out `.nsf`).
 #[cfg(not(target_arch = "wasm32"))]
 fn extract_rom_from_zip(zip_bytes: &[u8]) -> Option<(String, Vec<u8>)> {
-    use std::io::Read;
-    // Reject an implausibly large entry (zip bomb / corrupt archive) before
-    // reading it into memory — NES images are at most a few MiB. Both the
-    // declared size AND the actual read are bounded, since the declared size
-    // can lie (Gemini security-high + Copilot, PR #74).
-    const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
-    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).ok()?;
-    let idx = (0..archive.len()).find(|&i| {
-        // zip 9: an entry whose name decodes as neither UTF-8 nor CP437 is
-        // skipped, the same as an entry that cannot be read at all.
-        archive.by_index(i).is_ok_and(|f| {
-            f.name().is_ok_and(|n| {
-                std::path::Path::new(n.as_ref())
-                    .extension()
-                    .is_some_and(|e| {
-                        e.eq_ignore_ascii_case("nes")
-                            || e.eq_ignore_ascii_case("fds")
-                            || e.eq_ignore_ascii_case("nsf")
-                            || e.eq_ignore_ascii_case("unf")
-                            || e.eq_ignore_ascii_case("unif")
-                    })
-            })
-        })
-    })?;
-    let file = archive.by_index(idx).ok()?;
-    if file.size() > MAX_ENTRY_BYTES {
-        return None;
-    }
-    let name = file
-        .name()
-        .ok()
-        .and_then(|n| {
-            std::path::Path::new(n.as_ref())
-                .file_name()
-                .map(|f| f.to_string_lossy().into_owned())
-        })
-        .unwrap_or_else(|| "rom".to_string());
-    let cap = usize::try_from(file.size()).unwrap_or(0);
-    let mut out = Vec::with_capacity(cap);
-    file.take(MAX_ENTRY_BYTES).read_to_end(&mut out).ok()?;
-    Some((name, out))
+    crate::rom_archive::extract_rom(zip_bytes, crate::rom_archive::DESKTOP_ROM_EXTENSIONS)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -4249,6 +4210,12 @@ impl App {
         // A project the loader would refuse is not written (v3.5.1 review):
         // the two share `MAX_TAS_PROJECT`.
         if bytes.len() as u64 > crate::bounded_read::MAX_TAS_PROJECT {
+            // On screen as well as on stderr (CodeRabbit on #630).
+            self.ui
+                .set_status(crate::ui_shell::StatusMessage::error(format!(
+                    "TAStudio project is over the {} MiB limit; not saved",
+                    crate::bounded_read::MAX_TAS_PROJECT / (1024 * 1024)
+                )));
             eprintln!(
                 "rustynes: TAStudio project is {} bytes, over the {} MiB a project may be; not saved",
                 bytes.len(),
@@ -10546,6 +10513,38 @@ impl ApplicationHandler<AppEvent> for App {
                 self.install_battery_page_hide_flush();
             }
             AppEvent::RomLoaded(bytes) => {
+                // v3.6.0 — a picked or dropped `.zip` is unpacked first, as the
+                // desktop's File -> Open has done since v1.2.0. The browser
+                // hands over bytes with no name, so the archive is recognised by
+                // its signature (`rom_archive::is_zip`). An archive with nothing
+                // loadable in it is reported and the running game is left alone,
+                // as a refused drop is.
+                let bytes = match crate::rom_archive::unpack_for_web(bytes) {
+                    Ok((rom, name)) => {
+                        if let Some(name) = name {
+                            #[cfg(target_arch = "wasm32")]
+                            web_sys::console::log_1(&wasm_bindgen::JsValue::from_str(&format!(
+                                "loaded {name} from the archive"
+                            )));
+                            self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                                format!("Loaded {name} from archive"),
+                                egui::Color32::from_rgb(120, 200, 120),
+                                std::time::Duration::from_secs(3),
+                            ));
+                        }
+                        rom
+                    }
+                    Err(msg) => {
+                        #[cfg(target_arch = "wasm32")]
+                        web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(&msg));
+                        self.ui.set_status(crate::ui_shell::StatusMessage::new(
+                            msg,
+                            egui::Color32::from_rgb(230, 90, 90),
+                            std::time::Duration::from_secs(5),
+                        ));
+                        return;
+                    }
+                };
                 self.rom_bytes = bytes;
                 // v2.3.7 — apply the per-game database's header corrections
                 // BEFORE `start_nes` hands the bytes to `Nes::from_rom`, which

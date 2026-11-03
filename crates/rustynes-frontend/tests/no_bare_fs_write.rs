@@ -57,6 +57,16 @@ const ALLOWED: &[(&str, &str, usize, &str)] = &[
          staged encode that is renamed into place only on success",
     ),
     (
+        "stems_cli.rs",
+        "OpenOptions::new(",
+        1,
+        "the stem WAVs stream into a `*.<pid>.<n>.rustynes-partial` sibling of their \
+         own, opened with create_new so it never truncates anything (an hour of one \
+         stem is about 690 MB, eight at once), which `finish` syncs and renames over \
+         the target; an unfinished writer deletes it, so the user's file is never \
+         left truncated",
+    ),
+    (
         "perf_log.rs",
         "File::create(",
         2,

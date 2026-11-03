@@ -26,6 +26,7 @@ on this corpus.
 | [`audio-tests/`](./audio-tests/) | Brad Smith (`bbbradsmith`)'s `nes-audio-tests` corpus — expansion-audio relative-loudness comparisons, VRC7 / N163 / FME-7 / MMC5 audio quirks, APU DAC linearity. Covers mappers 5, 19, 24, 26, 69, 85. | Brad Smith | "Freely redistributed and modified for any purpose" (effectively PD) |
 | [`m22/`](./m22/) | NewRisingSun's VRC2 (mapper 22) CHR-banking smoke test. | NewRisingSun (aggregated in `christopherpow/nes-test-roms`) | Public domain (aggregator) |
 | [`mmc1_a12/`](./mmc1_a12/) | tepples's MMC1 + PPU A12 transition test (control case for the MMC3 A12-IRQ axis). | tepples (aggregated) | Public domain (aggregator) |
+| [`dap/`](./dap/) | The `rustynes-dap` fixtures: `dapdemo.c` built by cc65 and by llvm-mos (`build.py`), with their `.dbg` / ELF debug information. | RustyNES (the C file); the toolchains' runtime libraries | CC0-1.0 (the C file); zlib / Apache-2.0 WITH LLVM-exception (the linked runtimes) |
 | [`external/`](./external/) | **gitignored.** Reserved for end-user-provided commercial dumps. See [`external/README.md`](./external/README.md). | n/a | n/a |
 
 ## Mapper coverage matrix (committed ROMs)

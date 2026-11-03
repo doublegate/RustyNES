@@ -61,7 +61,7 @@ final class PaletteManager: ObservableObject {
         // importers; the `palettes` list refreshes back on the main actor.
         try await Task.detached(priority: .userInitiated) {
             let data = try Data(contentsOf: url)
-            try data.write(to: dest, options: .atomic)
+            try DurableWrite.write(data, to: dest)
         }.value
         reload()
         return id

@@ -50,6 +50,15 @@ every peer reaches.
 - **A confirmed input is final.** A different value for a cell already
   confirmed is ignored. An honest peer never sends one, and a frame that may
   sit below the checkpoint has no entry to replay from.
+- **So is the local one (v3.6.0).** `add_local_input` records the input for
+  `current_frame + input_delay`, and every frontend calls it once per tick
+  with the buttons held on that tick. A tick on which the session stalled
+  (frame advantage past `max_rollback_frames`) leaves `current_frame` where it
+  was, so the next call names the same frame. The first value recorded is
+  kept and resent; the newer buttons apply from the next frame produced.
+  Until v3.6.0 the call overwrote the cell and sent the new value, while every
+  peer had already kept the first, so the two sides ran different input for
+  that frame and desynced (`T-NETPLAY-UI-SYNC-FLAKE`).
 
 ### 1.3 Why the entries are full snapshots
 
@@ -109,6 +118,12 @@ the two frames the peers actually run.
 - `the_window_stays_bounded_over_a_long_session` samples `retained()` through
   3,000 frames against `RetainedWindow::bound` (v3.3.0: 3,002 history frames,
   3,002 digests, 6,004 checksum slots).
+
+`tests/mesh_sync.rs`, `a_stalled_tick_does_not_re_author_the_local_input`
+(v3.6.0): two and three peers called the way the frontends call them, one
+input per tick with new buttons on every tick, over a 14-poll link that makes
+every peer stall; every confirmed frame must agree. Without the local-input
+rule above, the session raises `Desync` at the frame-60 checksum.
 
 The `determinism.rs` suite is unchanged and still passes.
 

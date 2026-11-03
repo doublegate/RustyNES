@@ -55,15 +55,97 @@ static DESCRIBED_PORTS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 /// `(port, id, description)` of every descriptor in the most recent
 /// `SET_INPUT_DESCRIPTORS`.
 static DESCRIBED: Mutex<Vec<(u32, u32, String)>> = Mutex::new(Vec::new());
-/// Keys the core declared with `SET_VARIABLES`.
+/// Keys the core declared in its most recent declaration, whichever form
+/// (`SET_VARIABLES` or `SET_CORE_OPTIONS_V2`).
 static DECLARED_VARS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// How many times the core has called `SET_VARIABLES`.
 static SET_VARIABLES_CALLS: AtomicU32 = AtomicU32::new(0);
+/// How many times the core has called `SET_CORE_OPTIONS_V2`.
+static SET_OPTIONS_V2_CALLS: AtomicU32 = AtomicU32::new(0);
+/// `(key, value string)` of the most recent `SET_VARIABLES`.
+static DECLARED_V0: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+/// The definitions of the most recent `SET_CORE_OPTIONS_V2`.
+static DECLARED_V2: Mutex<Vec<V2Def>> = Mutex::new(Vec::new());
+/// `(key, label)` of the categories of the most recent `SET_CORE_OPTIONS_V2`.
+static DECLARED_CATEGORIES: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+/// The core-options version the fake frontend reports
+/// (`GET_CORE_OPTIONS_VERSION`); 2, a current `RetroArch`, unless a test
+/// says otherwise. 0 refuses the query, as a frontend predating it does.
+static CORE_OPTIONS_VERSION: AtomicU32 = AtomicU32::new(2);
+/// The value the fake frontend reports for each option key it has one for
+/// (`GET_VARIABLE`); a key absent here is refused. Leaked C strings, so the
+/// pointer handed out stays valid after the lock is released.
+static OPTION_VALUES: Mutex<Vec<(String, &'static CStr)>> = Mutex::new(Vec::new());
+
+/// One `retro_core_option_v2_definition`, copied out of the call.
+#[derive(Clone, Debug)]
+struct V2Def {
+    key: String,
+    desc: String,
+    info: String,
+    category: String,
+    default: String,
+    /// `(value, label)`.
+    values: Vec<(String, String)>,
+}
+
+/// A C string the core handed over, or `""` for null.
+///
+/// # Safety
+///
+/// `p` is null or a NUL-terminated string valid for the call.
+unsafe fn text(p: *const std::ffi::c_char) -> String {
+    if p.is_null() {
+        String::new()
+    } else {
+        // SAFETY: the caller's contract.
+        unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+    }
+}
+
+/// Make the fake frontend report `value` for option `key`, and report a
+/// change at the next `GET_VARIABLE_UPDATE`.
+fn set_option(key: &str, value: &str) {
+    let value: &'static CStr = Box::leak(
+        std::ffi::CString::new(value)
+            .expect("no NUL")
+            .into_boxed_c_str(),
+    );
+    {
+        let mut values = held(&OPTION_VALUES);
+        values.retain(|(k, _)| k != key);
+        values.push((key.to_owned(), value));
+    }
+    VARS_CHANGED.store(true, SeqCst);
+}
 /// Whether the fake video callback copies each frame into `LAST_FRAME`
 /// (off by default: most tests do not look at the picture).
 static KEEP_FRAME: AtomicBool = AtomicBool::new(false);
 /// The last frame presented, as tightly packed XRGB8888 rows.
 static LAST_FRAME: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+
+/// Whether the fake frontend offers float audio
+/// (`GET_AUDIO_SAMPLE_BATCH_FLOAT`); off, as in every released frontend.
+static OFFER_FLOAT_AUDIO: AtomicBool = AtomicBool::new(false);
+/// A frontend that fills in the callback and then answers `false`: the core
+/// must take the answer, not the pointer.
+static REFUSE_FLOAT_AFTER_FILLING: AtomicBool = AtomicBool::new(false);
+/// Whether the audio callbacks record what they are sent.
+static KEEP_AUDIO: AtomicBool = AtomicBool::new(false);
+/// Samples sent through the `int16_t` batch callback while recording.
+static I16_AUDIO: Mutex<Vec<i16>> = Mutex::new(Vec::new());
+/// Samples sent through the float batch callback while recording.
+static F32_AUDIO: Mutex<Vec<f32>> = Mutex::new(Vec::new());
+
+/// The fake frontend's float batch callback.
+unsafe extern "C" fn audio_batch_float(data: *const f32, frames: usize) -> usize {
+    if KEEP_AUDIO.load(SeqCst) && !data.is_null() {
+        // SAFETY: libretro.h: `data` holds `frames` stereo frames for the call.
+        let samples = unsafe { std::slice::from_raw_parts(data, frames * 2) };
+        held(&F32_AUDIO).extend_from_slice(samples);
+    }
+    frames
+}
 
 /// The RetroPad buttons held on each port, as a `RETRO_DEVICE_ID_JOYPAD_MASK`
 /// bitmask (bit n = `RETRO_DEVICE_ID_JOYPAD_*` n).
@@ -192,8 +274,6 @@ fn dirs() -> &'static Dirs {
         }
     })
 }
-/// The value the fake frontend reports for `rustynes_four_score`.
-static FOUR_SCORE_ON: AtomicBool = AtomicBool::new(false);
 /// Whether the next `GET_VARIABLE_UPDATE` reports a change (then clears).
 static VARS_CHANGED: AtomicBool = AtomicBool::new(false);
 /// The descriptors of the most recent `SET_MEMORY_MAPS`, copied out.
@@ -372,16 +452,81 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
         }
         RETRO_ENVIRONMENT_SET_VARIABLES => {
             let mut keys = Vec::new();
+            let mut pairs = Vec::new();
             let mut v = data.cast::<retro_variable>().cast_const();
             // SAFETY: an array terminated by a null `key`, valid for the call.
             unsafe {
                 while !v.is_null() && !(*v).key.is_null() {
-                    keys.push(CStr::from_ptr((*v).key).to_string_lossy().into_owned());
+                    keys.push(text((*v).key));
+                    pairs.push((text((*v).key), text((*v).value)));
                     v = v.add(1);
                 }
             }
             *held(&DECLARED_VARS) = keys;
+            *held(&DECLARED_V0) = pairs;
             SET_VARIABLES_CALLS.fetch_add(1, SeqCst);
+            true
+        }
+        c if c == RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT => {
+            let refuse = REFUSE_FLOAT_AFTER_FILLING.load(SeqCst);
+            if data.is_null() || !(OFFER_FLOAT_AUDIO.load(SeqCst) || refuse) {
+                return false;
+            }
+            // SAFETY: the core passes a `*mut retro_audio_sample_float_callback`.
+            unsafe { (*data.cast::<AudioSampleFloatCallback>()).batch = Some(audio_batch_float) };
+            !refuse
+        }
+        RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION => {
+            let version = CORE_OPTIONS_VERSION.load(SeqCst);
+            if data.is_null() || version == 0 {
+                return false;
+            }
+            // SAFETY: the core passes a `*mut c_uint`.
+            unsafe { *data.cast::<c_uint>() = version };
+            true
+        }
+        RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2 => {
+            if data.is_null() || CORE_OPTIONS_VERSION.load(SeqCst) < 2 {
+                return false;
+            }
+            let mut categories = Vec::new();
+            let mut defs = Vec::new();
+            // SAFETY: the core passes a `*const retro_core_options_v2` whose
+            // two arrays are terminated by an entry with a null `key`, and each
+            // definition's values by an entry with a null `value`; all valid
+            // for the call.
+            unsafe {
+                let options = &*data.cast::<retro_core_options_v2>();
+                let mut c = options.categories.cast_const();
+                while !c.is_null() && !(*c).key.is_null() {
+                    categories.push((text((*c).key), text((*c).desc)));
+                    c = c.add(1);
+                }
+                let mut d = options.definitions.cast_const();
+                while !d.is_null() && !(*d).key.is_null() {
+                    let def = &*d;
+                    let values = def
+                        .values
+                        .iter()
+                        .take_while(|v| !v.value.is_null())
+                        .map(|v| (text(v.value), text(v.label)))
+                        .collect();
+                    defs.push(V2Def {
+                        key: text(def.key),
+                        desc: text(def.desc),
+                        info: text(def.info),
+                        category: text(def.category_key),
+                        default: text(def.default_value),
+                        values,
+                    });
+                    d = d.add(1);
+                }
+            }
+            *held(&DECLARED_VARS) = defs.iter().map(|d| d.key.clone()).collect();
+            *held(&DECLARED_V2) = defs;
+            *held(&DECLARED_CATEGORIES) = categories;
+            SET_OPTIONS_V2_CALLS.fetch_add(1, SeqCst);
+            // libretro.h: the return value says whether categories are shown.
             true
         }
         RETRO_ENVIRONMENT_GET_VARIABLE => {
@@ -389,17 +534,21 @@ unsafe extern "C" fn environment(cmd: c_uint, data: *mut c_void) -> bool {
                 return false;
             }
             // SAFETY: the core passes a `*mut retro_variable` whose `key` is a
-            // NUL-terminated string; `value` is set to a `'static` literal.
+            // NUL-terminated string; `value` is set to a leaked C string.
             unsafe {
                 let var = &mut *data.cast::<retro_variable>();
-                if var.key.is_null() || CStr::from_ptr(var.key) != c"rustynes_four_score" {
+                if var.key.is_null() {
                     return false;
                 }
-                var.value = if FOUR_SCORE_ON.load(SeqCst) {
-                    c"enabled".as_ptr()
-                } else {
-                    c"disabled".as_ptr()
+                let key = text(var.key);
+                let Some(value) = held(&OPTION_VALUES)
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, v)| *v)
+                else {
+                    return false;
                 };
+                var.value = value.as_ptr();
             }
             true
         }
@@ -444,7 +593,12 @@ unsafe extern "C" fn video(data: *const c_void, width: c_uint, height: c_uint, p
     }
     *held(&LAST_FRAME) = out;
 }
-unsafe extern "C" fn audio_batch(_: *const i16, frames: usize) -> usize {
+unsafe extern "C" fn audio_batch(data: *const i16, frames: usize) -> usize {
+    if KEEP_AUDIO.load(SeqCst) && !data.is_null() {
+        // SAFETY: libretro.h: `data` holds `frames` stereo frames for the call.
+        let samples = unsafe { std::slice::from_raw_parts(data, frames * 2) };
+        held(&I16_AUDIO).extend_from_slice(samples);
+    }
     frames
 }
 unsafe extern "C" fn audio_sample(_: i16, _: i16) {}
@@ -498,6 +652,13 @@ fn frontend() -> MutexGuard<'static, ()> {
         pad.store(0, SeqCst);
     }
     KEEP_FRAME.store(false, SeqCst);
+    OFFER_FLOAT_AUDIO.store(false, SeqCst);
+    REFUSE_FLOAT_AFTER_FILLING.store(false, SeqCst);
+    KEEP_AUDIO.store(false, SeqCst);
+    // No option set: the core reads every one as its default at the next
+    // load, whatever an earlier test chose.
+    held(&OPTION_VALUES).clear();
+    VARS_CHANGED.store(false, SeqCst);
     guard
 }
 
@@ -728,14 +889,12 @@ fn the_four_score_option_reads_players_three_and_four() {
             .any(|k| k == "rustynes_four_score"),
         "the core must declare the Four Score option"
     );
-    FOUR_SCORE_ON.store(true, SeqCst);
-    VARS_CHANGED.store(true, SeqCst);
+    set_option("rustynes_four_score", "enabled");
     assert!(load(NESTEST, true));
     JOYPAD_READS.store(0, SeqCst);
     run_frame();
     let with_four_score = JOYPAD_READS.load(SeqCst);
-    FOUR_SCORE_ON.store(false, SeqCst);
-    VARS_CHANGED.store(true, SeqCst);
+    set_option("rustynes_four_score", "disabled");
     JOYPAD_READS.store(0, SeqCst);
     run_frame();
     let without = JOYPAD_READS.load(SeqCst);
@@ -1529,7 +1688,10 @@ fn serialize_refuses_a_buffer_smaller_than_it_asked_for() {
 #[test]
 fn core_options_are_declared_again_after_deinit_and_init() {
     let _frontend = frontend();
-    let before = SET_VARIABLES_CALLS.load(SeqCst);
+    // Either form counts: since v3.6.0 a version-2 frontend (this one, by
+    // default) gets `SET_CORE_OPTIONS_V2` instead of `SET_VARIABLES`.
+    let declarations = || SET_VARIABLES_CALLS.load(SeqCst) + SET_OPTIONS_V2_CALLS.load(SeqCst);
+    let before = declarations();
     // SAFETY: plain lifecycle calls, in the order a frontend that reuses a
     // loaded library makes them (libretro.h: set_environment before init).
     unsafe {
@@ -1537,10 +1699,10 @@ fn core_options_are_declared_again_after_deinit_and_init() {
         rust_libretro::retro_set_environment(Some(environment));
         rust_libretro::retro_init();
     }
-    let after_cycle = SET_VARIABLES_CALLS.load(SeqCst);
+    let after_cycle = declarations();
     // SAFETY: as above; a second environment inside the same cycle.
     unsafe { rust_libretro::retro_set_environment(Some(environment)) };
-    let after_repeat = SET_VARIABLES_CALLS.load(SeqCst);
+    let after_repeat = declarations();
     assert_eq!(
         after_cycle,
         before + 1,
@@ -1556,6 +1718,92 @@ fn core_options_are_declared_again_after_deinit_and_init() {
         after_repeat, after_cycle,
         "a repeated set_environment within one cycle declares nothing new"
     );
+}
+
+/// The option keys v3.5.0 declared, and its `SET_VARIABLES` string for each.
+/// A frontend stores the user's choice under the key, so every one must
+/// still be declared, by both forms, with the same values.
+const V3_5_0_OPTIONS: [(&str, &str); 1] = [(
+    "rustynes_four_score",
+    "Four Score (players 3 and 4); disabled|enabled",
+)];
+
+/// Run one init cycle against a frontend reporting core-options `version`
+/// and return (`SET_VARIABLES` calls, `SET_CORE_OPTIONS_V2` calls) it made.
+fn declare_at(version: u32) -> (u32, u32) {
+    CORE_OPTIONS_VERSION.store(version, SeqCst);
+    let (v0, v2) = (
+        SET_VARIABLES_CALLS.load(SeqCst),
+        SET_OPTIONS_V2_CALLS.load(SeqCst),
+    );
+    deinit_and_reinit();
+    (
+        SET_VARIABLES_CALLS.load(SeqCst) - v0,
+        SET_OPTIONS_V2_CALLS.load(SeqCst) - v2,
+    )
+}
+
+/// v3.6.0 `T-LIBRETRO-OPTIONS-V2`. A frontend that reports core-options
+/// version 2 or more gets `SET_CORE_OPTIONS_V2` (categories, a sublabel per
+/// option, a label per value) and nothing else; a version-1 frontend, and
+/// one that does not answer the query, get `SET_VARIABLES` as every frontend
+/// did before v3.6.0. Both forms declare the same keys, every v3.5.0 key
+/// among them, with the same values and defaults, and the v0 string of a
+/// v3.5.0 option is unchanged byte for byte.
+#[test]
+fn core_options_v2_with_a_v0_fallback_keep_every_key() {
+    let _frontend = frontend();
+
+    assert_eq!(declare_at(2), (0, 1), "version 2: v2 only");
+    let v2 = held(&DECLARED_V2).clone();
+    let categories = held(&DECLARED_CATEGORIES).clone();
+    let v2_keys = held(&DECLARED_VARS).clone();
+
+    assert_eq!(declare_at(1), (1, 0), "version 1: SET_VARIABLES");
+    let v1_keys = held(&DECLARED_VARS).clone();
+    assert_eq!(declare_at(0), (1, 0), "no version answer: SET_VARIABLES");
+    let v0 = held(&DECLARED_V0).clone();
+    let v0_keys = held(&DECLARED_VARS).clone();
+
+    // Leave the shared core as the other tests expect it: a v2 frontend.
+    assert_eq!(declare_at(2), (0, 1));
+
+    assert_eq!(v2_keys, v0_keys, "both forms declare the same keys");
+    assert_eq!(v1_keys, v0_keys);
+    for (key, string) in V3_5_0_OPTIONS {
+        assert!(v2_keys.iter().any(|k| k == key), "v2 lost {key}");
+        assert!(
+            v0.iter().any(|(k, v)| k == key && v == string),
+            "v0 must declare {key} as v3.5.0 did ({string:?}): {v0:?}"
+        );
+    }
+    assert!(!categories.is_empty(), "v2 names its categories");
+    for def in &v2 {
+        assert!(
+            categories.iter().any(|(k, _)| *k == def.category),
+            "{} names an undeclared category {:?}",
+            def.key,
+            def.category
+        );
+        assert!(
+            !def.desc.is_empty() && !def.info.is_empty(),
+            "{} needs a label and a sublabel",
+            def.key
+        );
+        assert!(
+            def.values.iter().all(|(_, label)| !label.is_empty()),
+            "{}: every value is labelled",
+            def.key
+        );
+        // The same values and default as the v0 string, which takes the
+        // first value as the default.
+        let (_, string) = v0.iter().find(|(k, _)| *k == def.key).expect("in v0");
+        let list = string.split_once("; ").expect("v0 shape").1;
+        let v0_values: Vec<&str> = list.split('|').collect();
+        let v2_values: Vec<&str> = def.values.iter().map(|(v, _)| v.as_str()).collect();
+        assert_eq!(v0_values, v2_values, "{}: the same values", def.key);
+        assert_eq!(def.default, v0_values[0], "{}: the same default", def.key);
+    }
 }
 
 /// Re-send the environment, as a frontend does, with the disk-control
@@ -1863,6 +2111,79 @@ fn vs_dual_system_coins_reach_the_main_console() {
     );
 }
 
+/// Load the Vs. probe cartridge, run two frames, and return what the game
+/// read from `$4016` / `$4017` (main console for a cabinet).
+fn vs_probe_reads(dual: bool) -> (u8, u8) {
+    assert!(load(vs_probe_rom(dual), true));
+    run_frame();
+    run_frame();
+    let head = wram_head();
+    unload();
+    head
+}
+
+/// The same two frames of the probe cartridge on a bare console with DIP
+/// bank `dip`: the oracle the options are checked against.
+fn vs_probe_oracle(dip: u8) -> (u8, u8) {
+    let mut nes = Nes::from_rom(vs_probe_rom(false)).expect("the probe parses");
+    nes.set_vs_dip(dip);
+    nes.run_frame();
+    nes.run_frame();
+    (nes.wram()[0], nes.wram()[1])
+}
+
+/// v3.6.0 LR-03. The core applied the Vs. database's factory DIP switches
+/// and nothing could change them: the desktop has a config override, the
+/// libretro core had no option. `rustynes_vs_dip_<n>` now forces switch `n`
+/// off or on (default: the database's setting), on a cartridge and on both
+/// consoles of a cabinet, and the game reads it: switches 1-2 at `$4016`
+/// bits 3-4, switches 3-8 at `$4017` bits 2-7. The probe cartridge is in no
+/// database, so its factory bank is 0.
+#[test]
+fn a_vs_dip_option_reaches_the_cabinet() {
+    let _frontend = frontend();
+    let stock = vs_probe_reads(false);
+    let stock_dual = vs_probe_reads(true);
+    set_option("rustynes_vs_dip_1", "on");
+    set_option("rustynes_vs_dip_2", "off");
+    set_option("rustynes_vs_dip_3", "on");
+    set_option("rustynes_vs_dip_8", "on");
+    let forced = vs_probe_reads(false);
+    let forced_dual = vs_probe_reads(true);
+    for n in 1..=8 {
+        set_option(&format!("rustynes_vs_dip_{n}"), "database");
+    }
+    let database = vs_probe_reads(false);
+
+    assert_eq!(stock, vs_probe_oracle(0), "no option: the factory bank");
+    assert_eq!(database, stock, "every switch at \"database\": unchanged");
+    assert_eq!(
+        forced,
+        vs_probe_oracle(0x85),
+        "switches 1, 3 and 8 on, 2 off: the bank the game reads"
+    );
+    assert_eq!(
+        forced.0 & 0x18,
+        0x08,
+        "switch 1 on, 2 off at $4016: {forced:02x?}"
+    );
+    assert_eq!(
+        forced.1 & 0x84,
+        0x84,
+        "switches 3 and 8 at $4017: {forced:02x?}"
+    );
+    assert_eq!(
+        (forced_dual.0 & 0x18, forced_dual.1 & 0xFC),
+        (0x08, 0x84),
+        "a cabinet's main console reads the same switches: {forced_dual:02x?}"
+    );
+    assert_eq!(
+        (stock_dual.0 & 0x18, stock_dual.1 & 0xFC),
+        (0, 0),
+        "and none without the option: {stock_dual:02x?}"
+    );
+}
+
 /// Drive the Vs. probe cartridge for `real` presented frames with L held on
 /// port 1 for frames 5 and 6, the way `RetroArch` run-ahead of `ahead` frames
 /// drives a core: each presented frame is one `retro_run`, a
@@ -1982,6 +2303,503 @@ fn a_restore_to_the_press_frame_drops_a_coin_the_replay_does_not_press() {
     assert_eq!(lead_in, ".....");
     assert_eq!(first, "1", "the first timeline's coin goes in on frame 5");
     assert_eq!(replay, ".....", "the replay never presses L, so no coin");
+}
+
+/// A 16 KiB NROM cartridge whose program counts as fast as it can: a 24-bit
+/// counter at `$00-$02`, eight CPU cycles per step of its low byte. What it
+/// reaches in a frame measures how much CPU time the frame had. `dual` puts
+/// it under a Vs. `DualSystem` header, so a cabinet runs it on both consoles.
+///
+/// ```text
+/// $C000  SEI / CLD / LDA #0 / STA $00 / STA $01 / STA $02
+/// $C00A  INC $00 / BNE $C00A / INC $01 / BNE $C00A / INC $02 / JMP $C00A
+/// ```
+fn counter_rom(dual: bool) -> &'static [u8] {
+    let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
+    rom[..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 1;
+    rom[5] = 1;
+    if dual {
+        rom[7] = 0x08 | 0x01;
+        rom[13] = 0x50;
+    }
+    let program = [
+        0x78, 0xD8, 0xA9, 0x00, 0x85, 0x00, 0x85, 0x01, 0x85, 0x02, // init
+        0xE6, 0x00, 0xD0, 0xFC, // $C00A INC $00, BNE $C00A
+        0xE6, 0x01, 0xD0, 0xF8, // INC $01, BNE $C00A
+        0xE6, 0x02, 0x4C, 0x0A, 0xC0, // INC $02, JMP $C00A
+    ];
+    rom[16..16 + program.len()].copy_from_slice(&program);
+    rom[16 + 0x3FFA..16 + 0x4000].copy_from_slice(&[0x00, 0xC0, 0x00, 0xC0, 0x00, 0xC0]);
+    Box::leak(rom.into_boxed_slice())
+}
+
+/// The counter [`counter_rom`] keeps in WRAM.
+fn counter() -> u32 {
+    let ram = system_ram().cast::<u8>();
+    assert!(!ram.is_null());
+    // SAFETY: WRAM is 2 KiB and stays allocated while the game is loaded.
+    unsafe { u32::from_le_bytes([*ram, *ram.add(1), *ram.add(2), 0]) }
+}
+
+/// What the counter reaches in `frames` frames of a fresh load.
+fn count_over(frames: u32) -> u32 {
+    assert!(load(counter_rom(false), true));
+    for _ in 0..frames {
+        run_frame();
+    }
+    let n = counter();
+    unload();
+    n
+}
+
+/// v3.6.0 `T-LIBRETRO-EMU-OPTIONS`. The CPU overclock the desktop gained in
+/// v3.1.0 (`Nes::set_cpu_overclock`) was not reachable from a libretro
+/// frontend. `rustynes_cpu_overclock` = `k` must give the game `k` times the
+/// CPU time per frame: the counting cartridge must count about `k` times as
+/// far.
+#[test]
+fn the_cpu_overclock_option_gives_the_game_more_cpu_time() {
+    let _frontend = frontend();
+    let stock = count_over(10);
+    set_option("rustynes_cpu_overclock", "2");
+    let x2 = count_over(10);
+    set_option("rustynes_cpu_overclock", "4");
+    let x4 = count_over(10);
+    set_option("rustynes_cpu_overclock", "1");
+    let back = count_over(10);
+    assert!(stock > 30_000, "fixture: the cartridge counts ({stock})");
+    let ratio = |n: u32| f64::from(n) / f64::from(stock);
+    assert!(
+        (1.95..2.05).contains(&ratio(x2)),
+        "x2 counted {x2} against {stock}"
+    );
+    assert!(
+        (3.9..4.1).contains(&ratio(x4)),
+        "x4 counted {x4} against {stock}"
+    );
+    assert_eq!(back, stock, "x1 is stock again");
+}
+
+/// A 16 KiB NROM cartridge that puts sixteen sprites on scanlines 101-108,
+/// one every 16 pixels from x = 0, each a solid tile in white over a black
+/// backdrop, with the background off. Stock hardware draws the first eight
+/// on a line; the sprite-limit option draws all sixteen.
+fn sprite_rom() -> &'static [u8] {
+    let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
+    rom[..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 1;
+    rom[5] = 1;
+    #[rustfmt::skip]
+    let program = [
+        0x78, 0xD8, 0xA9, 0x00, 0x8D, 0x00, 0x20, 0x8D, 0x01, 0x20, // rendering off
+        0x2C, 0x02, 0x20, 0x10, 0xFB, // $C00A wait for vblank
+        0x2C, 0x02, 0x20, 0x10, 0xFB, // $C00F and again
+        0xA9, 0x3F, 0x8D, 0x06, 0x20, 0xA9, 0x00, 0x8D, 0x06, 0x20, // $3F00
+        0xA9, 0x0F, 0x8D, 0x07, 0x20, // black backdrop
+        0xA9, 0x3F, 0x8D, 0x06, 0x20, 0xA9, 0x11, 0x8D, 0x06, 0x20, // $3F11
+        0xA9, 0x30, 0x8D, 0x07, 0x20, // white
+        0xA9, 0x00, 0x8D, 0x03, 0x20, 0xA2, 0x00, // OAMADDR 0, X = 0
+        0xA9, 0x64, 0x8D, 0x04, 0x20, // $C039 Y = 100
+        0xA9, 0x00, 0x8D, 0x04, 0x20, 0x8D, 0x04, 0x20, // tile 0, attributes 0
+        0x8A, 0x0A, 0x0A, 0x0A, 0x0A, 0x8D, 0x04, 0x20, // X = 16 * index
+        0xE8, 0xE0, 0x10, 0xD0, 0xE6, // INX, CPX #16, BNE $C039
+        0xA9, 0xF0, 0xA0, 0xC0, // the other 48 sprites below the screen
+        0x8D, 0x04, 0x20, 0x88, 0xD0, 0xFA, // $C057 STA $2004, DEY, BNE $C057
+        0xA9, 0x00, 0x8D, 0x05, 0x20, 0x8D, 0x05, 0x20, // scroll 0
+        0xA9, 0x14, 0x8D, 0x01, 0x20, // sprites on, including the left 8 pixels
+        0x4C, 0x6A, 0xC0, // $C06A JMP $C06A
+    ];
+    rom[16..16 + program.len()].copy_from_slice(&program);
+    rom[16 + 0x3FFA..16 + 0x4000].copy_from_slice(&[0x00, 0xC0, 0x00, 0xC0, 0x00, 0xC0]);
+    // Tile 0: low plane solid, high plane clear, so every pixel is colour 1.
+    rom[16 + 16 * 1024..16 + 16 * 1024 + 8].fill(0xFF);
+    Box::leak(rom.into_boxed_slice())
+}
+
+/// The frame the sprite cartridge presents after five frames.
+fn sprite_frame() -> Vec<u8> {
+    KEEP_FRAME.store(true, SeqCst);
+    assert!(load(sprite_rom(), true));
+    for _ in 0..5 {
+        run_frame();
+    }
+    let frame = held(&LAST_FRAME).clone();
+    unload();
+    KEEP_FRAME.store(false, SeqCst);
+    frame
+}
+
+/// The lit pixels of scanline `y` of an XRGB8888 frame `NES_W` wide.
+fn lit_on(frame: &[u8], y: usize) -> usize {
+    let row = &frame[y * NES_W * 4..(y + 1) * NES_W * 4];
+    let backdrop = &row[NES_W * 4 - 4..];
+    row.chunks(4).filter(|px| px[..3] != backdrop[..3]).count()
+}
+
+/// v3.6.0 `T-LIBRETRO-EMU-OPTIONS`. The desktop's v3.1.0 sprite-limit
+/// option (`Nes::set_sprite_limit_disabled`) as `rustynes_remove_sprite_limit`:
+/// with sixteen sprites on a line, stock draws eight (64 pixels), the
+/// option sixteen (128).
+#[test]
+fn the_sprite_limit_option_draws_every_sprite_on_a_line() {
+    let _frontend = frontend();
+    let stock = sprite_frame();
+    set_option("rustynes_remove_sprite_limit", "enabled");
+    let all = sprite_frame();
+    assert_eq!(lit_on(&stock, 104), 64, "stock: eight 8-pixel sprites");
+    assert_eq!(lit_on(&all, 104), 128, "the option: all sixteen");
+    assert_eq!(lit_on(&all, 90), 0, "and nothing off their lines");
+}
+
+/// Every option at its default, whether the frontend reports the default or
+/// reports nothing, leaves the core as it was before the options existed:
+/// the frames are a bare console's, byte for byte.
+#[test]
+fn the_default_options_leave_the_output_byte_identical() {
+    let _frontend = frontend();
+    let unset = sprite_frame();
+    let unset_count = count_over(10);
+    for spec in &crate::options::OPTIONS {
+        set_option(
+            spec.key.to_str().expect("ASCII"),
+            spec.default_value().to_str().expect("ASCII"),
+        );
+    }
+    let explicit = sprite_frame();
+    let explicit_count = count_over(10);
+    let oracle = oracle_frame(Nes::from_rom(sprite_rom()).expect("parses"), 5);
+    assert!(
+        unset == oracle,
+        "no option answered: a bare console's frame"
+    );
+    assert!(
+        explicit == oracle,
+        "every option at its default: the same frame"
+    );
+    let mut bare = Nes::from_rom(counter_rom(false)).expect("parses");
+    for _ in 0..10 {
+        bare.run_frame();
+    }
+    let w = bare.wram();
+    let bare_count = u32::from_le_bytes([w[0], w[1], w[2], 0]);
+    assert_eq!((unset_count, explicit_count), (bare_count, bare_count));
+}
+
+/// The options record at the end of a state, decoded.
+fn recorded(state: &[u8]) -> crate::options::OptionValues {
+    crate::options::split_state(state)
+        .expect("a valid record")
+        .1
+        .expect("a record")
+}
+
+/// v3.6.0 `T-LIBRETRO-EMU-OPTIONS`, the half that makes the options
+/// "recorded": they change what a movie replays and what a netplay peer
+/// runs, and a libretro frontend carries both in save states, so every
+/// state ends with the options it was made under and a restore applies
+/// them. Restored into a core running stock, a state taken at x2 must go on
+/// exactly as the x2 run did, cycle pattern included: ten frames later the
+/// cartridge's state matches the straight run's byte for byte. A cabinet's
+/// must match in what the game computed (the counter in WRAM): its state
+/// does not round-trip byte for byte under the overclock even with no option
+/// change at all, which is a core finding of its own
+/// (`a_cabinet_state_round_trips_byte_for_byte_under_the_overclock`).
+#[test]
+fn a_state_carries_its_emulation_options() {
+    let _frontend = frontend();
+    for dual in [false, true] {
+        set_option("rustynes_cpu_overclock", "2");
+        set_option("rustynes_remove_sprite_limit", "enabled");
+        assert!(load(counter_rom(dual), true));
+        let size = serialize_size();
+        for _ in 0..9 {
+            run_frame();
+        }
+        let mut s10 = vec![0_u8; size];
+        assert!(serialize(&mut s10));
+        for _ in 0..10 {
+            run_frame();
+        }
+        let mut straight = vec![0_u8; size];
+        assert!(serialize(&mut straight));
+        let straight_count = counter();
+
+        // The user turns both off; the core runs stock again.
+        set_option("rustynes_cpu_overclock", "1");
+        set_option("rustynes_remove_sprite_limit", "disabled");
+        run_frame();
+        let mut stock = vec![0_u8; size];
+        assert!(serialize(&mut stock));
+        assert_eq!(recorded(&stock).cpu_overclock, 1);
+
+        #[cfg(target_arch = "x86_64")]
+        held(&LOGGED).clear();
+        assert!(unserialize(&s10), "the x2 state loads into a stock core");
+        #[cfg(target_arch = "x86_64")]
+        assert!(
+            held(&LOGGED)
+                .iter()
+                .any(|l| l.contains("CPU overclock x2") && l.contains("sprite limit removed")),
+            "the log says the state brought its options: {:?}",
+            held(&LOGGED)
+        );
+        for _ in 0..10 {
+            run_frame();
+        }
+        let mut replayed = vec![0_u8; size];
+        assert!(serialize(&mut replayed));
+        let replayed_count = counter();
+        unload();
+        let r = recorded(&s10);
+        assert_eq!(
+            (r.cpu_overclock, r.sprite_limit_disabled),
+            (2, true),
+            "dual {dual}"
+        );
+        assert_eq!(
+            replayed_count, straight_count,
+            "dual {dual}: the restored x2 timeline computed something else"
+        );
+        assert!(
+            dual || replayed == straight,
+            "the restored x2 timeline differs from the straight x2 run"
+        );
+    }
+}
+
+/// FOUND by v3.6.0 `T-LIBRETRO-EMU-OPTIONS`, not caused by it: a Vs.
+/// `DualSystem` cabinet's state, saved and restored at CPU overclock x2 with
+/// no option change at all, runs on to a state ten frames later that differs
+/// from the straight run's in 64 bytes, every one inside the two consoles'
+/// PPU sections where the OAM-decay ages are encoded (`now - timestamp`,
+/// `now` = `dot_counter / 3`; each age is one larger after the restore). At
+/// x1 the same round trip is exact, and the cartridge path (slim states) is
+/// exact at x2. The decay model is off, so the ages are inert and the game
+/// computes the same thing (`a_state_carries_its_emulation_options`), but a
+/// frontend comparing state CRCs (RetroArch netplay) would see a desync.
+/// Ignored: an expected-fail probe for the core, outside the libretro
+/// wrapper; run with `--ignored`.
+#[test]
+#[ignore = "expected-fail probe: cabinet state round trip under the overclock (core finding)"]
+fn a_cabinet_state_round_trips_byte_for_byte_under_the_overclock() {
+    let _frontend = frontend();
+    set_option("rustynes_cpu_overclock", "2");
+    assert!(load(counter_rom(true), true));
+    let size = serialize_size();
+    for _ in 0..9 {
+        run_frame();
+    }
+    let mut saved = vec![0_u8; size];
+    assert!(serialize(&mut saved));
+    for _ in 0..10 {
+        run_frame();
+    }
+    let mut straight = vec![0_u8; size];
+    assert!(serialize(&mut straight));
+    assert!(unserialize(&saved));
+    for _ in 0..10 {
+        run_frame();
+    }
+    let mut again = vec![0_u8; size];
+    assert!(serialize(&mut again));
+    unload();
+    let differ = (0..size).filter(|&i| again[i] != straight[i]).count();
+    assert_eq!(differ, 0, "{differ} bytes differ after a round trip at x2");
+}
+
+/// A state with no options record -- every state before v3.6.0 -- loads as
+/// before and leaves the options as the menu has them; a record holding a
+/// value no menu offers refuses the whole state; and a refused restore that
+/// would have changed the multiplier puts the machine and the multiplier
+/// back.
+#[test]
+fn states_without_a_record_load_and_bad_records_refuse() {
+    let _frontend = frontend();
+    set_option("rustynes_cpu_overclock", "3");
+    assert!(load(counter_rom(false), true));
+    let size = serialize_size();
+    for _ in 0..10 {
+        run_frame();
+    }
+    let mut x3 = vec![0_u8; size];
+    assert!(serialize(&mut x3));
+    set_option("rustynes_cpu_overclock", "1");
+    run_frame();
+    let mut before = vec![0_u8; size];
+    assert!(serialize(&mut before));
+
+    // No record: the last 16 bytes are zero, as an older core left them.
+    let mut old = x3.clone();
+    let at = old.len() - crate::options::STATE_TRAILER_LEN;
+    old[at..].fill(0);
+    assert!(unserialize(&old), "a state without a record still loads");
+    let mut after_old = vec![0_u8; size];
+    assert!(serialize(&mut after_old));
+    assert_eq!(
+        recorded(&after_old).cpu_overclock,
+        1,
+        "and keeps the menu's options"
+    );
+
+    assert!(unserialize(&before));
+    let mut bad = x3.clone();
+    bad[at + 10] = 9;
+    assert!(!unserialize(&bad), "an overclock of 9 is refused");
+    let mut damaged = x3;
+    reject_last_cpu_section(&mut damaged);
+    assert!(!unserialize(&damaged), "a damaged x3 state is refused");
+    let mut after = vec![0_u8; size];
+    assert!(serialize(&mut after));
+    unload();
+    assert!(
+        after == before,
+        "refusals leave the machine, and its x1 multiplier, as they were"
+    );
+}
+
+/// A 16 KiB NROM cartridge that starts a square wave on pulse 1 and idles,
+/// so the audio stream carries a tone rather than silence.
+///
+/// ```text
+/// $C000  LDA #$01 / STA $4015       pulse 1 on
+///        LDA #$BF / STA $4000       duty 50%, constant volume 15
+///        LDA #$FD / STA $4002 / LDA #$00 / STA $4003   ~440 Hz
+///        JMP *
+/// ```
+fn tone_rom() -> &'static [u8] {
+    let mut rom = vec![0u8; 16 + 16 * 1024 + 8 * 1024];
+    rom[..4].copy_from_slice(b"NES\x1A");
+    rom[4] = 1;
+    rom[5] = 1;
+    let program = [
+        0xA9, 0x01, 0x8D, 0x15, 0x40, 0xA9, 0xBF, 0x8D, 0x00, 0x40, 0xA9, 0xFD, 0x8D, 0x02, 0x40,
+        0xA9, 0x00, 0x8D, 0x03, 0x40, 0x4C, 0x14, 0xC0,
+    ];
+    rom[16..16 + program.len()].copy_from_slice(&program);
+    rom[16 + 0x3FFA..16 + 0x4000].copy_from_slice(&[0x00, 0xC0, 0x00, 0xC0, 0x00, 0xC0]);
+    Box::leak(rom.into_boxed_slice())
+}
+
+/// The mono samples a bare console produces over `frames` frames of `rom`,
+/// drained per frame as the core drains them.
+fn oracle_audio(rom: &[u8], frames: u32) -> Vec<f32> {
+    let mut nes = Nes::from_rom(rom).expect("parses");
+    let mut out = Vec::new();
+    let mut buf = vec![0.0_f32; 4096];
+    for _ in 0..frames {
+        nes.run_frame();
+        let n = nes.drain_audio_into(&mut buf);
+        out.extend_from_slice(&buf[..n]);
+    }
+    out
+}
+
+/// Load `rom`, run `frames` frames recording the audio, and return
+/// (`int16_t` samples, float samples) as the frontend received them.
+fn recorded_audio(rom: &'static [u8], frames: u32) -> (Vec<i16>, Vec<f32>) {
+    held(&I16_AUDIO).clear();
+    held(&F32_AUDIO).clear();
+    KEEP_AUDIO.store(true, SeqCst);
+    assert!(load(rom, true));
+    for _ in 0..frames {
+        run_frame();
+    }
+    unload();
+    KEEP_AUDIO.store(false, SeqCst);
+    (held(&I16_AUDIO).clone(), held(&F32_AUDIO).clone())
+}
+
+/// v3.6.0, plan row 2. `GET_AUDIO_SAMPLE_BATCH_FLOAT` (upstream libretro.h,
+/// 2026-06-29) lets a frontend take float samples; the mixer is float, so
+/// the core sends them as made. A frontend that does not offer it (every
+/// released one) gets exactly the `int16_t` stream it got before: the
+/// samples a bare console makes, at full scale `1.0`, duplicated to stereo.
+/// One that offers it gets the same samples as floats and no `int16_t`
+/// call, for the whole loaded game, as libretro.h's contract requires; the
+/// next load negotiates again.
+#[test]
+fn float_audio_when_offered_and_the_int16_stream_unchanged_when_not() {
+    const FRAMES: u32 = 20;
+    let _frontend = frontend();
+    let mono = oracle_audio(tone_rom(), FRAMES);
+    assert!(
+        mono.iter().any(|s| s.abs() > 0.05),
+        "fixture: the cartridge makes a tone"
+    );
+    let stereo =
+        |f: fn(f32) -> f32| -> Vec<f32> { mono.iter().flat_map(|&s| [f(s), f(s)]).collect() };
+
+    let (i16s, floats) = recorded_audio(tone_rom(), FRAMES);
+    let expected_i16: Vec<i16> = mono
+        .iter()
+        .flat_map(|&s| [sample_to_i16(s), sample_to_i16(s)])
+        .collect();
+    assert!(floats.is_empty(), "not offered: no float call");
+    assert!(
+        i16s == expected_i16,
+        "not offered: the int16 stream is unchanged"
+    );
+
+    // libretro.h: "If this returns false the core must keep using the int16
+    // callbacks", whatever the frontend left in the struct.
+    REFUSE_FLOAT_AFTER_FILLING.store(true, SeqCst);
+    let (i16s, floats) = recorded_audio(tone_rom(), FRAMES);
+    REFUSE_FLOAT_AFTER_FILLING.store(false, SeqCst);
+    assert!(floats.is_empty(), "refused: no float call");
+    assert!(
+        i16s == expected_i16,
+        "refused: the int16 stream is unchanged"
+    );
+
+    OFFER_FLOAT_AUDIO.store(true, SeqCst);
+    let (i16s, floats) = recorded_audio(tone_rom(), FRAMES);
+    assert!(i16s.is_empty(), "offered: no int16 call");
+    assert!(
+        floats == stereo(|s| s),
+        "offered: the mixer's samples, as made"
+    );
+
+    // Committed for the loaded game: withdrawing the offer mid-game changes
+    // nothing until the next load, which negotiates again.
+    held(&I16_AUDIO).clear();
+    held(&F32_AUDIO).clear();
+    KEEP_AUDIO.store(true, SeqCst);
+    assert!(load(tone_rom(), true));
+    run_frame();
+    OFFER_FLOAT_AUDIO.store(false, SeqCst);
+    run_frame();
+    unload();
+    let (mid_i16, mid_f32) = (held(&I16_AUDIO).clone(), held(&F32_AUDIO).clone());
+    KEEP_AUDIO.store(false, SeqCst);
+    assert!(
+        mid_i16.is_empty() && !mid_f32.is_empty(),
+        "one format per loaded game"
+    );
+    let (i16s, floats) = recorded_audio(tone_rom(), 2);
+    assert!(
+        !i16s.is_empty() && floats.is_empty(),
+        "the next load is int16 again"
+    );
+}
+
+/// The float path's scale and saturation: full scale `1.0`, as the `int16_t`
+/// path's; out-of-range samples clamp to libretro's `[-1.0, 1.0]`; a NaN is
+/// `0.0`, as the `int16_t` cast makes it.
+#[test]
+fn float_samples_keep_the_int16_scale_and_saturate_the_same_way() {
+    for s in [0.0_f32, 0.5, -0.385, 0.87, 1.0, -1.0] {
+        assert_eq!(sample_to_f32(s), s);
+        assert_eq!(
+            sample_to_i16(sample_to_f32(s)),
+            sample_to_i16(s),
+            "{s}: one scale for both paths"
+        );
+    }
+    assert_eq!(sample_to_f32(1.5), 1.0);
+    assert_eq!(sample_to_f32(-7.0), -1.0);
+    assert_eq!(sample_to_f32(f32::NAN), 0.0);
+    assert_eq!(sample_to_i16(f32::NAN), 0);
 }
 
 /// `frames` frames of `nes` with no input, as XRGB8888 (the core's R/B swap).

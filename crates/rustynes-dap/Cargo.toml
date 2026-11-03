@@ -1,0 +1,39 @@
+# v3.6.0 T-DEBUG-DAP (D33) — source-level debugging of homebrew over the
+# Debug Adapter Protocol (VS Code and any other DAP client) and a GDB Remote
+# Serial Protocol stub. ADR 0049 records the decisions; `docs/dap-debugger.md`
+# is the spec.
+#
+# A separate crate and binary, like `rustynes-mcp`: an editor launches the
+# adapter as a child process, and it needs no window, GPU or audio device. It
+# depends on `rustynes-core` (with `debug-hooks`, for exec breakpoints) and on
+# two DWARF / ELF readers, nothing heavier.
+[package]
+name = "rustynes-dap"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Debug Adapter Protocol server and GDB stub over the RustyNES headless core: cc65 and llvm-mos source-level debugging"
+
+[[bin]]
+name = "rustynes-dap"
+path = "src/main.rs"
+
+[dependencies]
+# `debug-hooks` for exec breakpoints. `rustynes-script` and `rustynes-mcp`
+# already enable it on the core, so workspace feature unification is
+# unchanged by this line.
+rustynes-core = { workspace = true, features = ["debug-hooks"] }
+serde_json = { workspace = true }
+# `readMemory` returns its bytes base64-encoded (the DAP specification).
+base64 = "0.23"
+# The DWARF line-program and DIE readers (gimli-rs, MIT OR Apache-2.0) and the
+# ELF reader (gimli-rs, Apache-2.0 OR MIT). Read-only features only: no
+# writer, no Mach-O / PE / COFF / archive support compiled in.
+gimli = { version = "0.34", default-features = false, features = ["read", "std"] }
+object = { version = "0.40", default-features = false, features = ["read_core", "elf", "std"] }
+
+[lints]
+workspace = true

@@ -143,6 +143,8 @@ fun netplayConfig(settings: AppSettings): NpNetConfig {
  *               lets the OS pick. Returns nothing — the bound port + LAN IP surface
  *               through [hostInfo].
  * @param hostInfo the "IP:port" to share once hosting started (null until then).
+ * @param notice why the last LAN host / join did not start (v3.6.0: the
+ *               ACCESS_LOCAL_NETWORK permission was refused), or null.
  * @param lastJoinAddress the persisted "ip:port" prefilled into the Join field.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -150,6 +152,7 @@ fun netplayConfig(settings: AppSettings): NpNetConfig {
 fun NetplaySheet(
     status: NpStatus?,
     hostInfo: String?,
+    notice: String?,
     roomCode: String?,
     lastJoinAddress: String,
     lastRoomCode: String,
@@ -329,6 +332,11 @@ fun NetplaySheet(
                         }
                     }
                 }
+            }
+
+            // v3.6.0: why LAN play did not start (the permission was refused).
+            if (notice != null) {
+                Text(notice, fontSize = 13.sp, color = Color(0xFFFFB74D))
             }
 
             // The bound LAN address to share (host only, once listening).

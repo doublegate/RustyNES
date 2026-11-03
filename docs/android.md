@@ -154,7 +154,9 @@ and rendering decisions (UniFFI bridge plus the hybrid wgpu/Compose host).
   Android cross-play stays valid.
 - **No commercial ROMs are ever bundled.** ROM bytes come exclusively from the
   Storage Access Framework document picker (no path, raw bytes → `Nes::from_rom`).
-  The **`foss`** build declares no storage/network permissions and collects nothing;
+  The **`foss`** build declares no storage permission and collects nothing; its
+  network permissions are `INTERNET` and, from v3.6.0, `ACCESS_LOCAL_NETWORK`
+  (asked for only when LAN netplay starts; see "Android 17" below);
   the **`play`** build adds only the optional free Google Play services (Play Games,
   Cast, Play Integrity, in-app update, cloud save), which use the network and
   Google-account data — with no ads, no tracking, and no billing.
@@ -221,7 +223,8 @@ gradle wrapper --gradle-version 8.11.1   # first time, materialises ./gradlew
 > `assembleDebug` / `bundleRelease` anchors still fan out to both flavors. See "No
 > monetization (ADR 0035)" below.
 
-`minSdk 26` (AAudio floor), `targetSdk 35` (Play mandate), `compileSdk 35`. Ship
+`minSdk 26` (AAudio floor), `targetSdk 37` (Android 17, from v3.6.0; this line
+read 35 for several releases after the build moved to 36), `compileSdk 37`. Ship
 ABI is `arm64-v8a`; `x86_64` is included for the emulator. The release build runs
 R8 (`proguard-rules.pro` keeps the JNA + generated-binding classes).
 
@@ -310,7 +313,7 @@ alignment** on the shipped arm64 `.so`, and best-effort-bundles the AAB. It is
 | Workstream | State |
 |---|---|
 | **A** Foundation / build (bridge + platform crate + Gradle/Compose + CI) | **Done** — on-device |
-| **C** Audio (`AudioTrack` sink, blocking-write pacing) | **Done** — on-device |
+| **C** Audio (`AudioTrack` sink; blocking-write pacing until v3.6.0, then non-blocking writes paced by `AudioPacer`) | **Done** — on-device (the v3.6.0 pacing: emulator only, run-sheet L4) |
 | **D** Input (touch overlay + hardware gamepad → one late-latched mask) | **Done** — touch on-device |
 | **E** Save-states / SRAM / auto-resume / persistable ROM library | **Done** — save/load on-device |
 | **F** QoL (pause / fast-forward / mute) + responsive/foldable/immersive UI | **Done** — on-device |
@@ -372,6 +375,40 @@ relayed`, mock-TURN-verified by `relay_loopback`). Only a **live verify** — a
 hosted coturn + two real cellular/symmetric-NAT devices — remains. See
 `docs/netplay-webrtc.md` §2.5 and the **Mobile room-code checklist** in
 `deploy/README.md`.
+
+**Android 17 (v3.6.0, `T-ANDROID-API37`, `T-ANDROID-AUDIO-NONBLOCKING`).**
+The app targets API 37. Three behaviours follow:
+
+- **Local network permission.** Android 17 blocks traffic to and from local
+  addresses for an app that targets 37 unless it holds the runtime permission
+  `ACCESS_LOCAL_NETWORK` (the `NEARBY_DEVICES` group: UDP fails with `EPERM`,
+  TCP times out). LAN / direct-IP **Host** and **Join** therefore go through
+  `withLocalNetwork`, which asks `LocalNetworkAccess.decide(SDK_INT,
+  targetSdkVersion, granted)`: below API 37, or for a lower target, it never
+  asks (the permission does not exist there, and asking would be answered
+  "denied"); otherwise it shows the system prompt and starts LAN play only on
+  a grant. A refusal is shown in the netplay sheet, since the status line is
+  drawn only on the idle screen. Room-code play is not asked for: `NatConnect`
+  exchanges STUN-reflexive public addresses or a TURN relay, never a host
+  candidate. A user-configured relay on a LAN address would be local traffic;
+  that case is not handled. `LocalNetworkAccessTest` pins the decision, the
+  manifest declaration, `targetSdk` and the wiring; run-sheet rows L1-L3.
+- **Background audio.** Android 17 silences playback and refuses audio focus
+  for an app with no visible activity and no while-in-use foreground service,
+  without an exception. RustyNES plays only while started (on screen or in
+  picture-in-picture); v2.7.4 already paused in `onStop`, and the loop now
+  also refuses to start the track or ask for focus while `EmulatorHandle.visible`
+  is false (`audioMayPlay`). No foreground service is added. Row L5.
+- **Non-blocking audio.** `AudioPlayer.writeBytes` writes with
+  `WRITE_NON_BLOCKING` through the `ByteBuffer` overload (the one valid for a
+  `PCM_FLOAT` track), keeps what the track did not take (`AudioQueue`, bounded,
+  oldest dropped first) and the loop sleeps `AudioPacer.delayNanos`: until the
+  track holds about two NES frames (`targetFrames`), never more than two frames
+  at once, and on the wall clock when the frame wrote no audio or the play head
+  has stopped. The blocking write did the same pacing implicitly, on a shared
+  `Dispatchers.Default` worker and uncancellably. `AudioPacingTest` runs the
+  loop against a simulated DAC with millisecond truncation and 2 ms of
+  scheduler jitter (no underrun after warm-up); the device drift check is L4.
 
 **Deferred to a follow-up mobile point release** (per the locked MVP):
 RetroAchievements (Compose login UI over rcheevos) and Lua scripting. The egui

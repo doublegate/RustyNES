@@ -193,10 +193,30 @@ fn libretro_info_supported_extensions_are_the_ones_the_core_loads() {
     );
 }
 
-/// The libretro core's source, for the source-derived checks below.
+/// The libretro core's source, for the source-derived checks below: every
+/// module of the crate except the C-ABI test harness (`abi_tests.rs`, a fake
+/// frontend whose handlers name the same commands). Since v3.6.0 the option
+/// declarations live in `options.rs`, so `lib.rs` alone no longer holds them.
 fn core_source() -> String {
-    std::fs::read_to_string(workspace_root().join("crates/rustynes-libretro/src/lib.rs"))
-        .expect("read rustynes-libretro/src/lib.rs")
+    let dir = workspace_root().join("crates/rustynes-libretro/src");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .expect("read rustynes-libretro/src")
+        .map(|e| e.expect("a directory entry").path())
+        .filter(|p| {
+            p.extension().is_some_and(|x| x == "rs")
+                && p.file_name().is_some_and(|n| n != "abi_tests.rs")
+        })
+        .collect();
+    files.sort();
+    assert!(
+        files.iter().any(|p| p.ends_with("lib.rs")),
+        "the crate root must be among the sources read"
+    );
+    files
+        .iter()
+        .map(|p| std::fs::read_to_string(p).expect("read a libretro source file"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Capability flags must say what the core does (libretro re-audit NL-04).

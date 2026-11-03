@@ -44,7 +44,95 @@ wrapper crate `rustynes-libretro` builds with
    template for the Switch (`.gitlab-ci.yml` header), so no shipped build is
    affected, and the buildbot matrix is unchanged. A fix would need a nightly
    `-Zbuild-std` build and a `no_std` wrapper without `catch_unwind`, which
-   the panic-containment design depends on.
+   the panic-containment design depends on. **Re-checked, with a build, on
+   2026-10-23: see "Console targets" below.**
+
+## Console targets: Switch, PS Vita, 3DS (investigated 2026-10-23, v3.6.0, D28)
+
+`T-LIBRETRO-CONSOLES`, ticket LR-04. Decision recorded per target: **no-go
+for all three**, for the reasons below; nothing was added to `.gitlab-ci.yml`.
+Each reason is the state on this date, with what would change it.
+
+**What was checked, and how.**
+
+* The Rust targets, against the nightly platform-support pages
+  (`doc.rust-lang.org/nightly/rustc/platform-support.html` and each
+  target's page) and `rustc +1.99.1 --print target-list`, which lists all
+  three.
+* The libretro buildbot templates, by listing
+  `libretro-infrastructure/ci-templates` on `git.libretro.com` (69 files).
+  The Rust templates are `rust-android-jni`, `rust-apple`, `rust-ios`,
+  `rust-linux-{x64,i686,aarch64}`, `rust-osx`, `rust-webos` and
+  `rust-windows-{x64,i686}`: none for a console. The console templates are
+  C ones (`libnx-static.yml`, `vita-static.yml`, `ctr-static.yml`): each runs
+  `make platform=<x>` in a devkitPro or VitaSDK image, takes the core's
+  `<core>_libretro_<x>.a`, and links it into RetroArch's own static build
+  from that RetroArch job's artefacts. The images
+  (`libretro-build-devkitpro`, `libretro-build-libnx-devkitpro`,
+  `libretro-build-vita` Dockerfiles, read the same day) install no Rust;
+  `libretro-build-rust` installs no devkitPro or VitaSDK.
+* A build of this crate's staticlib for each target, in a scratch target
+  directory, with the installed nightly (`rustc 1.101.0-nightly
+  7189d39d9 2026-10-22`) and `-Zbuild-std`; the project's pinned toolchain
+  was not changed. devkitARM, devkitA64 and VitaSDK are not installed here,
+  so nothing was linked or run.
+
+| Target | Rust tier, `std` | Build here | Buildbot | Decision |
+| --- | --- | --- | --- | --- |
+| Switch, `aarch64-nintendo-switch-freestanding` | 3, `*` (no `std`) | **fails**: with a bindgen override, `std` itself does not compile for the target (`cfg_select!` finds no allocator or I/O-error module; `no_threads` on a target with threads) | no Rust template | **no-go** |
+| PS Vita, `armv7-sony-vita-newlibeabihf` | 3, `std` | **compiles** (`std,panic_unwind`, 5 min 48 s), 50 `retro_*` exports | no Rust template; the Vita image has no Rust | **no-go** |
+| 3DS, `armv6k-nintendo-3ds` | 3, `std` "?" (partial, via devkitARM + `pthread-3ds` / `shim-3ds`) | **compiles** (`std,panic_unwind`, 5 min 33 s), 50 `retro_*` exports | no Rust template; the devkitPro image has no Rust | **no-go** |
+
+**Switch: v2.9.8's reason holds, now checked by building rather than
+reading.** The only Rust target for the console is freestanding, without
+`std`, and this wrapper, `rust-libretro` and `rust-libretro-sys` need it
+(`std::fs` for the FDS BIOS and disk saves, `CString`, `catch_unwind`). The
+build first fails in bindgen (`version 'freestanding' in target triple ...
+is invalid`); with `BINDGEN_EXTRA_CLANG_ARGS_aarch64_nintendo_switch_freestanding=--target=aarch64-none-elf`
+it gets past that and fails in `std`. Would unblock it: a Rust target for
+the Switch that builds `std` against libnx (none exists upstream), or a
+`no_std` wrapper with no `catch_unwind`, which gives up the core's panic
+containment; plus a Rust job on a libnx image.
+
+**Vita and 3DS: the code compiles; everything after that is missing.**
+
+* *Toolchain.* Both need nightly `-Zbuild-std` (no `rust-std` ships for a
+  tier-3 target). The buildbot pins this project's stable toolchain and the
+  `libretro-cross` gate fails when `.gitlab-ci.yml`'s `RUSTUP_TOOLCHAIN`
+  differs from `rust-toolchain.toml`, so a console job would be the one
+  exception, on a moving nightly.
+* *Image.* No libretro image has both Rust and devkitARM or VitaSDK. A job
+  could install rustup at run time in the console image, or libretro could
+  build an image with both; either is libretro infrastructure's change to
+  make or accept, and the buildbot runs only on a push, which this
+  investigation did not make.
+* *Link.* Not attempted (no devkitARM or VitaSDK). The staticlibs leave
+  undefined what the console's libc and RetroArch's link must supply: libc
+  and file calls, `pthread_*`, the ARM EHABI unwinder (`_Unwind_*`,
+  `__aeabi_unwind_cpp_pr*`), and on the 3DS `getrandom` and
+  `__aeabi_read_tp`, which the Rust 3DS page says come from `shim-3ds`,
+  `pthread-3ds` or equivalents that RetroArch's 3DS build does not link
+  today.
+* *bindgen.* The Vita triple also needs
+  `BINDGEN_EXTRA_CLANG_ARGS_armv7_sony_vita_newlibeabihf=--target=armv7a-none-eabihf`
+  (clang rejects `newlibeabihf` as a triple version), as MinGW needs its
+  override (`.cargo/config.toml`). The 3DS triple needed none.
+* *Speed, the deciding reason, and NOT measured.* The core costs about 4 ms
+  per NTSC frame on the development host, an Intel i9-10850K
+  (`docs/performance.md`), about 4 times faster than real time. Full speed on
+  a console needs a CPU no more than about 4 times slower than that host on
+  this single-threaded workload. The Vita's Cortex-A9 runs at up to 444 MHz
+  and the 3DS's ARM11 at 268 MHz (804 MHz on the New 3DS); by clock alone
+  that is 10 to 20 times slower, before the difference in instructions per
+  clock. No figure was measured on either console or an emulator of one, so
+  this is a reasoned expectation, not a result: it would take a Vita or 3DS
+  build that links, run on hardware or in Vita3K or Citra, to settle.
+
+**What would reopen this:** a measured frame time on the device within the
+16.6 ms budget (or a decision that a slower-than-real-time core is worth
+shipping), a libretro image with Rust and the console SDK, and a link of
+the staticlib into RetroArch's static build for the console. Until then
+the buildbot matrix is unchanged and the core's `.info` claims no console.
 
 ## The Abstraction Layer (`rust-libretro`)
 

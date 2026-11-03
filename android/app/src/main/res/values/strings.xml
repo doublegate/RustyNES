@@ -204,4 +204,6 @@
     <string name="onboarding_dont_show_again">Do not show again</string>
     <string name="host_warning_pre_timebase_movie">This movie was recorded on a pre-v2.0.0 build. Input replay proceeds, but exact framebuffer/audio reproduction is not guaranteed across the engine-timebase change (ADR 0028).</string>
     <string name="host_warning_recovered_from_internal_error">RustyNES stopped the game after an internal error. Any netplay session was ended. Reopen the game or load a save state to continue.</string>
+    <!-- v3.6.0 (T-ANDROID-API37): ACCESS_LOCAL_NETWORK refused for LAN netplay. -->
+    <string name="netplay_local_network_refused">LAN play needs the Nearby devices permission to reach the other player. Allow it in Settings › Apps › RustyNES › Permissions › Nearby devices, then host or join again. Online (room-code) play does not need it.</string>
 </resources>

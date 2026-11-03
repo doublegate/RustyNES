@@ -10,14 +10,20 @@ use crate::Region;
 use crate::envelope::Envelope;
 use crate::length::LengthCounter;
 
-/// 16-entry NTSC noise period table (NESdev wiki).  Index = bits 0-3 of `$400E`.
+/// 16-entry NTSC noise period table (NESdev wiki), in CPU cycles.
+///
+/// Each entry is the CPU cycles between shift-register clocks; index = bits
+/// 0-3 of `$400E`. The timer runs once
+/// per APU cycle, so [`Noise::write_period`] converts an entry to a reload
+/// of `N / 2 - 1` timer clocks.
 pub const NTSC_NOISE_PERIODS: [u16; 16] = [
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
 ];
 
-/// 16-entry PAL noise period table (NESdev wiki).
+/// 16-entry PAL noise period table (NESdev wiki), in CPU cycles. Index 1
+/// read 7 until v3.6.0; the page gives 8, and its periods are all even.
 pub const PAL_NOISE_PERIODS: [u16; 16] = [
-    4, 7, 14, 30, 60, 88, 118, 148, 188, 236, 354, 472, 708, 944, 1890, 3778,
+    4, 8, 14, 30, 60, 88, 118, 148, 188, 236, 354, 472, 708, 944, 1890, 3778,
 ];
 
 /// Noise channel state.
@@ -29,7 +35,8 @@ pub struct Noise {
     /// (feedback from bit 6, 93 or 31 steps depending on where the register
     /// was when the mode was set; NESdev wiki "APU Noise").
     pub(crate) mode: bool,
-    /// Timer reload (from period table).
+    /// Timer reload in APU cycles: the table's CPU-cycle period halved,
+    /// minus one, because the timer reloads on the clock after it reaches 0.
     pub(crate) timer_period: u16,
     /// Internal countdown timer.
     pub(crate) timer: u16,
@@ -48,7 +55,7 @@ impl Noise {
         Self {
             lfsr: 1,
             mode: false,
-            timer_period: 4,
+            timer_period: NTSC_NOISE_PERIODS[0] / 2 - 1,
             timer: 0,
             envelope: Envelope {
                 start: false,
@@ -85,10 +92,16 @@ impl Noise {
     pub fn write_period(&mut self, value: u8) {
         self.mode = (value & 0x80) != 0;
         let idx = (value & 0x0F) as usize;
-        self.timer_period = match self.region {
+        let cpu_cycles = match self.region {
             Region::Pal => PAL_NOISE_PERIODS[idx],
             _ => NTSC_NOISE_PERIODS[idx],
         };
+        // NESdev "APU Noise": the table gives CPU cycles between shifts, and
+        // the timer is clocked once per APU cycle (two CPU cycles). A reload
+        // of R gives R + 1 timer clocks per shift, so R = N / 2 - 1. Until
+        // v3.6.0 the entry itself was the reload, which shifted every
+        // 2 x (N + 1) CPU cycles: about half the documented rate.
+        self.timer_period = cpu_cycles / 2 - 1;
     }
 
     /// `$400F` write: length load + envelope restart.
@@ -162,5 +175,63 @@ mod tests {
         n.clock_timer();
         // bit0=1 ^ bit6=0 = 1.
         assert_eq!(n.lfsr, 0x4000);
+    }
+
+    /// Count `clock_timer` calls (APU cycles, two CPU cycles each) between
+    /// two consecutive LFSR shifts at period index `idx`.
+    fn apu_cycles_per_shift(region: Region, idx: u8) -> u32 {
+        let mut n = Noise::new(region);
+        n.write_period(idx);
+        n.lfsr = 1;
+        // Run to the first shift so the count starts on a reload.
+        while n.lfsr == 1 {
+            n.clock_timer();
+        }
+        let before = n.lfsr;
+        let mut count = 0;
+        while n.lfsr == before {
+            n.clock_timer();
+            count += 1;
+        }
+        count
+    }
+
+    /// NESdev "APU Noise": "The period determines how many CPU cycles happen
+    /// between shift register clocks. These periods are all even numbers
+    /// because there are 2 CPU cycles in an APU cycle." The timer is clocked
+    /// once per APU cycle, so a table entry of N CPU cycles is N / 2 timer
+    /// clocks. Until v3.6.0 the table value was loaded as the timer's reload,
+    /// which shifted every 2 x (N + 1) CPU cycles: the noise ran at about
+    /// half its documented rate on every region (MiSTer sibling finding 9.2).
+    #[test]
+    fn the_lfsr_shifts_every_table_period_in_cpu_cycles() {
+        for idx in 0..16u8 {
+            let i = idx as usize;
+            assert_eq!(
+                apu_cycles_per_shift(Region::Ntsc, idx) * 2,
+                u32::from(NTSC_NOISE_PERIODS[i]),
+                "NTSC index {idx}"
+            );
+            assert_eq!(
+                apu_cycles_per_shift(Region::Pal, idx) * 2,
+                u32::from(PAL_NOISE_PERIODS[i]),
+                "PAL index {idx}"
+            );
+        }
+    }
+
+    /// The PAL table as the NESdev page gives it: index 1 is 8 CPU cycles.
+    /// Until v3.6.0 it read 7, an odd period the page's own note ("all even
+    /// numbers") rules out (MiSTer sibling finding 9.1).
+    #[test]
+    fn the_pal_table_matches_the_page() {
+        assert_eq!(
+            PAL_NOISE_PERIODS,
+            [
+                4, 8, 14, 30, 60, 88, 118, 148, 188, 236, 354, 472, 708, 944, 1890, 3778
+            ]
+        );
+        assert!(PAL_NOISE_PERIODS.iter().all(|p| p % 2 == 0));
+        assert!(NTSC_NOISE_PERIODS.iter().all(|p| p % 2 == 0));
     }
 }

@@ -94,6 +94,7 @@ LGPL-2.1-or-later ones may be incorporated into a GPL-3.0-or-later work.
 | `crates/rustynes-mappers/src/lib.rs` (mapper 147 / JV001, UNIF dispatch) | puNES; FCEUX | `JV001.c` / `mapper_147.c` (**ported bit-for-bit**); UNIF board handling | GPL-2.0-or-later |
 | `crates/rustynes-mappers/src/unif.rs` | Mesen2; FCEUX | `UnifLoader.cpp` + `unif.cpp` board-name tables | GPL-3.0-or-later / GPL-2.0-or-later |
 | `crates/rustynes-frontend/src/debugger/source_map.rs` | Mesen2 | `DbgImporter` / `NesDbgImporter` | GPL-3.0-or-later |
+| `crates/rustynes-dap/src/debuginfo/cc65.rs` | Mesen2 (through `source_map.rs` above) | `DbgImporter` / `NesDbgImporter`: the ld65 `.dbg` reader, written from ld65's output after its author had read `source_map.rs`; classified derived by the maintainer, 2026-11-03 (v3.6.0) | GPL-3.0-or-later |
 | `crates/rustynes-test-harness/src/bin/pgo_trainer.rs` | Mesen2 | `PGOHelper` corpus-sweep harness | GPL-3.0-or-later |
 | `crates/rustynes-script/src/lua_pattern.rs` | Lua 5.4.9 (not an emulator; v2.9.0, re-audit NF-02) | `lstrlib.c` pattern matcher (`match` and its helpers) and the `str_find_aux` / `gmatch` / `str_gsub` drivers, followed function for function so the script sandbox's step-metered replacement matches Lua exactly; read from the copy mlua vendors (`lua-src` 551.0.2) | MIT |
 
@@ -288,6 +289,7 @@ Genuinely incorporated, each GPL-compatible and attributed in `NOTICE`:
 | emu2413 v1.5.9 | MIT | 2020 Mitsutaka Okazaki | `crates/rustynes-apu/src/opll.rs` (Rust port; VRC7 audio, ADR 0006) |
 | TriCNES | MIT | 2025 Chris Siebert | `crates/rustynes-{ppu,cpu,core}` (models ported from commit `9199870`) + vendored golden oracle (commit `94f1b117`, re-synced 2026-09-19) |
 | rcheevos v12.5.0 | MIT | 2018 RetroAchievements.org | `crates/rustynes-cheevos/vendor/rcheevos/` (optional `retroachievements` feature) |
+| libretro.h (upstream `libretro/RetroArch`, commit `28f4c9c6a361`) | MIT | 2010-2024 The RetroArch team | `crates/rustynes-libretro/src/lib.rs`: the `GET_AUDIO_SAMPLE_BATCH_FLOAT` command number and its two declarations, transcribed as Rust (v3.6.0; interface definitions, newer than the vendored header) |
 | blip_buf | LGPL-2.1-or-later | Shay Green (Blargg) | `crates/rustynes-apu/src/blip.rs` (band-limited synthesis; GPLv3-compatible) |
 | Font Awesome Free / bundled fonts | their own licenses (OFL-1.1 etc.) | respective authors | `crates/rustynes-frontend/assets/fonts/` |
 

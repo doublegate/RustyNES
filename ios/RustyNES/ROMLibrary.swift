@@ -111,7 +111,7 @@ final class ROMLibrary: ObservableObject {
             // Copy into the sandbox (idempotent: a re-import of the same ROM just
             // updates the index entry's last-played, not the bytes).
             if !FileManager.default.fileExists(atPath: dest.path) {
-                try data.write(to: dest, options: .atomic)
+                try DurableWrite.write(data, to: dest)
             }
             return (sha, legacy)
         }.value
@@ -297,7 +297,7 @@ final class ROMLibrary: ObservableObject {
         ensureDirectories()
         do {
             let data = try JSONEncoder().encode(entries)
-            try data.write(to: indexURL, options: .atomic)
+            try DurableWrite.write(data, to: indexURL)
             return true
         } catch {
             NSLog("RustyNES: library index not saved: \(error)")

@@ -141,7 +141,7 @@ pub fn start() -> Result<(), JsValue> {
     install_drop_loader(&document);
     start_raf_loop(&canvas)?;
 
-    log("RustyNES wasm32 — armed. Load a .nes ROM to begin.");
+    log("RustyNES wasm32 — armed. Load a .nes ROM (or a .zip holding one) to begin.");
     Ok(())
 }
 
@@ -221,7 +221,7 @@ fn install_drop_loader(document: &web_sys::Document) {
             }
             DropKind::Unsupported => {
                 log(&format!(
-                    "dropped file ignored (not a .nes / .unf / .rnm): {name}"
+                    "dropped file ignored (not a .nes / .unf / .zip / .rnm): {name}"
                 ));
                 return;
             }
@@ -245,7 +245,22 @@ fn install_drop_loader(document: &web_sys::Document) {
 /// Build the console from picked or dropped ROM bytes and install it in
 /// [`EMU`]. Shared by the `<input>` picker and the drop zone (v3.5.0; until
 /// then this body was inline in the picker's `onload`).
-fn load_rom_bytes(mut bytes: Vec<u8>) {
+fn load_rom_bytes(bytes: Vec<u8>) {
+    // v3.6.0 — a picked or dropped `.zip` is unpacked first (the shared
+    // `rom_archive`, the full web build's and the desktop's code); an archive
+    // with nothing loadable leaves the running game alone.
+    let mut bytes = match crate::rom_archive::unpack_for_web(bytes) {
+        Ok((rom, name)) => {
+            if let Some(name) = name {
+                log(&format!("loaded {name} from the archive"));
+            }
+            rom
+        }
+        Err(msg) => {
+            log(&msg);
+            return;
+        }
+    };
     // v2.3.7 — the per-game database's header corrections, applied
     // before the core parses the header. Same fix as the `wasm-winit`
     // demo's `AppEvent::RomLoaded` arm: the helper used to be `cfg`-gated

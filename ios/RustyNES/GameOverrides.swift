@@ -100,7 +100,7 @@ final class GameOverrides: ObservableObject {
         try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
         do {
             let data = try JSONEncoder().encode(overrides)
-            try data.write(to: fileURL, options: .atomic)
+            try DurableWrite.write(data, to: fileURL)
             return true
         } catch {
             NSLog("RustyNES: per-game overrides not saved: \(error)")

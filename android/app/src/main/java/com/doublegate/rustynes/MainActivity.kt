@@ -293,6 +293,7 @@ class MainActivity : AppCompatActivity() {
     // calls onPause but not onStop, and PiP must keep playing.
     override fun onStop() {
         super.onStop()
+        emulator.visible = false
         if (!emulator.paused) {
             emulator.paused = true
             pausedByStop = true
@@ -301,6 +302,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        emulator.visible = true
         if (pausedByStop) {
             pausedByStop = false
             emulator.paused = false
@@ -599,6 +601,15 @@ class EmulatorHandle {
     /** Emulation paused (the loop idles, no frames advance). Read by the loop. */
     @Volatile
     var paused: Boolean = false
+
+    /**
+     * v3.6.0 (`T-ANDROID-API37`): the activity is started -- on screen, or in
+     * picture-in-picture -- so the app may play audio ([audioMayPlay]). Set by
+     * `onStart` / `onStop`; read by the loop, which plays nothing and asks for no
+     * focus while it is false, whatever [paused] says.
+     */
+    @Volatile
+    var visible: Boolean = true
 
     /** Fast-forward: drop the frame-pace delay + audio so the core runs ahead. */
     @Volatile
@@ -1057,8 +1068,8 @@ private const val NES_WIDTH = 256
 private const val NES_HEIGHT = 240
 
 // NTSC frame period in nanoseconds (the wall-clock pacing floor for ROMs that
-// emit little/no audio; sound-producing ROMs are paced by the blocking audio
-// write). PAL/Dendy refinement is a later increment.
+// emit little/no audio; sound-producing ROMs are paced by the audio clock,
+// AudioPacer). PAL/Dendy refinement is a later increment.
 private const val FRAME_NANOS = 16_639_267L
 
 /**
@@ -1066,9 +1077,16 @@ private const val FRAME_NANOS = 16_639_267L
  *
  * The core emits deterministic `f32` samples at the host rate; this is a pure
  * sink (the determinism contract is timing-only and lives outside the emitted
- * stream). A blocking `AudioTrack` write paces the emulation loop to real time
- * whenever sound is present — the audio clock, not the wall clock, drives frame
- * cadence — while a small buffer absorbs scheduling jitter.
+ * stream). The audio clock, not the wall clock, drives frame cadence whenever
+ * sound is present, while a small buffer absorbs scheduling jitter.
+ *
+ * v3.6.0 (`T-ANDROID-AUDIO-NONBLOCKING`): the write is non-blocking and the
+ * pacing is explicit. [writeBytes] hands the track what it takes now and keeps
+ * the rest ([AudioQueue]); [paceDelayNanos] tells the loop how long to sleep so
+ * the track holds [AudioPacer.targetFrames] (about two NES frames). Until v3.6.0
+ * a `WRITE_BLOCKING` write did both, on a shared `Dispatchers.Default` worker and
+ * uncancellably; see `AudioPacing.kt` for why the change waited for its own
+ * pacing (`c04da0ca`).
  */
 private class AudioPlayer(sampleRate: Int, private val audioManager: AudioManager?) {
     private val track: AudioTrack
@@ -1090,6 +1108,16 @@ private class AudioPlayer(sampleRate: Int, private val audioManager: AudioManage
     private var focusMuted = false
     private var focusRequest: AudioFocusRequest? = null
     private var playing = true
+
+    /** v3.6.0: the bytes the track has not taken yet, and the explicit pacing. */
+    private val queue: AudioQueue
+    private val pacer: AudioPacer
+
+    /** Frames the track has accepted since it was created (for [AudioPacer.queuedFrames]). */
+    private var writtenFrames = 0L
+
+    /** Whether the current frame wrote audio, so its pacing follows the audio clock. */
+    private var wroteThisFrame = false
 
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
         when (change) {
@@ -1124,6 +1152,13 @@ private class AudioPlayer(sampleRate: Int, private val audioManager: AudioManage
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
             .build()
+        // The buffer the track actually got (a low-latency track may be given
+        // another size than the one asked for), in frames.
+        val capacityFrames = track.bufferSizeInFrames.takeIf { it > 0 } ?: (bufBytes / FLOAT_MONO_FRAME_BYTES)
+        pacer = AudioPacer(sampleRate, capacityFrames, FRAME_NANOS)
+        // One buffer's worth may wait outside the track; more than that means it
+        // has stopped taking audio, and the oldest goes (AudioQueue).
+        queue = AudioQueue(capacityFrames * FLOAT_MONO_FRAME_BYTES)
         requestFocus()
         track.play()
     }
@@ -1158,45 +1193,49 @@ private class AudioPlayer(sampleRate: Int, private val audioManager: AudioManage
     }
 
     /**
-     * Write one frame of samples; blocks while the ring is full (paces the loop).
+     * v1.8.4 hot path: write raw little-endian `f32` bytes straight to the
+     * `PCM_FLOAT` track. The bytes come from `NesController.drainAudioBytes()` as a
+     * single `ByteArray` (no per-sample `Float` boxing). v3.6.0: non-blocking --
+     * the track takes what fits and [queue] keeps the rest, in order, for the next
+     * call; the loop then sleeps [paceDelayNanos].
      *
-     * UniFFI maps the core's `Vec<f32>` to a boxed `List<Float>`, so this copies
-     * into a primitive `FloatArray` for the `AudioTrack` write. The per-frame
-     * boxing is a known cost; a later increment moves the audio pull into the
-     * `rustynes-android` JNI hot path (a primitive `float[]`/native ring) per the
-     * v1.8.0 plan's Workstream C.
+     * The overload is `write(ByteBuffer, Int, Int)`, which takes data in the
+     * track's own format, here PCM_FLOAT. The v3.2.0 draft's
+     * `write(byte[], ..., WRITE_NON_BLOCKING)` is the 8/16-bit PCM overload and
+     * fails on a float track; the order is set explicitly because a wrapped
+     * buffer defaults to BIG_ENDIAN while the bytes come from `to_le_bytes`
+     * (Android is little-endian, so this is the identity).
      */
-    fun write(samples: List<Float>) {
-        if (samples.isNotEmpty()) {
-            val buf = samples.toFloatArray()
-            track.write(buf, 0, buf.size, AudioTrack.WRITE_BLOCKING)
+    fun writeBytes(bytes: ByteArray) {
+        if (focusMuted) return // another app holds audio focus (AND-03)
+        if (bytes.isEmpty()) return
+        wroteThisFrame = true
+        val took = queue.offer(bytes) { buf ->
+            track.write(buf, buf.remaining(), AudioTrack.WRITE_NON_BLOCKING)
         }
+        writtenFrames += took / FLOAT_MONO_FRAME_BYTES
     }
 
     /**
-     * v1.8.4 hot path: write raw little-endian `f32` bytes straight to the
-     * `PCM_FLOAT` track. The bytes come from `NesController.drainAudioBytes()` as a
-     * single `ByteArray` (no per-sample `Float` boxing); `AudioTrack` reads them as
-     * native-order PCM floats (Android is little-endian), so there's no float copy
-     * either. Blocks while the ring is full (paces the loop), exactly like [write].
+     * How long the loop sleeps after this frame ([AudioPacer.delayNanos]): until
+     * the track is back down to its target fill when the frame wrote audio, the
+     * rest of the wall-clock frame when it did not.
      */
-    fun writeBytes(bytes: ByteArray) {
-        // Blocking, deliberately (maintainer, 2026-10-14). A v3.2.0 draft wrote
-        // `write(byte[], ..., WRITE_NON_BLOCKING)`: that overload is for 8/16-bit
-        // PCM, not this PCM_FLOAT track, it dropped any partial write, and it
-        // removed the blocking that clocks this loop to the audio device.
-        // Non-blocking audio needs its own pacing and is a follow-up for a device.
-        if (focusMuted) return // another app holds audio focus (AND-03)
-        if (bytes.isNotEmpty()) {
-            // The samples are little-endian f32 (from `to_le_bytes`); set the buffer
-            // order explicitly so the PCM_FLOAT track reads them correctly regardless
-            // of the JVM's default (BIG_ENDIAN) — Android is LE, so this is identity.
-            val bb = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            track.write(bb, bytes.size, AudioTrack.WRITE_BLOCKING)
-        }
+    fun paceDelayNanos(elapsedNanos: Long): Long {
+        val head = track.playbackHeadPosition
+        val audioDriven = wroteThisFrame
+        wroteThisFrame = false
+        return pacer.delayNanos(
+            pacer.queuedFrames(writtenFrames, head),
+            head,
+            System.nanoTime(),
+            elapsedNanos,
+            audioDriven,
+        )
     }
 
     fun release() {
+        queue.clear()
         runCatching { track.pause(); track.flush(); track.stop() }
         focusRequest?.let { req -> audioManager?.abandonAudioFocusRequest(req) }
         track.release()
@@ -1799,6 +1838,45 @@ private fun EmulatorScreen(
         runCatching {
             val blob = ctrl.raSerializeProgress()
             if (blob.isNotEmpty()) RaProgressStore.save(context, sha, blob)
+        }
+    }
+
+    // v3.6.0 (`T-ANDROID-API37`): LAN / direct-IP netplay needs
+    // ACCESS_LOCAL_NETWORK on Android 17 once the app targets API 37; without it
+    // the UDP socket's sends fail with EPERM and a join only times out. The
+    // decision is LocalNetworkAccess's (JVM-tested); this asks the system when it
+    // says ASK and runs the held action only on a grant.
+    var pendingLanAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    // Shown in the netplay sheet: `status` is drawn only on the idle screen, so a
+    // refusal while a game runs (the only time LAN play can start) was invisible
+    // there (found on the API 37 emulator).
+    var npNotice by remember { mutableStateOf<String?>(null) }
+    val localNetworkPrompt = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val action = pendingLanAction
+        pendingLanAction = null
+        when (LocalNetworkAccess.afterPrompt(granted)) {
+            LocalNetworkAccess.Outcome.PROCEED -> action?.invoke()
+            LocalNetworkAccess.Outcome.REFUSED -> {
+                status = context.getString(R.string.netplay_local_network_refused)
+                npNotice = status
+            }
+        }
+    }
+
+    fun withLocalNetwork(action: () -> Unit) {
+        npNotice = null
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            LocalNetworkAccess.PERMISSION,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        when (LocalNetworkAccess.decide(Build.VERSION.SDK_INT, context.applicationInfo.targetSdkVersion, granted)) {
+            LocalNetworkAccess.Decision.PROCEED -> action()
+            LocalNetworkAccess.Decision.ASK -> {
+                pendingLanAction = action
+                localNetworkPrompt.launch(LocalNetworkAccess.PERMISSION)
+            }
         }
     }
 
@@ -2901,14 +2979,15 @@ private fun EmulatorScreen(
         NetplaySheet(
             status = npStatus,
             hostInfo = npHostInfo,
+            notice = npNotice,
             roomCode = npRoomCode,
             lastJoinAddress = settings.lastJoinAddress,
             lastRoomCode = settings.lastRoomCode,
             // Online play needs a real (non-placeholder) signaling relay, or a
             // hosted base compiled into this build (v3.4.1).
             onlineConfigured = onlineNetplayConfigured(settings),
-            onHost = { port, players -> netplayHost(port, players) },
-            onJoin = { addr -> netplayJoin(addr) },
+            onHost = { port, players -> withLocalNetwork { netplayHost(port, players) } },
+            onJoin = { addr -> withLocalNetwork { netplayJoin(addr) } },
             onHostRoom = { netplayHostRoom() },
             onJoinRoom = { code -> netplayJoinRoom(code) },
             onLeave = { netplayLeave() },
@@ -2956,7 +3035,8 @@ private fun EmulatorScreen(
 
     // Emulation loop: run frames + render audio on a background dispatcher, then
     // publish each frame to Compose. Pacing is audio-clocked when sound is present
-    // (the blocking AudioTrack write paces the loop to real time) with a wall-clock
+    // (v3.6.0: the loop sleeps while the track holds more than its target fill,
+    // AudioPacer; until then a blocking AudioTrack write did it) with a wall-clock
     // floor so silent ROMs still run at ~60 Hz.
     LaunchedEffect(Unit) {
         val reuse = Bitmap.createBitmap(NES_WIDTH, NES_HEIGHT, Bitmap.Config.ARGB_8888)
@@ -3005,7 +3085,13 @@ private fun EmulatorScreen(
                         gamepad.onControllerReady()
                         emulator.reapplyAllPorts()
                     }
-                    if (ctrl == null || emulator.paused) {
+                    // v3.6.0 (`T-ANDROID-API37`): only while the activity is
+                    // started. Android 17 silences playback and refuses focus for an
+                    // app with no visible activity and no foreground service, and a
+                    // focus request refused there left the game muted after it came
+                    // back. onStop also pauses (AND-03); this holds even if something
+                    // unpauses in between.
+                    if (ctrl == null || !audioMayPlay(emulator.visible, running)) {
                         audio.pause() // AND-03: silence + release focus while paused
                         delay(50)
                         continue
@@ -3066,7 +3152,7 @@ private fun EmulatorScreen(
                     }
                     val start = System.nanoTime()
                     // Emulate, play this frame's audio, and pack the framebuffer all
-                    // off the main thread (the blocking audio write and the 61k-pixel
+                    // off the main thread (the audio write and the 61k-pixel
                     // RGBA->ARGB pack must never run on the UI thread). Only the cheap
                     // setPixels + asImageBitmap stay on the UI thread.
                     var usedHd = false
@@ -3229,8 +3315,12 @@ private fun EmulatorScreen(
                             ?.let { codes -> status = codes.joinToString("\n") { hostWarningText(context, it) } }
                     }
                     // Fast-forward skips the pacing delay so the core runs ahead.
+                    // v3.6.0 (`T-ANDROID-AUDIO-NONBLOCKING`): the audio clock paces
+                    // the loop here, by a cancellable delay, instead of inside a
+                    // blocking write (AudioPacer); a frame that wrote no audio
+                    // paces on the wall clock as before.
                     if (!turbo) {
-                        val remainingMs = (FRAME_NANOS - (System.nanoTime() - start)) / 1_000_000
+                        val remainingMs = audio.paceDelayNanos(System.nanoTime() - start) / 1_000_000
                         if (remainingMs > 0) delay(remainingMs)
                     }
                 } catch (e: InternalException) {

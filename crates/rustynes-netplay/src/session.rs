@@ -702,22 +702,43 @@ impl<T: Transport> RollbackSession<T> {
     /// Record the local player's input for the frame it will apply to
     /// (`current_frame + input_delay`). Call once per tick before
     /// [`Self::advance`].
+    ///
+    /// **The first input recorded for a frame is final** (v3.6.0), exactly as
+    /// a remote player's first real value is in `ingest_single_input`. A tick
+    /// on which [`Self::advance`] stalled leaves `current_frame` where it was,
+    /// so the next call names the SAME target frame; every frontend calls this
+    /// once per tick with whatever is held on that tick, so the second call
+    /// usually carries different buttons. Until v3.6.0 it overwrote the local
+    /// cell and sent the new value, while each peer had already kept the
+    /// first: the local machine and its peers then ran different input for
+    /// that frame, and the session desynced at the next checksum. Now a later
+    /// call for an authored frame changes nothing and resends the value
+    /// already recorded; the newer buttons apply from the next frame
+    /// produced. (`T-NETPLAY-UI-SYNC-FLAKE`; gate
+    /// `mesh_sync::a_stalled_tick_does_not_re_author_the_local_input`.)
     pub fn add_local_input(&mut self, input: Buttons) {
         let target = self.current_frame + self.config.input_delay;
         let lp = self.local_player();
-        if let Some(slot) = self.slot_mut(target) {
-            slot.players[lp as usize] = PlayerInput {
+        // `slot_mut` is `None` only below the pruned history, which the
+        // target (at or past the present) never is.
+        let Some(slot) = self.slot_mut(target) else {
+            return;
+        };
+        let cell = &mut slot.players[lp as usize];
+        if !cell.confirmed {
+            *cell = PlayerInput {
                 input: input.bits(),
                 confirmed: true,
             };
         }
+        let recorded = cell.input;
         // Immediately tell every peer; the retransmit window
         // (`resend_unacked_local_inputs`) covers a loss. The transport fans
         // this out to all other players (mesh topology).
         self.transport.send(&NetMessage::Input {
             player: lp,
             frame: target,
-            input: input.bits(),
+            input: recorded,
         });
     }
 

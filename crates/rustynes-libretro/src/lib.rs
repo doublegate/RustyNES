@@ -77,6 +77,7 @@
 #![allow(clippy::ptr_as_ptr)]
 #![warn(missing_docs)]
 
+use options::STATE_TRAILER_LEN;
 use rust_libretro::{
     contexts::*,
     core::{Core, CoreOptions},
@@ -87,6 +88,8 @@ use rust_libretro::{
 use rustynes_core::{Emu, Nes, Region, VsDualSystem};
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
+
+mod options;
 
 /// Test-only switch: the next `retro_run` panics inside the frame, so the
 /// C-ABI harness can drive a real panic through [`RustyNesLibretro::contained`].
@@ -353,27 +356,6 @@ const fn port_descriptors<const N: usize>(
     out
 }
 
-/// The Four Score core option: its key, and the `SET_VARIABLES` array that
-/// declares it (terminated by a null key). `'static` because the frontend
-/// keeps the pointers.
-const FOUR_SCORE_KEY: &CStr = c"rustynes_four_score";
-
-struct CoreVariables([retro_variable; 2]);
-
-// SAFETY: pointers to `'static` C string literals, never mutated.
-unsafe impl Sync for CoreVariables {}
-
-static CORE_VARIABLES: CoreVariables = CoreVariables([
-    retro_variable {
-        key: FOUR_SCORE_KEY.as_ptr(),
-        value: c"Four Score (players 3 and 4); disabled|enabled".as_ptr(),
-    },
-    retro_variable {
-        key: std::ptr::null(),
-        value: std::ptr::null(),
-    },
-]);
-
 /// Named `RETRO_ENVIRONMENT_SET_MEMORY_MAPS` address space for PPU nametable
 /// RAM (CIRAM), distinct from the blank/default CPU-bus address space WRAM
 /// and SRAM are registered under. See `register_memory_maps`.
@@ -421,6 +403,17 @@ pub struct RustyNesLibretro {
     /// Pre-allocated to avoid heap allocations when draining audio batches.
     audio_float_buffer: Vec<f32>,
 
+    /// The stereo interleave of `audio_float_buffer` for the float callback
+    /// (v3.6.0), pre-allocated as `audio_buffer` is.
+    audio_stereo_float: Vec<f32>,
+
+    /// The frontend's float sample-batch callback, when it offered one at
+    /// `retro_load_game` (`GET_AUDIO_SAMPLE_BATCH_FLOAT`); the core then
+    /// sends every sample of the loaded game through it and none through the
+    /// `int16_t` callback, as libretro.h requires. Cleared at unload, where
+    /// the pointer stops being valid.
+    float_audio: Option<AudioSampleBatchFloat>,
+
     /// Intermediate buffer for the video framebuffer.
     ///
     /// Pre-allocated to hold 256x240 RGBA8 pixels. Used to swap R and B channels
@@ -462,16 +455,18 @@ pub struct RustyNesLibretro {
     /// hardware requires that, and the Vs. cabinet has four ports.
     port_devices: [u32; 4],
 
-    /// The `rustynes_four_score` core option: whether the Four Score adapter is
-    /// plugged in, so players 3 and 4 (libretro ports 2 and 3) reach the game.
-    /// Off by default, as on the console, because a game that does not expect
-    /// the adapter can read its signature bits.
-    four_score: bool,
+    /// The core options as last read (`on_options_changed`). Among them
+    /// `four_score`: whether the Four Score adapter is plugged in, so players
+    /// 3 and 4 (libretro ports 2 and 3) reach the game. Off by default, as on
+    /// the console, because a game that does not expect the adapter can read
+    /// its signature bits.
+    options: options::OptionValues,
 
-    /// Whether the core options have been declared (`SET_VARIABLES`) since
-    /// the last `retro_deinit`. Cleared there, so each init cycle declares
-    /// them once, from the first `retro_set_environment` of the cycle
-    /// (libretro re-audit NL-05; see [`Self::declare_core_options`]).
+    /// Whether the core options have been declared (`SET_CORE_OPTIONS_V2`
+    /// or `SET_VARIABLES`) since the last `retro_deinit`. Cleared there, so
+    /// each init cycle declares them once, from the first
+    /// `retro_set_environment` of the cycle (libretro re-audit NL-05; see
+    /// [`Self::declare_core_options`]).
     options_declared: bool,
 
     /// The save file for the loaded FDS disk's in-game saves, or `None` for
@@ -485,6 +480,12 @@ pub struct RustyNesLibretro {
 
     /// The Vs. System coin and service inputs (libretro re-audit NL-08).
     vs_panel: VsPanel,
+
+    /// The DIP-switch setting the game database gave each console at load
+    /// (index 0: the cartridge, or a cabinet's main console; 1: its sub
+    /// console), which the `rustynes_vs_dip_*` options override switch by
+    /// switch (LR-03, [`apply_console_options`]).
+    vs_dip_base: [u8; 2],
 
     /// Whether the input descriptors currently name the Vs. panel, so
     /// unloading (or loading a non-Vs. game) sends the standard table back.
@@ -508,6 +509,8 @@ impl Default for RustyNesLibretro {
             // needs 2x the capacity to stay allocation-free on the hot path.
             audio_buffer: Vec::with_capacity(4096 * 2),
             audio_float_buffer: Vec::with_capacity(4096),
+            audio_stereo_float: Vec::with_capacity(4096 * 2),
+            float_audio: None,
             // Sized for the widest present (512x240 Vs. DualSystem side-by-side)
             // so the hot path never reallocates even in dual mode.
             video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
@@ -519,11 +522,12 @@ impl Default for RustyNesLibretro {
             // Every port starts as a joypad, which is what the frontend assumes
             // until it says otherwise via `retro_set_controller_port_device`.
             port_devices: [RETRO_DEVICE_JOYPAD; 4],
-            four_score: false,
+            options: options::OptionValues::STOCK,
             options_declared: false,
             fds_save_path: None,
             fds_flush_countdown: 0,
             vs_panel: VsPanel::new(),
+            vs_dip_base: [0; 2],
             vs_descriptors: false,
             genie_cheats: BTreeMap::new(),
         }
@@ -867,8 +871,9 @@ impl VsPanel {
 /// the database only to recognise a `DualSystem` cabinet, so every Vs. dump
 /// in the database rendered in the wrong colours (7 of 7 local dumps
 /// measured by the re-audit). The database's factory DIP-switch setting is
-/// applied too; the desktop lets a config file override it, which this core
-/// has no equivalent of (a DIP core option is not implemented).
+/// applied too; the desktop lets a config file override it, and since v3.6.0
+/// (LR-03) the `rustynes_vs_dip_*` core options override it here, switch by
+/// switch, through [`apply_console_options`].
 ///
 /// Both setters are no-ops on a cartridge that is not a Vs. System, and the
 /// palette changes only the colour table the PPU emits through, never game
@@ -922,6 +927,75 @@ const fn apply_vs_entry(nes: &mut Nes, entry: Option<rustynes_core::vs_db::VsDbE
     }
 }
 
+/// `RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT`: the frontend offers a
+/// float sample-batch callback in place of the `int16_t` one (v3.6.0).
+///
+/// Not in the vendored `libretro.h` (`vendor/rust-libretro-sys`, the
+/// 2020-era header `rust-libretro-sys` 0.3.2 ships), so the command number
+/// and the two types below are transcribed from upstream's header:
+/// `libretro-common/include/libretro.h` in `libretro/RetroArch`, added by
+/// commit `28f4c9c6a361` ("audio: add RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT
+/// float output negotiation", 2026-06-29), read at `master` on 2026-10-23.
+/// That header is MIT-licensed ("Copyright (C) 2010-2024 The RetroArch
+/// team"), as is the vendored one; these are interface definitions a core
+/// must match, written here as Rust declarations, and credited in `NOTICE`
+/// and `docs/originality-and-provenance.md` section 5.
+/// The command is in the experimental range (`RETRO_ENVIRONMENT_EXPERIMENTAL`
+/// set), and no RetroArch release offers it yet (1.22.2, 2025-11, predates
+/// it), so on every frontend in use today the query returns `false` and the
+/// `int16_t` path runs unchanged.
+/// (`85 | RETRO_ENVIRONMENT_EXPERIMENTAL` in the header; 85 is `0x55`.)
+const RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT: u32 = 0x55 | RETRO_ENVIRONMENT_EXPERIMENTAL;
+
+/// `retro_audio_sample_batch_float_t`: interleaved stereo `float` frames,
+/// normalised to `[-1.0, 1.0]`; returns the frames processed, as
+/// `retro_audio_sample_batch_t` does.
+type AudioSampleBatchFloat = unsafe extern "C" fn(data: *const f32, frames: usize) -> usize;
+
+/// `struct retro_audio_sample_float_callback`: the frontend sets `batch`.
+#[repr(C)]
+struct AudioSampleFloatCallback {
+    batch: Option<AudioSampleBatchFloat>,
+}
+
+/// Ask the frontend for its float sample-batch callback. `None` when it
+/// does not recognise the command (every released frontend today), refuses
+/// it, or answers `true` without setting the pointer.
+///
+/// libretro.h: negotiate once, during `retro_load_game`, and commit to one
+/// format for the loaded game; the pointer is valid until
+/// `retro_unload_game`.
+///
+/// # Safety
+///
+/// `cb` must be the frontend's environment callback, valid for the call.
+unsafe fn negotiate_float_audio(cb: retro_environment_t) -> Option<AudioSampleBatchFloat> {
+    let cb = cb?;
+    let mut answer = AudioSampleFloatCallback { batch: None };
+    // SAFETY: the caller guarantees `cb`; `answer` is a live, writable
+    // `struct retro_audio_sample_float_callback` for the duration of the
+    // call, which is all the command's `data` contract asks.
+    let offered = unsafe {
+        cb(
+            RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT,
+            std::ptr::addr_of_mut!(answer).cast::<std::os::raw::c_void>(),
+        )
+    };
+    if offered { answer.batch } else { None }
+}
+
+/// One mixer sample for the float callback: the same full scale as
+/// [`sample_to_i16`] (`1.0`), clamped to the `[-1.0, 1.0]` libretro.h
+/// requires, and `0.0` for a NaN, which the `i16` cast also gives.
+#[inline]
+const fn sample_to_f32(sample: f32) -> f32 {
+    if sample.is_nan() {
+        0.0
+    } else {
+        sample.clamp(-1.0, 1.0)
+    }
+}
+
 /// Convert one mixer sample to the frontend's `i16`, with `1.0` at full scale.
 ///
 /// The mixer's output is bipolar and DC-blocked. Measured over 900 frames of
@@ -938,6 +1012,102 @@ fn sample_to_i16(sample: f32) -> i16 {
     // The clamp keeps a stray out-of-range sample (or a NaN, which `as`
     // maps to 0) from wrapping; it is saturation, not normal operation.
     (sample * 32767.0).clamp(-32768.0, 32767.0) as i16
+}
+
+/// Hold one console to the core options that change what it does (v3.6.0):
+/// the CPU overclock and the sprite limit (`T-LIBRETRO-EMU-OPTIONS`, the
+/// desktop's v3.1.0 options) and the Vs. DIP switches (LR-03).
+///
+/// Each setting is compared first and set only when it differs, so calling
+/// this every frame costs a few comparisons, and a console at the defaults
+/// is never written to: the default build's output is byte-identical to a
+/// core without the options. The desktop applies the overclock and the
+/// sprite limit the same way, every frame (`EmuCore::produce_frame`).
+/// `dip_base` is the DIP-switch setting the game database gave this console
+/// at load ([`apply_vs_database`]; 0 for a Vs. game it does not list); the
+/// `rustynes_vs_dip_*` options replace the switches they force. The bank is
+/// written only on a Vs. System console, the only kind that reads it.
+fn apply_console_options(nes: &mut Nes, options: options::OptionValues, dip_base: u8) {
+    if nes.cpu_overclock() != options.cpu_overclock {
+        nes.set_cpu_overclock(options.cpu_overclock);
+    }
+    if nes.sprite_limit_disabled() != options.sprite_limit_disabled {
+        nes.set_sprite_limit_disabled(options.sprite_limit_disabled);
+    }
+    if nes.is_vs_system() {
+        let dip = options.dip_for(dip_base);
+        if nes.vs_dip() != dip {
+            nes.set_vs_dip(dip);
+        }
+    }
+}
+
+/// [`apply_console_options`] for both consoles of a Vs. `DualSystem`
+/// cabinet, each against its own database setting (`dip_base[0]` main,
+/// `[1]` sub): the two sides of a real cabinet have a bank each.
+fn apply_cabinet_options(
+    dual: &mut VsDualSystem,
+    options: options::OptionValues,
+    dip_base: [u8; 2],
+) {
+    apply_console_options(dual.main_mut(), options, dip_base[0]);
+    apply_console_options(dual.sub_mut(), options, dip_base[1]);
+}
+
+/// Restore `state` into `nes` under the CPU overclock `overclock` (the
+/// state's record), or under the running one when the state has none.
+///
+/// The multiplier goes in first because the restore keeps the state's
+/// position in the overclocked cycle pattern only under a multiplier that
+/// could have produced it. When the multiplier changes and the restore is
+/// refused, both are put back from a backup of the running machine, taken
+/// only in that case (a different multiplier is a user's load, not run-ahead's
+/// per-frame restore, so the copy is not on a hot path).
+fn restore_console(
+    nes: &mut Nes,
+    state: &[u8],
+    overclock: Option<u8>,
+) -> Result<(), rustynes_core::save_state::SnapshotError> {
+    let running = nes.cpu_overclock();
+    let Some(k) = overclock.filter(|&k| k != running) else {
+        return nes.restore_quiet(state);
+    };
+    let mut backup = Vec::new();
+    nes.snapshot_core_into(&mut backup);
+    nes.set_cpu_overclock(k);
+    let result = nes.restore_quiet(state);
+    if result.is_err() {
+        nes.set_cpu_overclock(running);
+        let rolled_back = nes.restore_quiet(&backup);
+        debug_assert!(rolled_back.is_ok(), "own snapshot refused: {rolled_back:?}");
+    }
+    result
+}
+
+/// [`restore_console`] for a Vs. `DualSystem` cabinet: both consoles take
+/// the state's multiplier before the restore, and get the running one back
+/// with the backup if it is refused.
+fn restore_cabinet(
+    dual: &mut VsDualSystem,
+    state: &[u8],
+    overclock: Option<u8>,
+) -> Result<(), rustynes_core::save_state::SnapshotError> {
+    let running = dual.main().cpu_overclock();
+    let Some(k) = overclock.filter(|&k| k != running) else {
+        return dual.restore(state);
+    };
+    let mut backup = Vec::new();
+    dual.snapshot_into(&mut backup);
+    dual.main_mut().set_cpu_overclock(k);
+    dual.sub_mut().set_cpu_overclock(k);
+    let result = dual.restore(state);
+    if result.is_err() {
+        dual.main_mut().set_cpu_overclock(running);
+        dual.sub_mut().set_cpu_overclock(running);
+        let rolled_back = dual.restore(&backup);
+        debug_assert!(rolled_back.is_ok(), "own snapshot refused: {rolled_back:?}");
+    }
+    result
 }
 
 /// Hand one frame's pad state to a single console: players 1-2 always, and
@@ -1055,26 +1225,44 @@ impl RustyNesLibretro {
         )
     }
 
-    /// Declare the core's options with `SET_VARIABLES`; `true` when the
-    /// frontend accepted them.
+    /// Declare the core's options; `true` when the frontend took them.
     ///
-    /// Only one exists: the Four Score adapter, which a user must be able to
-    /// plug in for four-player games (libretro audit summary, L-S1). The
-    /// legacy `SET_VARIABLES` form is enough for a two-value switch and every
-    /// frontend supports it. libretro.h asks for the first declaration "as
-    /// early as possible (ideally in retro_set_environment)" and allows later
-    /// ones as long as the number of options does not change; this core
-    /// declares once per init cycle (libretro re-audit NL-05).
+    /// Core Options v2 (`SET_CORE_OPTIONS_V2`: categories, sublabels, value
+    /// labels) when the frontend reports a core-options version of 2 or
+    /// more, the legacy `SET_VARIABLES` otherwise (v3.6.0,
+    /// `T-LIBRETRO-OPTIONS-V2`); both from the one table in
+    /// [`options::OPTIONS`]. Until v3.6.0 every frontend got
+    /// `SET_VARIABLES`, which was enough while the Four Score switch was the
+    /// only option (libretro audit summary, L-S1). libretro.h asks for the
+    /// first declaration "as early as possible (ideally in
+    /// retro_set_environment)" and allows later ones as long as the number of
+    /// options does not change; this core declares once per init cycle
+    /// (libretro re-audit NL-05).
     ///
     /// # Safety
     ///
     /// `cb` must be the frontend's environment callback, valid for the
     /// duration of the call (as it is inside `retro_set_environment`).
-    unsafe fn declare_core_options(cb: retro_environment_t) -> bool {
-        // SAFETY: the caller guarantees `cb`; `CORE_VARIABLES` is a
-        // `'static`, null-key-terminated array, and the frontend keeps the
-        // pointers.
-        unsafe { rust_libretro::environment::set_variables(cb, &CORE_VARIABLES.0) }
+    unsafe fn declare_core_options(&self, cb: retro_environment_t) -> bool {
+        // SAFETY: the caller guarantees `cb`; the tables `options::declare`
+        // hands over are `'static` and never move.
+        match unsafe { options::declare(cb) } {
+            options::Declared::V2 { categories } => {
+                self.log(
+                    retro_log_level::RETRO_LOG_DEBUG,
+                    &format!("core options declared (v2; categories shown: {categories})."),
+                );
+                true
+            }
+            options::Declared::V0 => true,
+            options::Declared::Refused => {
+                self.log(
+                    retro_log_level::RETRO_LOG_WARN,
+                    "the frontend refused the core options; every option keeps its default.",
+                );
+                false
+            }
+        }
     }
 
     /// Write one line to the frontend's log, or to stderr when it has none.
@@ -1238,6 +1426,9 @@ impl RustyNesLibretro {
             Emu::Single(nes) => {
                 let mut nes = *nes;
                 apply_vs_database(&mut nes);
+                // The options themselves are applied at the top of every
+                // frame (`run_single`), before the console runs at all.
+                self.vs_dip_base = [nes.vs_dip(), 0];
                 self.nes = Some(nes);
                 self.dual = None;
                 self.log(
@@ -1250,6 +1441,7 @@ impl RustyNesLibretro {
                 // database to both too.
                 apply_vs_database(dual.main_mut());
                 apply_vs_database(dual.sub_mut());
+                self.vs_dip_base = [dual.main().vs_dip(), dual.sub().vs_dip()];
                 self.dual = Some(dual);
                 self.nes = None;
                 self.log(
@@ -1276,7 +1468,90 @@ impl RustyNesLibretro {
         // callback is the frontend's own, valid for this call.
         let cb = unsafe { *generic_ctx.environment_callback() };
         self.describe_inputs(cb, vs_table);
+        self.negotiate_audio(cb);
         Ok(())
+    }
+
+    /// Choose the loaded game's audio format: float when the frontend
+    /// offers it (`GET_AUDIO_SAMPLE_BATCH_FLOAT`, v3.6.0), else `int16_t`.
+    /// Called once per load, at its end, as libretro.h asks.
+    fn negotiate_audio(&mut self, cb: retro_environment_t) {
+        // SAFETY: `cb` is the frontend's callback, valid for the
+        // `retro_load_game` this runs inside.
+        self.float_audio = unsafe { negotiate_float_audio(cb) };
+        if self.float_audio.is_some() {
+            self.log(
+                retro_log_level::RETRO_LOG_INFO,
+                "audio: the frontend takes float samples; sending them unconverted.",
+            );
+        }
+    }
+
+    /// `retro_unserialize`, run inside [`Self::contained`].
+    ///
+    /// Restores the console's (or the cabinet's two consoles') state from
+    /// the blob. A refused state leaves the machine as it was (NL-01); the
+    /// reason goes to the frontend's log (NL-11).
+    ///
+    /// # The options record (v3.6.0, `T-LIBRETRO-EMU-OPTIONS`)
+    ///
+    /// A state written since v3.6.0 ends with the emulation options it was
+    /// made under ([`options::split_state`]), and they are applied with it,
+    /// replacing the menu's until the frontend next reports an option
+    /// change. The desktop records the same options in a movie header and
+    /// a netplay handshake (`rustynes_core::HardwareOptions`); a libretro
+    /// frontend replays a movie from a state and starts a netplay peer from
+    /// the host's state, so the state is where the record has to be for
+    /// either to run the machine it was made on. RetroArch's netplay also
+    /// compares state CRCs, which now differ when the peers' options do.
+    ///
+    /// The overclock is set BEFORE the restore: the state carries the
+    /// position inside the overclocked cycle pattern, and the core keeps a
+    /// restored position only if the multiplier already running could have
+    /// produced it (`SystemBus::restore`), while changing the multiplier
+    /// afterwards resets it. If the restore is then refused, the multiplier
+    /// and the machine are both put back. A state without a record (every
+    /// state from before v3.6.0) restores exactly as it did.
+    fn unserialize(&mut self, slice: &[u8]) -> bool {
+        let (state, recorded) = match options::split_state(slice) {
+            Ok(split) => split,
+            Err(why) => {
+                self.log(
+                    retro_log_level::RETRO_LOG_WARN,
+                    &format!("save state refused: its RustyNES options record holds {why}."),
+                );
+                return false;
+            }
+        };
+        let overclock = recorded.map(|r| r.cpu_overclock);
+        let result = if let Some(nes) = self.nes.as_mut() {
+            restore_console(nes, state, overclock)
+        } else if let Some(dual) = self.dual.as_mut() {
+            restore_cabinet(dual, state, overclock)
+        } else {
+            return false;
+        };
+        if let Err(err) = result {
+            self.log(
+                retro_log_level::RETRO_LOG_WARN,
+                &refused_state_message(&err),
+            );
+            return false;
+        }
+        if let Some(recorded) = recorded
+            && recorded != self.options
+        {
+            self.log(
+                retro_log_level::RETRO_LOG_INFO,
+                &format!(
+                    "the loaded state was made with other emulation options ({}); \
+                     running with them until a core option is changed.",
+                    recorded.describe()
+                ),
+            );
+            self.options = recorded;
+        }
+        true
     }
 
     /// Answer `retro_serialize_size` for the console `load_game` just
@@ -1315,12 +1590,12 @@ impl RustyNesLibretro {
         if let Some(nes) = self.nes.as_ref() {
             self.serialize_buffer.clear();
             nes.snapshot_core_into_slim(&mut self.serialize_buffer);
-            self.serialize_size = self.serialize_buffer.len() + HEADROOM;
+            self.serialize_size = self.serialize_buffer.len() + HEADROOM + STATE_TRAILER_LEN;
             self.serialize_buffer.reserve(HEADROOM);
         } else if let Some(dual) = self.dual.as_mut() {
             // `snapshot_into` clears the buffer itself.
             dual.snapshot_into(&mut self.serialize_buffer);
-            self.serialize_size = self.serialize_buffer.len();
+            self.serialize_size = self.serialize_buffer.len() + STATE_TRAILER_LEN;
         }
     }
 
@@ -1608,6 +1883,24 @@ impl RustyNesLibretro {
     /// is a belt-and-suspenders no-op that keeps that guarantee true even if the
     /// mono drain buffer is ever grown past 4096.
     fn push_audio(&mut self, ctx: &mut RunContext, produced: usize) {
+        if let Some(batch) = self.float_audio {
+            // v3.6.0: the frontend negotiated float samples at load, so they
+            // go out as the mixer made them, at the `i16` path's scale and
+            // clamped to libretro's `[-1.0, 1.0]`, with no `i16` call at all.
+            self.audio_stereo_float.clear();
+            self.audio_stereo_float.reserve(produced * 2);
+            for &sample in &self.audio_float_buffer[..produced] {
+                let s = sample_to_f32(sample);
+                self.audio_stereo_float.push(s);
+                self.audio_stereo_float.push(s);
+            }
+            // SAFETY: `batch` is the frontend's float callback, valid until
+            // `retro_unload_game` (which clears it); the pointer covers
+            // `produced` stereo frames, `2 * produced` `f32`s, alive for the
+            // call.
+            unsafe { batch(self.audio_stereo_float.as_ptr(), produced) };
+            return;
+        }
         self.audio_buffer.clear();
         // No-op while capacity already covers `2 * produced` (the common case);
         // only ever allocates if a future change enlarges `audio_float_buffer`.
@@ -1649,7 +1942,9 @@ impl RustyNesLibretro {
         let jp0 = read_joypad(ctx, 0);
         let jp1 = read_joypad(ctx, 1);
         let pads = [nes_buttons(jp0), nes_buttons(jp1)];
-        let four_score = self.four_score;
+        let four_score = self.options.four_score;
+        let options = self.options;
+        let dip_base = self.vs_dip_base[0];
         let b34 = four_score.then(|| (joypad_to_buttons(ctx, 2), joypad_to_buttons(ctx, 3)));
         // Which ports the frontend has set to a lightgun, captured before the
         // mutable borrow of `self.nes` below.
@@ -1667,6 +1962,7 @@ impl RustyNesLibretro {
             let Some(nes) = self.nes.as_mut() else {
                 return;
             };
+            apply_console_options(nes, options, dip_base);
             if let Some(frame) = vs {
                 VsPanel::apply_single(frame, nes);
             }
@@ -1734,10 +2030,13 @@ impl RustyNesLibretro {
             read_joypad(ctx, 3),
         ];
         // Both panels of the cabinet: coins and service on L and R.
+        let options = self.options;
+        let dip_base = self.vs_dip_base;
         {
             let Some(dual) = self.dual.as_mut() else {
                 return;
             };
+            apply_cabinet_options(dual, options, dip_base);
             // The pulse is timed on the MAIN console's frame counter; the two
             // consoles advance together, one frame each per call.
             let vs = self.vs_panel.step(pads, 4, dual.main().frame());
@@ -2406,7 +2705,7 @@ impl Core for RustyNesLibretro {
             register_disk_control(cb);
 
             if !self.options_declared {
-                self.options_declared = Self::declare_core_options(cb);
+                self.options_declared = self.declare_core_options(cb);
             }
         }
     }
@@ -2464,19 +2763,22 @@ impl Core for RustyNesLibretro {
 
     /// Read the core options. `rust-libretro` calls this before
     /// `retro_load_game` and before any `retro_run` for which the frontend
-    /// reports a change, so the Four Score setting is current on every frame.
+    /// reports a change, so the settings are current on every frame. Every
+    /// option is read, whichever form declared them: `GET_VARIABLE` answers
+    /// by key either way.
     fn on_options_changed(&mut self, ctx: &mut OptionsChangedContext) {
+        let generic_ctx: GenericContext = (&*ctx).into();
         // SAFETY: the context carries the frontend's environment callback for
-        // the duration of this call; the returned string is copied out below.
-        let value = unsafe {
-            let generic_ctx: GenericContext = (&*ctx).into();
-            rust_libretro::environment::get_variable(
-                *generic_ctx.environment_callback(),
-                FOUR_SCORE_KEY.to_str().unwrap_or_default(),
-            )
+        // the duration of this call; reading it performs no dereference.
+        let cb = unsafe { *generic_ctx.environment_callback() };
+        self.options = options::OptionValues::read(|key| {
+            // SAFETY: `cb` is the frontend's, valid for this call; the
+            // returned string is copied out before the next query.
+            unsafe {
+                rust_libretro::environment::get_variable(cb, key.to_str().unwrap_or_default())
+            }
             .map(str::to_owned)
-        };
-        self.four_score = value.as_deref() == Some("enabled");
+        });
     }
 
     /// Soft-reset the console — RetroArch's Restart, and the front-panel RESET
@@ -2547,6 +2849,8 @@ impl Core for RustyNesLibretro {
         self.serialize_size = 0;
         self.audio_buffer = Vec::new();
         self.audio_float_buffer = Vec::new();
+        self.audio_stereo_float = Vec::new();
+        self.float_audio = None;
         self.video_buffer = Vec::new();
         self.serialize_buffer = Vec::new();
     }
@@ -2594,6 +2898,9 @@ impl Core for RustyNesLibretro {
         // have to grow them again.
         self.audio_buffer.clear();
         self.audio_float_buffer.clear();
+        self.audio_stereo_float.clear();
+        // libretro.h: the float callback is valid until `retro_unload_game`.
+        self.float_audio = None;
         self.video_buffer.clear();
     }
 
@@ -2697,7 +3004,14 @@ impl Core for RustyNesLibretro {
             if core.serialize_buffer.capacity() != capacity {
                 SERIALIZE_BUFFER_GROWTHS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
-            let Some((payload, tail)) = slice.split_at_mut_checked(core.serialize_buffer.len())
+            // The last `STATE_TRAILER_LEN` bytes of the frontend's buffer
+            // carry the emulation options (v3.6.0, see `options::split_state`);
+            // the core's state goes at the front.
+            let Some(body_len) = slice.len().checked_sub(STATE_TRAILER_LEN) else {
+                return false;
+            };
+            let (body, record) = slice.split_at_mut(body_len);
+            let Some((payload, tail)) = body.split_at_mut_checked(core.serialize_buffer.len())
             else {
                 return false;
             };
@@ -2706,33 +3020,13 @@ impl Core for RustyNesLibretro {
             // `on_load_game`). The frontend's buffer may be reused and hold anything,
             // and `SectionIter` recognises padding only by its being all zero.
             tail.fill(0);
+            record.copy_from_slice(&core.options.trailer());
             true
         })
     }
 
     fn on_unserialize(&mut self, slice: &mut [u8], _ctx: &mut UnserializeContext) -> bool {
-        self.contained("retro_unserialize", false, |core| {
-            // Restores the console's (or the cabinet's two consoles') state
-            // from the serialized blob. A refused state leaves the machine as
-            // it was (NL-01); the reason goes to the frontend's log (NL-11).
-            let result = if let Some(nes) = core.nes.as_mut() {
-                nes.restore_quiet(slice)
-            } else if let Some(dual) = core.dual.as_mut() {
-                dual.restore(slice)
-            } else {
-                return false;
-            };
-            match result {
-                Ok(()) => true,
-                Err(err) => {
-                    core.log(
-                        retro_log_level::RETRO_LOG_WARN,
-                        &refused_state_message(&err),
-                    );
-                    false
-                }
-            }
-        })
+        self.contained("retro_unserialize", false, |core| core.unserialize(slice))
     }
 
     // --- Disk control (FDS multi-side swap) ---------------------------------------
@@ -2869,6 +3163,8 @@ retro_core!(RustyNesLibretro {
     dual: None,
     audio_buffer: Vec::with_capacity(4096 * 2),
     audio_float_buffer: Vec::with_capacity(4096),
+    audio_stereo_float: Vec::with_capacity(4096 * 2),
+    float_audio: None,
     video_buffer: Vec::with_capacity(DUAL_W * NES_H * 4),
     serialize_size: 0,
     serialize_buffer: Vec::new(),
@@ -2876,11 +3172,12 @@ retro_core!(RustyNesLibretro {
     poisoned: false,
     log_printf: None,
     port_devices: [RETRO_DEVICE_JOYPAD; 4],
-    four_score: false,
+    options: options::OptionValues::STOCK,
     options_declared: false,
     fds_save_path: None,
     fds_flush_countdown: 0,
     vs_panel: VsPanel::new(),
+    vs_dip_base: [0; 2],
     vs_descriptors: false,
     genie_cheats: BTreeMap::new(),
 });
@@ -3241,6 +3538,132 @@ mod tests {
         apply_pads(&mut nes, [Buttons::A, Buttons::B], None);
         assert!(!nes.four_score(), "turning the option off unplugs it");
         assert_eq!(nes.buttons(0), Buttons::A);
+    }
+
+    /// Set the version byte of the last `CPU ` section, so a restore refuses
+    /// the blob partway through.
+    fn damage_cpu_section(state: &mut [u8]) {
+        let at = state
+            .windows(4)
+            .rposition(|w| w == b"CPU ")
+            .expect("a CPU section");
+        state[at + 4] = state[at + 4].wrapping_add(1);
+    }
+
+    /// `T-LIBRETRO-EMU-OPTIONS`: a state whose record names another
+    /// multiplier is restored under that multiplier, and when the restore is
+    /// refused, the console gets its own multiplier and its own machine back,
+    /// at every point in the overclocked cycle pattern. Below the C ABI
+    /// because the multiplier itself is configuration, not state: the next
+    /// frame's `apply_console_options` would set it again, hiding a wrong one
+    /// from any serialize the frontend can make.
+    #[test]
+    fn a_refused_restore_under_a_new_multiplier_puts_the_console_back() {
+        let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
+        let mut donor = Nes::from_rom(rom).expect("parses");
+        donor.set_cpu_overclock(2);
+        for _ in 0..3 {
+            donor.run_frame();
+        }
+        let mut x2 = Vec::new();
+        donor.snapshot_core_into_slim(&mut x2);
+        let mut damaged = x2.clone();
+        damage_cpu_section(&mut damaged);
+
+        let mut nes = Nes::from_rom(rom).expect("parses");
+        nes.set_cpu_overclock(3);
+        for frame in 0..12 {
+            nes.run_frame();
+            let mut before = Vec::new();
+            nes.snapshot_core_into(&mut before);
+            assert!(restore_console(&mut nes, &damaged, Some(2)).is_err());
+            assert_eq!(
+                nes.cpu_overclock(),
+                3,
+                "frame {frame}: the multiplier is put back"
+            );
+            let mut after = Vec::new();
+            nes.snapshot_core_into(&mut after);
+            assert!(after == before, "frame {frame}: the machine is put back");
+        }
+        assert!(restore_console(&mut nes, &x2, Some(2)).is_ok());
+        assert_eq!(
+            nes.cpu_overclock(),
+            2,
+            "an accepted restore runs at the state's"
+        );
+    }
+
+    /// The cabinet half: both consoles take the state's multiplier before
+    /// the restore (each keeps its place in the cycle pattern only under a
+    /// multiplier that could have produced it), and both get theirs back
+    /// when it is refused.
+    #[test]
+    fn a_cabinet_restores_under_the_state_multiplier_on_both_consoles() {
+        let mut rom = include_bytes!("../../../tests/roms/nestest/nestest.nes").to_vec();
+        rom[7] = 0x08 | 0x01;
+        rom[13] = 0x50;
+        let cabinet = || match Emu::from_rom(&rom) {
+            Ok(Emu::Dual(dual)) => dual,
+            _ => panic!("fixture: a DualSystem cabinet"),
+        };
+        let mut donor = cabinet();
+        donor.main_mut().set_cpu_overclock(2);
+        donor.sub_mut().set_cpu_overclock(2);
+        for _ in 0..3 {
+            donor.run_frame();
+        }
+        let mut x2 = Vec::new();
+        donor.snapshot_into(&mut x2);
+        let mut damaged = x2.clone();
+        damage_cpu_section(&mut damaged);
+
+        let mut dual = cabinet();
+        dual.run_frame();
+        let mut before = Vec::new();
+        dual.snapshot_into(&mut before);
+        assert!(restore_cabinet(&mut dual, &damaged, Some(2)).is_err());
+        let mut after = Vec::new();
+        dual.snapshot_into(&mut after);
+        assert!(after == before, "a refused restore puts the cabinet back");
+        assert_eq!(
+            (dual.main().cpu_overclock(), dual.sub().cpu_overclock()),
+            (1, 1),
+            "a refused restore puts both multipliers back"
+        );
+        assert!(restore_cabinet(&mut dual, &x2, Some(2)).is_ok());
+        assert_eq!(
+            (dual.main().cpu_overclock(), dual.sub().cpu_overclock()),
+            (2, 2),
+            "both consoles restore under the state's multiplier"
+        );
+    }
+
+    /// LR-03: a cabinet's two consoles each get the DIP options, against
+    /// their own database setting. Below the C ABI because the frontend sees
+    /// only the main console's memory, so no ABI test can read the sub's bank.
+    #[test]
+    fn both_consoles_of_a_cabinet_get_the_dip_options() {
+        let mut rom = include_bytes!("../../../tests/roms/nestest/nestest.nes").to_vec();
+        rom[7] = 0x08 | 0x01; // NES 2.0, Vs. System
+        rom[13] = 0x50; // Vs. DualSystem
+        let Ok(Emu::Dual(mut dual)) = Emu::from_rom(&rom) else {
+            panic!("fixture: a DualSystem cabinet");
+        };
+        let options = options::OptionValues::read(|key| {
+            (key == options::VS_DIP_KEYS[1]).then(|| "on".to_owned())
+        });
+        apply_cabinet_options(&mut dual, options, [0x10, 0x01]);
+        assert_eq!(
+            dual.main().vs_dip(),
+            0x12,
+            "main: its base with switch 2 on"
+        );
+        assert_eq!(
+            dual.sub().vs_dip(),
+            0x03,
+            "sub: its own base with switch 2 on"
+        );
     }
 
     #[test]
