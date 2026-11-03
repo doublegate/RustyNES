@@ -58,9 +58,10 @@ const ALLOWED: &[(&str, &str, usize, &str)] = &[
     ),
     (
         "stems_cli.rs",
-        "File::create(",
+        "OpenOptions::new(",
         1,
-        "the stem WAVs stream into a `*.rustynes-partial` sibling (an hour of one \
+        "the stem WAVs stream into a `*.<pid>.<n>.rustynes-partial` sibling of their \
+         own, opened with create_new so it never truncates anything (an hour of one \
          stem is about 690 MB, eight at once), which `finish` syncs and renames over \
          the target; an unfinished writer deletes it, so the user's file is never \
          left truncated",
