@@ -167,11 +167,31 @@ the test named in the last column, and the re-run caught all three.
 | DWARF frame hook left at `low_pc` | caught | llvm-mos variable reads |
 | DWARF `fbreg` offset off by one | caught | decoder unit test and llvm-mos reads |
 
+Four more, for defects the release review found (Antigravity on #631), each
+written as a test that failed before its fix:
+
+| mutant | caught by |
+| --- | --- |
+| GDB reader keeps writing `+` after `QStartNoAckMode` | the GDB client refuses a byte before `$` in no-ack mode |
+| every run steps off its first instruction (`resume` for `proceed`) | a breakpoint on the reset vector stops a session launched without `stopOnEntry` |
+| a header line over 1,024 bytes read on as a second header | framing unit test with a smuggled `Content-Length` |
+| `program` opened without the regular-file check | a FIFO as `program` is refused (the mutant blocks until the client's 60 s timeout) |
+
+Not mutation-run: `stepIn` running to the callee's prologue only when the
+`JSR` actually arrived there (an interrupt taken on that step needs a
+stimulus the fixtures do not have), and the stems writer's directory sync.
+
 ## Not done
 
 - No VS Code extension is shipped (the `package.json` above is a sketch), and
   no editor other than the scripted client has been run against the adapter.
 - No GDB or LLDB has driven the stub (none has a MOS target).
+- cc65 functions whose prologue pushes more than once (`__cdecl__` or
+  variadic ones; the default `__fastcall__` pushes only its last argument)
+  are untested: the frame hook follows the first push routine only, so their
+  locals' offsets may be off by the remaining pushes (Antigravity on #631).
+  A function with no parameters is covered: `main(void)`'s local reads
+  correctly in both fixtures.
 - No writes, by design (ADR 0049).
 - cc65 types (cc65 records none); DWARF location lists and composite
   locations; lexical-block scoping (block variables are shown for the whole

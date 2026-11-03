@@ -887,7 +887,14 @@ final class AppModel: ObservableObject {
         let blob = emulator.saveState()
         let frame = emulator.frame()
         let thumbnail = emulator.snapshotPNG()
-        try? saveStates.write(blob, sha: sha, slot: slot, frame: frame, thumbnailPNG: thumbnail)
+        do {
+            try saveStates.write(blob, sha: sha, slot: slot, frame: frame, thumbnailPNG: thumbnail)
+        } catch {
+            // Say so, and do not mirror a slot whose write failed to iCloud
+            // (v3.6.0 review: the failure was swallowed and the upload ran).
+            errorMessage = "The state could not be saved: \(error.localizedDescription)"
+            return
+        }
         // Mirror to iCloud in the background (no-op when sync is off / unavailable).
         cloudSaveStates.upload(sha: sha, slot: slot)
     }

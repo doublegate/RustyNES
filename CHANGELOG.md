@@ -99,7 +99,14 @@ cycle-accurate core later replaced.
   and the global `counter`; the new CI job `dap-fixtures` rebuilds the
   fixtures with cc65 at commit `034f73a9e1` and the llvm-mos SDK v23.3.0 and
   reruns the tests on that build. 14 mutants, all caught (three after the
-  tests were extended). Not done: no released GDB or LLDB has a MOS target,
+  tests were extended). Fixed in review: the GDB stub kept acknowledging
+  packets after agreeing to `QStartNoAckMode`; a session started without
+  `stopOnEntry`, or continued after a request handled mid-run, ran one
+  instruction before checking for a breakpoint, so one on the reset vector or
+  at the current address was missed; a header line over 1,024 bytes was split
+  into two headers; `stepIn` across an interrupt ran on to the callee's
+  prologue; and a FIFO as `program` or `debugInfo` blocked the adapter. Four
+  more mutants, all caught. Not done: no released GDB or LLDB has a MOS target,
   so the stub has only been driven by the tests' protocol client; no VS Code
   extension ships (the page has a `package.json` sketch, untried in VS Code);
   cc65 records no C types, so cc65 variables show as one byte. New
@@ -189,7 +196,10 @@ cycle-accurate core later replaced.
   syncs its folder, like the desktop's; Foundation's atomic write synced
   neither, so a power loss could leave an empty or cut-short save. The Swift
   has not been compiled on the machine that wrote it; a source audit pins the
-  wiring, and the device check is run-sheet row T13.
+  wiring, and the device check is run-sheet row T13. A save state whose
+  write fails now says so and is not mirrored to iCloud; the failure of its
+  metadata file, whose timestamp iCloud reconciliation reads, was silently
+  ignored before (in review).
 - **iOS writes an FDS game's disk once a second** (`T-IOS-FDS-PERIODIC`), as
   Android does; it was written only when the app went to the background or
   switched games, so a crash or a kill while playing lost every in-game save

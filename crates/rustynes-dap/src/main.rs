@@ -60,6 +60,11 @@ fn parse() -> Result<Args, String> {
 
 fn read(path: &PathBuf, max: u64) -> Result<Vec<u8>, String> {
     use std::io::Read as _;
+    // A FIFO would block `open` until a writer appears (Antigravity on #631).
+    let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !meta.is_file() {
+        return Err(format!("{}: not a regular file", path.display()));
+    }
     let mut bytes = Vec::new();
     std::fs::File::open(path)
         .and_then(|f| f.take(max + 1).read_to_end(&mut bytes))

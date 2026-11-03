@@ -324,3 +324,76 @@ fn launch_refuses_what_it_cannot_load() {
     c.stdin.flush().expect("flush");
     assert!(c.child.wait().expect("exit").success());
 }
+
+/// The reset vector, read from the fixture's last PRG bank.
+fn reset_vector(fx: Fixture) -> u16 {
+    let rom = std::fs::read(fx.rom_path()).expect("fixture ROM");
+    let end = 16 + usize::from(rom[4]) * 0x4000;
+    u16::from_le_bytes([rom[end - 4], rom[end - 3]])
+}
+
+/// A session started without `stopOnEntry` runs from the reset vector, and a
+/// breakpoint there stops it before the first instruction executes. Until
+/// v3.6.0's review the first run stepped one instruction before checking, so
+/// this breakpoint was missed (Antigravity on #631).
+#[test]
+fn a_breakpoint_on_the_reset_vector_stops_the_first_run() {
+    for fx in [CC65, LLVM_MOS] {
+        let reset = reset_vector(fx);
+        let mut c = Client::start();
+        c.ok("initialize", json!({"adapterID": "rustynes"}));
+        c.ok("launch", json!({"program": fx.rom_path()}));
+        c.event("initialized");
+        let bps = c.ok(
+            "setInstructionBreakpoints",
+            json!({"breakpoints": [{"instructionReference": format!("0x{reset:04X}")}]}),
+        );
+        assert_eq!(
+            bps["breakpoints"][0]["verified"], true,
+            "{}: {bps}",
+            fx.name
+        );
+        c.ok("configurationDone", json!({}));
+        assert_eq!(c.stopped(), "breakpoint", "{}", fx.name);
+        let frames = c.top();
+        assert_eq!(
+            frames[0]["instructionPointerReference"],
+            format!("0x{reset:04X}"),
+            "{}: stopped on the reset vector, nothing executed",
+            fx.name
+        );
+        c.ok("disconnect", json!({}));
+        c.event("terminated");
+        drop(c.stdin);
+        assert!(c.child.wait().expect("exit").success(), "{}", fx.name);
+    }
+}
+
+/// A named pipe as the program is refused at once instead of blocking the
+/// adapter in `open` (Antigravity on #631; the hang, not a failure, is what
+/// the missing check looked like, so the client's timeout is the guard).
+#[cfg(unix)]
+#[test]
+fn launch_refuses_a_fifo_without_blocking() {
+    let fifo = std::env::temp_dir().join(format!("rustynes-dap-fifo-{}.nes", std::process::id()));
+    let _ = std::fs::remove_file(&fifo);
+    let made = Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo runs");
+    assert!(made.success());
+    let mut c = Client::start();
+    c.ok("initialize", json!({"adapterID": "rustynes"}));
+    let r = c.call("launch", json!({"program": fifo}));
+    assert_eq!(r["success"], false, "{r}");
+    assert!(
+        r["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("not a regular file")),
+        "{r}"
+    );
+    c.ok("disconnect", json!({}));
+    c.stdin.flush().expect("flush");
+    assert!(c.child.wait().expect("exit").success());
+    let _ = std::fs::remove_file(&fifo);
+}

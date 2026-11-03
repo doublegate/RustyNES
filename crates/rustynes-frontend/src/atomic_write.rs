@@ -714,7 +714,7 @@ fn scratch_name(target: &Path) -> PathBuf {
 /// failure anyone sees, which is the worse of the two. `.` is the directory an
 /// empty parent means.
 #[cfg(unix)]
-fn sync_parent_dir(target: &Path) -> io::Result<()> {
+pub(crate) fn sync_parent_dir(target: &Path) -> io::Result<()> {
     let parent = target
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -780,7 +780,7 @@ pub fn directory_fsync_is_unsupported(e: &io::Error) -> bool {
     clippy::unnecessary_wraps,
     reason = "signature parity with the Unix arm, which genuinely can fail"
 )]
-const fn sync_parent_dir(_target: &Path) -> io::Result<()> {
+pub(crate) const fn sync_parent_dir(_target: &Path) -> io::Result<()> {
     Ok(())
 }
 

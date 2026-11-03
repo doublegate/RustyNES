@@ -104,10 +104,11 @@ final class SaveStateManager: @unchecked Sendable {
         try fileManager.createDirectory(at: dir(for: sha), withIntermediateDirectories: true)
         try DurableWrite.write(data, to: slotURL(sha: sha, slot: slot))
 
+        // The sidecar's failure is the caller's to see (v3.6.0 review): its
+        // `savedAt` drives CloudKit's last-writer-wins, so a swallowed failure
+        // left the previous slot's timestamp paired with this state.
         let meta = SlotMeta(frame: frame, savedAt: Date().timeIntervalSince1970)
-        if let encoded = try? JSONEncoder().encode(meta) {
-            try? DurableWrite.write(encoded, to: metaURL(sha: sha, slot: slot))
-        }
+        try DurableWrite.write(try JSONEncoder().encode(meta), to: metaURL(sha: sha, slot: slot))
 
         let thumb = thumbURL(sha: sha, slot: slot)
         if let png = thumbnailPNG {
@@ -141,10 +142,9 @@ final class SaveStateManager: @unchecked Sendable {
         try fileManager.createDirectory(at: dir(for: sha), withIntermediateDirectories: true)
         try DurableWrite.write(stateData, to: slotURL(sha: sha, slot: slot))
 
+        // As in `write`: the sidecar carries the timestamp reconciliation reads.
         let meta = SlotMeta(frame: frame, savedAt: savedAt.timeIntervalSince1970)
-        if let encoded = try? JSONEncoder().encode(meta) {
-            try? DurableWrite.write(encoded, to: metaURL(sha: sha, slot: slot))
-        }
+        try DurableWrite.write(try JSONEncoder().encode(meta), to: metaURL(sha: sha, slot: slot))
 
         let thumb = thumbURL(sha: sha, slot: slot)
         if let png = thumbnailPNG {

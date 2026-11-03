@@ -79,6 +79,16 @@ pub fn read_message(r: &mut impl BufRead) -> io::Result<Option<Value>> {
             };
         }
         saw_header = true;
+        // A line that filled the 1,024-byte window without its newline is
+        // refused: read on, its remainder would be parsed as a header of its
+        // own, so an overlong line could smuggle in a `Content-Length` or a
+        // blank line and desynchronise the stream (Antigravity on #631).
+        if !line.ends_with('\n') {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "header line longer than 1,024 bytes, or cut off by the end of input",
+            ));
+        }
         let line = line.trim_end_matches(['\r', '\n']);
         if line.is_empty() {
             break;
@@ -188,6 +198,7 @@ pub fn serve<R: Read + Send + 'static>(
         seq: 0,
         engine: None,
         mode: Mode::Stopped,
+        at_stop: false,
         stop_on_entry: false,
         defaults,
         bp_id: 0,
@@ -201,6 +212,11 @@ struct Server<'w, W: Write> {
     seq: i64,
     engine: Option<Engine>,
     mode: Mode,
+    /// Whether the machine sits where it last STOPPED, so the next continue
+    /// steps off that instruction ([`Engine::resume`]) rather than checking it
+    /// for a breakpoint first ([`Engine::proceed`]). Set by every stop, and
+    /// cleared by the first run that follows.
+    at_stop: bool,
     stop_on_entry: bool,
     defaults: Defaults,
     bp_id: i64,
@@ -219,6 +235,12 @@ fn arg<'a>(args: Option<&'a Map<String, Value>>, key: &str) -> Option<&'a Value>
 }
 
 fn read_bounded(path: &Path, max: u64) -> Result<Vec<u8>, String> {
+    // A client names these paths; a FIFO would block `open` until a writer
+    // appears and a device streams to the bound (Antigravity on #631).
+    let meta = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if !meta.is_file() {
+        return Err(format!("{}: not a regular file", path.display()));
+    }
     let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut bytes = Vec::new();
     file.take(max + 1)
@@ -307,8 +329,10 @@ impl<W: Write> Server<'_, W> {
                     pending.is_some()
                 };
                 let engine = self.engine.as_mut().unwrap_or_else(|| unreachable!());
+                let from_stop = std::mem::replace(&mut self.at_stop, false);
                 let stop = match self.mode {
-                    Mode::Continue => engine.resume(&mut poll),
+                    Mode::Continue if from_stop => engine.resume(&mut poll),
+                    Mode::Continue => engine.proceed(&mut poll),
                     Mode::Line(kind) => engine.step_line(kind, &mut poll),
                     Mode::Instruction => engine.step_instruction(),
                     Mode::Stopped => unreachable!(),
@@ -357,6 +381,7 @@ impl<W: Write> Server<'_, W> {
 
     fn stopped(&mut self, stop: Stop) -> io::Result<()> {
         self.mode = Mode::Stopped;
+        self.at_stop = true;
         let (reason, description) = match stop {
             Stop::Breakpoint => ("breakpoint", None),
             Stop::Step => ("step", None),
@@ -893,6 +918,15 @@ mod tests {
         assert_eq!(e.kind(), io::ErrorKind::InvalidData);
         let e = read_message(&mut io::Cursor::new("X-Other: 1\r\n\r\n{}")).expect_err("no length");
         assert_eq!(e.kind(), io::ErrorKind::InvalidData);
+
+        // A header line past the 1,024-byte window is refused, not split: its
+        // tail here would otherwise read as a `Content-Length` of its own.
+        let long = format!(
+            "X-Pad: {}Content-Length: 2\r\n\r\n{{}}",
+            "a".repeat(1024 - "X-Pad: ".len())
+        );
+        let e = read_message(&mut io::Cursor::new(long)).expect_err("overlong line");
+        assert_eq!(e.kind(), io::ErrorKind::InvalidData, "{e}");
         let e = read_message(&mut io::Cursor::new("Content-Length: 2\r\n\r\nno"))
             .expect_err("not json");
         assert_eq!(e.kind(), io::ErrorKind::InvalidData);

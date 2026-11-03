@@ -76,7 +76,11 @@ impl Gdb {
             if b[0] == b'$' {
                 break;
             }
-            // '+' acknowledgements from the stub
+            // '+' acknowledgements from the stub, which stop once no-ack mode
+            // is agreed: a byte before the '$' after that is a stub that kept
+            // acknowledging (it did until v3.6.0's review, and this loop used
+            // to discard the evidence).
+            assert!(self.ack, "stub sent {:?} in no-ack mode", char::from(b[0]));
         }
         let mut body = Vec::new();
         loop {

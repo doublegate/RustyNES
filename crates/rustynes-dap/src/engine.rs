@@ -457,12 +457,30 @@ impl Engine {
     /// `poll` returns `true` (it is called whenever the core returns from a
     /// frame or a hook, which is at least once per emulated frame). The
     /// instruction at the current PC is executed first, so continuing from
-    /// a breakpoint does not stop on it again.
+    /// a breakpoint does not stop on it again: this is the call for leaving
+    /// a STOP. To keep running from a point that was not a stop (the start
+    /// of a session, or after a request handled while running), use
+    /// [`Self::proceed`].
     pub fn resume(&mut self, poll: &mut dyn FnMut() -> bool) -> Stop {
         if self.nes.cpu().is_jammed() {
             return Stop::Jam;
         }
         self.exec_one();
+        self.proceed(poll)
+    }
+
+    /// [`Self::resume`] without stepping off the current instruction first:
+    /// a breakpoint at the current PC stops at once.
+    ///
+    /// The server used to call `resume` for every run, so a breakpoint on the
+    /// reset vector was stepped past when a session started without
+    /// `stopOnEntry`, and one set at the current PC by a `setBreakpoints`
+    /// handled mid-run was stepped past when the run continued (Antigravity
+    /// on #631).
+    pub fn proceed(&mut self, poll: &mut dyn FnMut() -> bool) -> Stop {
+        if self.nes.cpu().is_jammed() {
+            return Stop::Jam;
+        }
         loop {
             self.arrive();
             if self.nes.cpu().is_jammed() {
@@ -539,20 +557,23 @@ impl Engine {
                     // Into a function with source: finish its prologue, so
                     // the stop is on its first body line with the frame base
                     // sampled (what a C programmer means by "step into").
+                    // Only if the JSR actually arrived there: an interrupt
+                    // taken on this step vectors elsewhere, and running on to
+                    // the callee's hook would skip the handler's lines
+                    // (Antigravity on #631). Otherwise the ordinary line rule
+                    // below applies where the CPU is.
                     let hook = self
                         .function_at(target)
                         .filter(|f| f.low == target && f.frame_hook != target)
                         .map(|f| f.frame_hook);
-                    if let Some(hook) = hook
+                    if self.pc() == target
+                        && let Some(hook) = hook
                         && self
                             .info
                             .as_ref()
                             .is_some_and(|i| i.stmt_at(hook).is_some())
                     {
-                        return match self.run_to(hook, 0, poll) {
-                            Stop::Step => Stop::Step,
-                            other => other,
-                        };
+                        return self.run_to(hook, 0, poll);
                     }
                 }
             } else {

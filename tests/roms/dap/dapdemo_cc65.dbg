@@ -6,11 +6,11 @@ csym	id=2,name="r",scope=1,type=0,sc=auto,offs=-1
 csym	id=3,name="main",scope=2,type=0,sc=static,sym=10
 csym	id=4,name="local",scope=2,type=0,sc=auto,offs=-1
 file	id=0,name="dapdemo.c.1791022.0.s",size=1866,mtime=0x6ADC0E79,mod=0
-file	id=1,name="/home/parobek/.local/share/cc65/asminc/longbranch.mac",size=2632,mtime=0x697DAE5B,mod=0
+file	id=1,name="cc65/asminc/longbranch.mac",size=2632,mtime=0x697DAE5B,mod=0
 file	id=2,name="dapdemo.c",size=953,mtime=0x6ADC0E79,mod=0
-file	id=3,name="/home/parobek/Code/cc65/asminc/generic.mac",size=937,mtime=0x697DADFA,mod=7
-file	id=4,name="/home/parobek/Code/cc65/asminc/zeropage.inc",size=1020,mtime=0x697DADFA,mod=4+14
-file	id=5,name="/home/parobek/Code/cc65/asminc/nes.inc",size=2806,mtime=0x697DADFA,mod=4+10
+file	id=3,name="cc65/asminc/generic.mac",size=937,mtime=0x697DADFA,mod=7
+file	id=4,name="cc65/asminc/zeropage.inc",size=1020,mtime=0x697DADFA,mod=4+14
+file	id=5,name="cc65/asminc/nes.inc",size=2806,mtime=0x697DADFA,mod=4+10
 file	id=6,name="runtime/callmain.s",size=745,mtime=0x697DADFA,mod=1
 file	id=7,name="runtime/condes.s",size=2129,mtime=0x697DADFA,mod=2
 file	id=8,name="common/copydata.s",size=1042,mtime=0x697DADFA,mod=3
@@ -25,7 +25,7 @@ file	id=16,name="runtime/pusha.s",size=678,mtime=0x697DADFA,mod=11
 file	id=17,name="runtime/pushax.s",size=1082,mtime=0x697DADFA,mod=12
 file	id=18,name="common/zerobss.s",size=698,mtime=0x697DADFA,mod=13
 file	id=19,name="runtime/zeropage.s",size=646,mtime=0x697DADFA,mod=14
-lib	id=0,name="/home/parobek/.local/share/cc65/lib/nes.lib"
+lib	id=0,name="cc65/lib/nes.lib"
 line	id=0,file=0,line=92,span=38
 line	id=1,file=0,line=85,span=31
 line	id=2,file=0,line=11

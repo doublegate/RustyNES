@@ -190,7 +190,10 @@ impl WavWriter {
         f.sync_all()?;
         std::fs::rename(&self.staged, &self.target)?;
         self.finished = true;
-        Ok(())
+        // The directory too, as `atomic_write` does, so the rename is durable
+        // and not only the bytes (Antigravity on #631: the doc promised the
+        // same rule and this step was missing).
+        crate::atomic_write::sync_parent_dir(&self.target)
     }
 }
 

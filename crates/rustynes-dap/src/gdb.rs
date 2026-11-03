@@ -32,6 +32,8 @@
 
 use std::io::{self, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 use crate::engine::{Engine, Stop};
@@ -225,21 +227,30 @@ pub fn serve(stream: TcpStream, mut engine: Engine, regs: &Registers) -> io::Res
     stream.set_nodelay(true)?;
     let reader = stream.try_clone()?;
     let (tx, rx) = mpsc::channel();
+    let ack = Arc::new(AtomicBool::new(true));
+    let reader_ack = Arc::clone(&ack);
     std::thread::Builder::new()
         .name("gdb-reader".into())
-        .spawn(move || read_packets(reader, &tx))?;
+        .spawn(move || read_packets(reader, &tx, &reader_ack))?;
     let mut s = Stub {
         out: stream,
-        ack: true,
+        ack,
         regs,
     };
     s.run(&mut engine, &rx)
 }
 
-/// Split the byte stream into packets, acknowledging each when asked to.
+/// Split the byte stream into packets, acknowledging each while `ack` is set.
 /// Acknowledgement bytes from the client are dropped (this stub does not
 /// retransmit: it speaks over TCP, which already does).
-fn read_packets(stream: TcpStream, tx: &mpsc::Sender<Incoming>) {
+///
+/// `ack` is shared with the [`Stub`], which clears it on `QStartNoAckMode`.
+/// Until v3.6.0's review the stub cleared a flag of its own that nothing read,
+/// so this thread kept writing `+` after agreeing to stop, and a client that
+/// had entered no-ack mode saw stray bytes before each reply (Antigravity on
+/// #631). The client sends nothing until it has the `OK`, and the flag is
+/// cleared before the `OK` is written, so the next packet is never acked.
+fn read_packets(stream: TcpStream, tx: &mpsc::Sender<Incoming>, ack: &AtomicBool) {
     let mut r = BufReader::new(stream);
     let mut byte = [0u8; 1];
     let mut ack_writer = r.get_ref().try_clone().ok();
@@ -279,7 +290,9 @@ fn read_packets(stream: TcpStream, tx: &mpsc::Sender<Incoming>) {
                     .ok()
                     .and_then(|c| u8::from_str_radix(c, 16).ok())
                     == Some(checksum(&body));
-                if let Some(w) = ack_writer.as_mut() {
+                if ack.load(Ordering::Acquire)
+                    && let Some(w) = ack_writer.as_mut()
+                {
                     let _ = w.write_all(if good { b"+" } else { b"-" });
                 }
                 if good && tx.send(Incoming::Packet(body)).is_err() {
@@ -293,7 +306,8 @@ fn read_packets(stream: TcpStream, tx: &mpsc::Sender<Incoming>) {
 
 struct Stub<'r> {
     out: TcpStream,
-    ack: bool,
+    /// Whether `read_packets` still acknowledges packets (see there).
+    ack: Arc<AtomicBool>,
     regs: &'r Registers,
 }
 
@@ -342,8 +356,8 @@ impl Stub<'_> {
                         .to_owned()
                 }
                 "QStartNoAckMode" => {
+                    self.ack.store(false, Ordering::Release);
                     self.send("OK")?;
-                    self.ack = false;
                     continue;
                 }
                 "?" => Self::stop_reply(engine, last_stop, false),

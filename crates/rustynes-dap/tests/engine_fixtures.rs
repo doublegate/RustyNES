@@ -300,3 +300,24 @@ fn the_stop_does_not_perturb_the_machine() {
         );
     }
 }
+
+/// `proceed` checks the current PC before executing anything, where `resume`
+/// steps off it first: the difference between continuing from a stop and
+/// continuing from a point that was not one (Antigravity on #631).
+#[test]
+fn proceed_stops_on_a_breakpoint_at_the_current_pc() {
+    for fx in [CC65, LLVM_MOS] {
+        let mut e = engine(fx);
+        let pc = e.nes().cpu().pc;
+        let cycles = e.nes().cpu().cycles;
+        e.set_address_breakpoints(&[pc]).expect("armed");
+        assert_eq!(e.proceed(&mut never()), Stop::Breakpoint, "{}", fx.name);
+        assert_eq!(e.nes().cpu().pc, pc, "{}: still on it", fx.name);
+        assert_eq!(
+            e.nes().cpu().cycles,
+            cycles,
+            "{}: nothing executed",
+            fx.name
+        );
+    }
+}

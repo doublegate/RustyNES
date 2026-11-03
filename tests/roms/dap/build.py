@@ -22,14 +22,17 @@ so the debug info records the source as the relative name ``dapdemo.c``
 and the working tree is never littered with compiler intermediates. Two
 builds on one machine give identical ROMs and an identical ELF; the cc65
 ``.dbg`` differs (it records cl65's temporary file name and source
-modification times), and across machines it also records where cc65's
-runtime library was built. The tests therefore never compare fixture bytes;
-they drive whatever this script produced.
+modification times). The absolute paths ld65 records for cc65's own
+runtime files (where cc65 was built or installed) are rewritten to
+``cc65/<dir>/...`` by ``normalize_dbg``, so no machine's home directory is
+kept. The tests never compare fixture bytes; they drive whatever this script
+produced.
 """
 
 import argparse
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -55,6 +58,23 @@ def find_tool(name: str, home_var: str) -> str:
 def run(cmd: list[str], cwd: Path, env: dict[str, str]) -> None:
     print("+", " ".join(cmd), flush=True)
     subprocess.run(cmd, cwd=cwd, env=env, check=True)
+
+
+# A path cc65 recorded for its own runtime: where its asminc, cfg, include
+# and lib directories were on the machine that built cc65 or installed it.
+_CC65_PATH = re.compile(r'name="(?:[A-Za-z]:)?/[^"]*?/(asminc|cfg|include|lib|libsrc)/')
+
+
+def normalize_dbg(text: str) -> str:
+    """Replace the absolute paths of cc65's own files in an ld65 debug file
+    with ``cc65/<dir>/...``.
+
+    ld65 records the include and library files it read by absolute path, which
+    put the building machine's home directory into a committed fixture (and
+    made two machines' builds differ for no reason the tests care about). The
+    debugger never opens those files: only ``dapdemo.c`` is a source it maps.
+    """
+    return _CC65_PATH.sub(lambda m: f'name="cc65/{m.group(1)}/', text)
 
 
 def sha256(path: Path) -> str:
@@ -117,7 +137,10 @@ def main() -> int:
         for name, path in produced.items():
             if not path.is_file():
                 sys.exit(f"build.py: the build did not produce {path.name}")
-            shutil.copy(path, out / name)
+            if name.endswith(".dbg"):
+                (out / name).write_text(normalize_dbg(path.read_text()))
+            else:
+                shutil.copy(path, out / name)
             print(f"{sha256(out / name)}  {name}")
     return 0
 
