@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Origin (a disclosure, not a derivation record): written for T-DEBUG-DAP
-// from the ld65 `--dbgfile` output itself (the fixture's
-// `tests/roms/dap/dapdemo_cc65.dbg`, read as data) and the cc65
-// documentation, which names the option but not the record layout. No
-// emulator's importer was consulted. The author HAD read
-// `crates/rustynes-frontend/src/debugger/source_map.rs` earlier in the same
-// session; that file is Mesen2-derived (its own Provenance header). This
-// reader shares its record vocabulary (`seg` / `span` / `file` / `line`,
-// which is ld65's), not its code, and also reads `mod`, `scope`, `sym` and
-// `csym`, which that one does not. Flagged for maintainer review rather
-// than self-certified; if judged derived, it takes a Provenance header and
-// a section 1 row.
+// Provenance: classified derived by the maintainer (2026-11-03) from Mesen2 (GPL-3.0-or-later), `DbgImporter` / `NesDbgImporter`, through `crates/rustynes-frontend/src/debugger/source_map.rs`. See docs/originality-and-provenance.md (Section 1)
+//
+// How it came to be classified: it was written for T-DEBUG-DAP from the ld65
+// `--dbgfile` output itself (the fixture's `tests/roms/dap/dapdemo_cc65.dbg`,
+// read as data) and the cc65 documentation, but its author had read
+// `source_map.rs`, whose Mesen2 importer is a declared derivation, earlier
+// in the same session. It shares that file's record vocabulary (`seg` /
+// `span` / `file` / `line`, ld65's own) and also reads `mod`, `scope`, `sym`
+// and `csym`, which that one does not. Exposure to a derived file cannot be
+// ruled out of the expression here, so the maintainer chose to attribute it
+// rather than claim it independent; the licences are compatible (both
+// GPL-3.0-or-later).
 //! The cc65 reader: `ld65 --dbgfile` output.
 //!
 //! The file is line-oriented: `<record>\t<key>=<value>,<key>=<value>...`.

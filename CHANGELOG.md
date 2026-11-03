@@ -111,7 +111,10 @@ cycle-accurate core later replaced.
   extension ships (the page has a `package.json` sketch, untried in VS Code);
   cc65 records no C types, so cc65 variables show as one byte. New
   dependencies `gimli` and `object` (MIT / Apache-2.0), reached only from
-  `rustynes-dap`.
+  `rustynes-dap`. Its cc65 reader (`debuginfo/cc65.rs`) is attributed to
+  Mesen2: its author had read the desktop debugger's Mesen2-derived
+  source-map importer first, and the maintainer classified it derived
+  (header, `docs/originality-and-provenance.md` section 1, `NOTICE`).
 - **Audio stems** (`T-AUDIO-STEMS`): `rustynes stems <ROM>` writes pulse 1,
   pulse 2, triangle, noise, DMC and the cartridge's expansion chip (VRC6, VRC7,
   Namco 163, Sunsoft 5B, MMC5, FDS, or an NSF's chips) as separate 32-bit float

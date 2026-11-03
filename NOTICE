@@ -46,7 +46,8 @@ file-by-file table (source file, function, and line references).
   derived 2026-10-21; the layout is also on the NESdev Power Pad page); the raw NTSC composite-signal
   model ("raw palette"); the Bisqwit NTSC filter as
   Mesen2 implements it; the UNIF board tables; the debug-symbol importer
-  (DbgImporter); and the PGO training harness (PGOHelper).
+  (DbgImporter), and through it the DAP debugger's cc65 debug-file reader
+  (classified derived 2026-11-03); and the PGO training harness (PGOHelper).
 
 * puNES -- Copyright FHorse -- GPL-2.0-or-later
   https://github.com/FHorse/puNES

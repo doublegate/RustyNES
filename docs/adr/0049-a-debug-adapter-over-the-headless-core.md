@@ -106,3 +106,16 @@ address on a CPU with no frame pointer, and what a client may do.
 - New dependencies, permissive and already allowed by `deny.toml`: `gimli`,
   `object` (and `base64`, already in the lock file). They are reached only
   from `rustynes-dap`; no shipped binary links them.
+
+## Amendment (2026-11-03, v3.6.0): the cc65 reader is attributed
+
+Decision 1 says the adapter has its own cc65 reader rather than reusing the
+frontend's derived `source_map.rs`. That holds for the code's structure, but
+the reader's author had read `source_map.rs` before writing it, so
+independence could not be shown, and the question was put to the maintainer
+rather than self-certified. The maintainer classified
+`crates/rustynes-dap/src/debuginfo/cc65.rs` as derived from Mesen2's
+`DbgImporter` / `NesDbgImporter` through that file: it carries a
+`Provenance:` header, a section 1 row in `docs/originality-and-provenance.md`
+and a `NOTICE` entry. Nothing else in the adapter changes; the licences are
+compatible (both GPL-3.0-or-later).
