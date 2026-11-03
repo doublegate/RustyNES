@@ -387,6 +387,16 @@ impl Engine {
         if let Some(funcs) = self.entries.get(&pc).cloned() {
             let s = self.s();
             self.prune();
+            // A frame entered at this same depth or deeper has returned: a
+            // caller still running sits HIGHER on the 6502's descending
+            // stack than any callee's entry. `prune` alone keeps a frame
+            // whose entry `S` equals the current one, so continuing through
+            // repeated calls at one depth stacked up old frames as fictitious
+            // callers (Codex on #631). Returns are not hooked, so this is
+            // where they are noticed.
+            while self.frames.last().is_some_and(|f| f.entry_s <= s) {
+                self.frames.pop();
+            }
             for func in funcs {
                 if self.frames.len() >= MAX_FRAMES {
                     self.frames.remove(0);

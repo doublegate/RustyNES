@@ -99,7 +99,8 @@ pub fn parse_filter(s: &str) -> Result<FilterModel, String> {
 /// A mono 32-bit IEEE-float WAV written as it goes. The sizes in the header
 /// are patched by [`Self::finish`].
 ///
-/// The samples stream into a staged sibling (`<name>.rustynes-partial`), and
+/// The samples stream into a staged sibling of its own
+/// (`<name>.<pid>.<n>.rustynes-partial`, created exclusively), and
 /// `finish` patches the header, syncs, and renames it over the target: an
 /// export cut short leaves the previous file (or none) under the real name,
 /// never a truncated WAV with placeholder sizes, the rule `atomic_write`
@@ -123,10 +124,23 @@ impl WavWriter {
     /// # Errors
     /// An I/O error.
     pub fn create(path: &Path, rate: u32) -> std::io::Result<Self> {
+        // Each writer stages under a name of its own, created exclusively:
+        // two exports to one directory used to open and truncate the same
+        // `<name>.rustynes-partial`, so after one published its WAV the other
+        // could overwrite it through the shared inode (Codex on #631). The
+        // process id and a per-process counter make the name unique, and
+        // `create_new` refuses rather than share a file that already exists.
+        static STAGE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = STAGE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut staged = path.as_os_str().to_owned();
-        staged.push(".rustynes-partial");
+        staged.push(format!(".{}.{seq}.rustynes-partial", std::process::id()));
         let staged = std::path::PathBuf::from(staged);
-        let mut out = BufWriter::new(File::create(&staged)?);
+        let mut out = BufWriter::new(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&staged)?,
+        );
         // RIFF header; the sizes are placeholders until `finish`.
         out.write_all(b"RIFF")?;
         out.write_all(&0u32.to_le_bytes())?;
@@ -522,21 +536,33 @@ mod tests {
     fn a_wav_is_published_only_when_finished() {
         let dir = tempfile::tempdir().expect("a temp dir");
         let p = dir.path().join("mix.wav");
-        let partial = dir.path().join("mix.wav.rustynes-partial");
+        // The staging name carries the process id and a counter, so look for
+        // any `mix.wav.*.rustynes-partial` rather than one fixed name.
+        let partials = || {
+            std::fs::read_dir(dir.path())
+                .expect("list")
+                .filter_map(Result::ok)
+                .filter(|e| {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    n.starts_with("mix.wav.") && n.ends_with(".rustynes-partial")
+                })
+                .count()
+        };
         std::fs::write(&p, b"the previous export").expect("seed");
         let mut w = WavWriter::create(&p, 48_000).expect("create");
         w.write(&[0.5; 64]).expect("write");
-        assert!(partial.exists(), "samples go to the staged file");
+        assert_eq!(partials(), 1, "samples go to the staged file");
         drop(w);
-        assert!(
-            !partial.exists(),
+        assert_eq!(
+            partials(),
+            0,
             "an unfinished writer removes its staged file"
         );
         assert_eq!(std::fs::read(&p).expect("read"), b"the previous export");
         let mut w = WavWriter::create(&p, 48_000).expect("create");
         w.write(&[0.5; 64]).expect("write");
         w.finish().expect("finish");
-        assert!(!partial.exists(), "finish renames the staged file away");
+        assert_eq!(partials(), 0, "finish renames the staged file away");
         assert_eq!(std::fs::read(&p).expect("read").len(), 58 + 64 * 4);
     }
 
@@ -684,5 +710,31 @@ mod tests {
             info: NsfInfo::default(),
         };
         assert_eq!(run_rip(&args), EXIT_CHECK_FAILED);
+    }
+
+    /// Two writers aimed at one file stage separately, so one finishing
+    /// cannot be overwritten by the other (Codex on #631: they shared one
+    /// `.rustynes-partial` inode, and the loser rewrote the winner's WAV).
+    #[test]
+    fn two_writers_to_one_target_stage_separately() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("pulse1.wav");
+        let mut a = WavWriter::create(&target, 48_000).unwrap();
+        let mut b = WavWriter::create(&target, 48_000).unwrap();
+        a.write(&[0.25; 64]).unwrap();
+        b.write(&[-0.5; 128]).unwrap();
+        a.finish().unwrap();
+        let published = std::fs::read(&target).unwrap();
+        // The other writer keeps writing into its own staging file and is
+        // then abandoned: the published WAV must not change.
+        b.write(&[-0.5; 4096]).unwrap();
+        drop(b);
+        assert_eq!(std::fs::read(&target).unwrap(), published);
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().contains("rustynes-partial"))
+            .collect();
+        assert!(leftovers.is_empty(), "no staging file left behind");
     }
 }

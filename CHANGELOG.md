@@ -105,8 +105,9 @@ cycle-accurate core later replaced.
   instruction before checking for a breakpoint, so one on the reset vector or
   at the current address was missed; a header line over 1,024 bytes was split
   into two headers; `stepIn` across an interrupt ran on to the callee's
-  prologue; and a FIFO as `program` or `debugInfo` blocked the adapter. Four
-  more mutants, all caught. Not done: no released GDB or LLDB has a MOS target,
+  prologue; a FIFO as `program` or `debugInfo` blocked the adapter; and
+  continuing through repeated calls at one stack depth kept the returned
+  frames as callers. Five more mutants, all caught. Not done: no released GDB or LLDB has a MOS target,
   so the stub has only been driven by the tests' protocol client; no VS Code
   extension ships (the page has a `package.json` sketch, untried in VS Code);
   cc65 records no C types, so cc65 variables show as one byte. New

@@ -321,3 +321,27 @@ fn proceed_stops_on_a_breakpoint_at_the_current_pc() {
         );
     }
 }
+
+/// Continuing between successive calls at the same depth keeps the stack to
+/// the frames that are live: each `add3` call replaces the last one rather
+/// than stacking up beneath it (Codex on #631: the returned frames were
+/// shown as callers, with stale locals).
+#[test]
+fn repeated_calls_at_one_depth_do_not_accumulate_frames() {
+    for fx in [CC65, LLVM_MOS] {
+        let mut e = engine(fx);
+        let f = file(&e);
+        e.set_source_breakpoints(f, &[common::line("add3-body")])
+            .expect("armed");
+        for hit in 1..=4 {
+            assert_eq!(e.resume(&mut never()), Stop::Breakpoint, "{}", fx.name);
+            let names: Vec<_> = e.stack().into_iter().map(|f| f.name).collect();
+            assert_eq!(
+                names,
+                vec!["add3".to_string(), "main".to_string()],
+                "{}: stack at hit {hit}",
+                fx.name
+            );
+        }
+    }
+}
