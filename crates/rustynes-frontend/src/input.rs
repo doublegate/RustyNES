@@ -981,14 +981,23 @@ impl InputState {
 
     /// Rebuild the keyboard + gamepad maps from a (possibly edited)
     /// [`InputConfig`], so an in-app rebind takes effect immediately.
-    /// Held-button state and the pad-to-player assignment are preserved.
+    ///
+    /// Every button held through a remappable binding is released, since its
+    /// release would be looked up in the new map; the pad-to-player
+    /// assignment and the left stick's deflection (its mapping is fixed) are
+    /// preserved.
     pub fn reload_bindings(&mut self, cfg: &InputConfig) {
-        // v3.5.1: release everything the keyboard holds before the map
-        // changes. A key held across a rebind would otherwise stay held for
-        // good, its release no longer mapping to the position its press set
-        // (Antigravity on #624). The next key event re-establishes what is
-        // really down; gamepad state is untouched, its map being separate.
+        // v3.5.1: release everything held through a map this call replaces.
+        // A key held across a rebind would otherwise stay held for good, its
+        // release no longer mapping to the position its press set (Antigravity
+        // on #624). The same holds for a gamepad button (`gamepad_maps` is
+        // rebuilt below) and the Rewind / Fast-forward hold keys
+        // (`bindings.system`), which the first fix missed (Antigravity on
+        // #630). The next press re-establishes what is really down.
         self.keyboard_buttons = [Buttons::empty(); MAX_PADS];
+        self.gamepad_buttons = [Buttons::empty(); MAX_PADS];
+        self.rewind_held = false;
+        self.fast_forward_held = false;
         self.power_pad = 0;
         self.konami_hyper_shot = 0;
         self.bandai_hyper_shot = 0;
@@ -1442,7 +1451,17 @@ mod tests {
         );
         cfg.allow_opposing_directions = false;
         s.reload_bindings(&cfg);
+        // The reload releases held keys, so press both again: an empty mask
+        // must come from the cleaning, not from nothing being held.
+        for key in [KeyCode::ArrowLeft, KeyCode::ArrowRight] {
+            let (k, e) = down(key);
+            s.handle_key(k, e);
+        }
         assert!(s.player1().is_empty(), "reload re-enables cleaning");
+        assert_eq!(
+            s.clean_directions(Buttons::UP | Buttons::DOWN),
+            Buttons::empty()
+        );
     }
 
     /// AUD-08: `socd_neutral` over every 8-bit mask: opposites never survive,
@@ -2233,5 +2252,23 @@ mod tests {
         s.handle_key(k, e);
         assert_eq!(s.power_pad, 0, "the mat button is not left held");
         assert!(!s.microphone, "the microphone is not left held");
+    }
+
+    /// The same for the two other maps a reload replaces (Antigravity on
+    /// #630): a gamepad button and the Rewind / Fast-forward hold keys held
+    /// through a rebind are released by it, not left latched.
+    #[test]
+    fn a_rebind_releases_held_gamepad_buttons_and_hold_keys() {
+        use gilrs::Button;
+        let mut s = InputState::with_defaults();
+        s.set_gamepad_button(0, Button::South, true);
+        press(&mut s, KeyCode::F5);
+        press(&mut s, KeyCode::Tab);
+        assert!(!s.player1().is_empty());
+        assert!(s.rewind_held() && s.fast_forward_held());
+        s.reload_bindings(&InputConfig::default());
+        assert!(s.player1().is_empty(), "the gamepad button is released");
+        assert!(!s.rewind_held(), "Rewind is not left held");
+        assert!(!s.fast_forward_held(), "Fast-forward is not left held");
     }
 }

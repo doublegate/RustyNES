@@ -262,7 +262,10 @@ impl Bundle {
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, BundleError> {
     use std::io::Read as _;
     let io = |e| BundleError::Io(path.to_path_buf(), e);
-    let len = std::fs::metadata(path).map_err(io)?.len();
+    // Refuse a FIFO before `open` blocks on it (Antigravity on #630).
+    let len = crate::bounded_read::regular_file_metadata(path)
+        .map_err(io)?
+        .len();
     if len > limit {
         return Err(BundleError::TooLarge(path.to_path_buf(), len));
     }
@@ -579,17 +582,19 @@ mod tests {
         ));
     }
 
-    /// An endless source is cut off at the limit, not read until memory runs
-    /// out: `/dev/zero` reports a length of 0, so only the bounded read
-    /// refuses it. (Not mutation-run: the unbounded `fs::read` it replaced
-    /// would not return here, it would exhaust memory.)
+    /// An endless source is refused before it is read: `/dev/zero` reports a
+    /// length of 0, so the metadata length passes it, and since #630 it is
+    /// refused as not a regular file (it used to be cut off at `limit + 1`
+    /// bytes; the bound stays for a file that grows while it is read).
     #[cfg(unix)]
     #[test]
-    fn an_endless_source_is_refused_at_the_limit() {
-        assert!(matches!(
-            read_bounded(Path::new("/dev/zero"), 4096),
-            Err(BundleError::TooLarge(_, 4097))
-        ));
+    fn an_endless_source_is_refused_before_it_is_read() {
+        match read_bounded(Path::new("/dev/zero"), 4096) {
+            Err(BundleError::Io(_, e)) => {
+                assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{e}");
+            }
+            other => panic!("expected a not-a-regular-file refusal, got {other:?}"),
+        }
     }
 
     /// The whole read through real files: an FDS bundle yields the merged set,

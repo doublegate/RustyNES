@@ -40,13 +40,7 @@ pub const MAX_USER_FILE: u64 = 64 * 1024 * 1024;
 /// The underlying I/O error; `InvalidInput` for a path that is not a regular
 /// file; `InvalidData` for a file over `limit`.
 pub fn read_limited(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
-    let meta = std::fs::metadata(path)?;
-    if !meta.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("{} is not a regular file", path.display()),
-        ));
-    }
+    let meta = regular_file_metadata(path)?;
     if meta.len() > limit {
         return Err(too_large(path, limit));
     }
@@ -58,6 +52,32 @@ pub fn read_limited(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
         return Err(too_large(path, limit));
     }
     Ok(bytes)
+}
+
+/// The metadata of `path` (following symlinks), refusing anything that is not
+/// a regular file with `InvalidInput`.
+///
+/// For the readers that cannot use [`read_limited`] whole: the FDS BIOS
+/// picker reads a fixed size, the header editor reads 16 bytes and writes
+/// them back, and the bundle loader and `dump-check` keep their own error
+/// types. Each checks this before `File::open`, which is where a FIFO blocks
+/// (Antigravity on #630: those five opened the path directly, so the v3.5.1
+/// fix did not reach them).
+///
+/// # Errors
+///
+/// The underlying I/O error, or `InvalidInput` for a path that is not a
+/// regular file.
+pub fn regular_file_metadata(path: &Path) -> io::Result<std::fs::Metadata> {
+    let meta = std::fs::metadata(path)?;
+    if meta.is_file() {
+        Ok(meta)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{} is not a regular file", path.display()),
+        ))
+    }
 }
 
 /// [`read_limited`] at [`MAX_USER_FILE`].
@@ -79,12 +99,19 @@ pub fn read_to_string(path: &Path) -> io::Result<String> {
 }
 
 fn too_large(path: &Path, limit: u64) -> io::Error {
+    // In MiB when the limit is a whole number of them (every caller today),
+    // in bytes otherwise, so a sub-MiB limit never reads "0 MiB".
+    const MIB: u64 = 1024 * 1024;
+    let size = if limit >= MIB && limit.is_multiple_of(MIB) {
+        format!("{} MiB", limit / MIB)
+    } else {
+        format!("{limit} bytes")
+    };
     io::Error::new(
         io::ErrorKind::InvalidData,
         format!(
-            "{} is larger than {} MiB, more than any file this can open",
-            path.display(),
-            limit / (1024 * 1024)
+            "{} is larger than {size}, more than any file this can open",
+            path.display()
         ),
     )
 }
@@ -109,6 +136,7 @@ mod tests {
         std::fs::write(&p, [0u8; 17]).unwrap();
         let e = read_limited(&p, 16).unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::InvalidData, "{e}");
+        assert!(e.to_string().contains("16 bytes"), "{e}");
         assert_eq!(read_limited(&p, 17).unwrap().len(), 17);
     }
 

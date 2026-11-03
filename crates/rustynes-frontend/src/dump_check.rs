@@ -1069,7 +1069,8 @@ fn observe_board(
 /// # Errors
 /// An I/O error, or a file over the cap.
 pub fn read_capped(path: &Path) -> Result<Vec<u8>, String> {
-    let len = std::fs::metadata(path)
+    // Refuse a FIFO before `open` blocks on it (Antigravity on #630).
+    let len = crate::bounded_read::regular_file_metadata(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?
         .len();
     if len > MAX_INPUT_BYTES {
@@ -1421,13 +1422,14 @@ fn parse_hex_32(s: &str) -> Option<[u8; 32]> {
 #[cfg(test)]
 mod tests {
 
-    /// `/dev/zero` reports 0 bytes but never ends: the bounded read refuses
-    /// it at the limit instead of filling memory.
+    /// `/dev/zero` reports 0 bytes but never ends: it is refused as not a
+    /// regular file before anything is read (since #630; before, the bounded
+    /// read cut it off at the limit).
     #[cfg(unix)]
     #[test]
-    fn an_endless_source_is_refused_at_the_limit() {
+    fn an_endless_source_is_refused_before_it_is_read() {
         let err = read_capped(Path::new("/dev/zero")).unwrap_err();
-        assert!(err.contains("limit"), "{err}");
+        assert!(err.contains("not a regular file"), "{err}");
     }
 
     use super::*;
