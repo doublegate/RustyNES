@@ -428,13 +428,17 @@ fn fds_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &mut C
             // Read at most one byte past the 8 KiB BIOS size: an accidentally-huge
             // file then can't OOM / freeze the UI thread, and `classify` rejects any
             // length != 8192 (an oversize file yields 8193 bytes here -> WrongSize).
+            // A FIFO would block `open` on the window thread, so the path is
+            // refused unless it is a regular file (Antigravity on #630).
             use std::io::Read as _;
-            let read = std::fs::File::open(&path).and_then(|f| {
-                let mut buf = Vec::new();
-                f.take(crate::fds_firmware::BIOS_SIZE as u64 + 1)
-                    .read_to_end(&mut buf)?;
-                Ok(buf)
-            });
+            let read = crate::bounded_read::regular_file_metadata(&path)
+                .and_then(|_| std::fs::File::open(&path))
+                .and_then(|f| {
+                    let mut buf = Vec::new();
+                    f.take(crate::fds_firmware::BIOS_SIZE as u64 + 1)
+                        .read_to_end(&mut buf)?;
+                    Ok(buf)
+                });
             state.fds_bios_status = Some(match read {
                 Ok(bytes) => match classify(&bytes) {
                     BiosStatus::WrongSize(n) => {
@@ -1011,7 +1015,7 @@ fn palette_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, config: &m
                 && let Some(path) = rfd::FileDialog::new()
                     .add_filter(crate::t!(SetNesPaletteFilter), &["pal"])
                     .pick_file()
-                && let Some(base) = std::fs::read(&path)
+                && let Some(base) = crate::bounded_read::read(&path)
                     .ok()
                     .and_then(|b| crate::config::parse_pal(&b))
             {
@@ -1313,7 +1317,7 @@ pub fn shader_stack_section(
                         .add_filter(crate::t!(SetRaPresetFilter), &["slangp", "cgp"])
                         .pick_file()
                 {
-                    match std::fs::read_to_string(&path) {
+                    match crate::bounded_read::read_to_string(&path) {
                         Ok(text) => match crate::slang_preset::import_preset(&text) {
                             Ok(result) => {
                                 let mapped = result.stack.passes.len();

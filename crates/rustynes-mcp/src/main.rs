@@ -36,9 +36,13 @@ fn parse_args() -> Result<SessionConfig, String> {
         }
     }
     let rom = rom.ok_or("--rom is required")?;
-    let len = std::fs::metadata(&rom)
-        .map_err(|e| format!("{}: {e}", rom.display()))?
-        .len();
+    let meta = std::fs::metadata(&rom).map_err(|e| format!("{}: {e}", rom.display()))?;
+    // A FIFO would block `open` below until a writer appears, and a device
+    // has no meaningful length (Antigravity on #630).
+    if !meta.is_file() {
+        return Err(format!("{}: not a regular file", rom.display()));
+    }
+    let len = meta.len();
     if len > limits::MAX_ROM_BYTES {
         return Err(format!("{}: {len} bytes is too large", rom.display()));
     }

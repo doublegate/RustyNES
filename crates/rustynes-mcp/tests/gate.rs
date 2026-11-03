@@ -355,7 +355,13 @@ fn real_time_running_pauses_and_stops_at_breakpoints() {
         "a RAM write while running is refused"
     );
     ok(&h, "pause", Value::Null);
-    ok(&h, "resume", json!({ "max_frames": 30 }));
+    // 240 frames (four seconds paced), so the run outlasts the Lua call below;
+    // `is_running()` after the call proves it landed mid-run (CodeRabbit on
+    // #630: at 30 frames the run could end first and the test still passed).
+    // The run is paced in real time and a slow CI runner falls behind it
+    // (macOS managed 559 of 600 frames in 20 s), so the wait for its end is
+    // generous rather than the frame count large.
+    ok(&h, "resume", json!({ "max_frames": 240 }));
     assert!(
         matches!(
             call(&h, "step_frames", json!({ "frames": 1 })),
@@ -365,18 +371,33 @@ fn real_time_running_pauses_and_stops_at_breakpoints() {
     );
     // Observation still answers while running.
     ok(&h, "cpu_state", Value::Null);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    // So does read-only Lua (v3.5.1, `T-V350-REVIEW-RESIDUE`: Antigravity on
+    // #624 asked whether it is safe mid-run). It runs under the session lock
+    // the runner takes for every frame, so it sees one frame boundary and the
+    // runner waits; its breach check compares two snapshots taken under that
+    // lock. The `movie_verify` below then proves the run's journal is intact.
+    let lua = call(
+        &h,
+        "lua_eval",
+        json!({ "source": "emu.onFrame(function() emu.log(emu.read(0)) end)" }),
+    )
+    .expect("Lua answers while running");
+    assert_eq!(lua.json["ok"], true, "{}", lua.json);
+    assert_eq!(lua.json["state_unchanged"], true, "{}", lua.json);
+    assert!(h.is_running(), "the run was still going after lua_eval");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     while h.is_running() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     let p = ok(&h, "pause", Value::Null);
-    assert_eq!(p["realtime_frames"], 30, "{p}");
-    assert_eq!(p["last_stop"], "ran max_frames (30)");
+    assert_eq!(p["realtime_frames"], 240, "{p}");
+    assert_eq!(p["last_stop"], "ran max_frames (240)");
     let v = ok(&h, "movie_verify", json!({ "source": "main" }));
     assert_eq!(v["identical"], true, "real-time frames are journalled: {v}");
 
     ok(&h, "breakpoint_add", json!({ "pc": LOOP_END_PC }));
     ok(&h, "resume", json!({}));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     while h.is_running() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }

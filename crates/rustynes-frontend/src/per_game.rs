@@ -230,7 +230,7 @@ fn resolve_from_paths(
         // Never confuse the ROM itself for its sidecar (a `Game.json` ROM is
         // implausible, but be defensive).
         if sibling != rom_path
-            && let Ok(bytes) = std::fs::read(&sibling)
+            && let Ok(bytes) = crate::bounded_read::read(&sibling)
             && let Some(cfg) = parse(&bytes)
         {
             return Some(cfg);

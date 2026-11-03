@@ -41,6 +41,10 @@ pub mod battery_policy;
 /// `web_battery` (an IndexedDB record, v2.9.7).
 #[cfg(not(target_arch = "wasm32"))]
 pub mod battery_save;
+/// v3.5.1 — reading a user-named file with a bound and refusing devices and
+/// FIFOs. Native-only (filesystem).
+#[cfg(not(target_arch = "wasm32"))]
+pub mod bounded_read;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod bundle;
 /// v2.9.9 (NF-11) — which timeline-changing actions a running movie, netplay

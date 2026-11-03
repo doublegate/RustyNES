@@ -77,7 +77,7 @@
     // leading `RustyNES/` token: RetroAchievements identifies and allowlists
     // the client by it, and src/ra.ts refuses to forward without it. Bump the
     // product and rcheevos versions with each release.
-    "RA_USER_AGENT": "RustyNES/3.5.0 (Web wasm32) rcheevos/12.5.0",
+    "RA_USER_AGENT": "RustyNES/3.5.1 (Web wasm32) rcheevos/12.5.0",
     // Abuse guards (README.md "Spend guards"; src/budget.ts): forwarded calls
     // per client IP per rolling hour, `login2` calls per IP per hour, and
     // forwarded calls per UTC day, all callers together.

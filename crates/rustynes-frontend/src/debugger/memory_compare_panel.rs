@@ -614,7 +614,7 @@ fn load_wch() -> Option<Result<Vec<WatchEntry>, String>> {
     let path = rfd::FileDialog::new()
         .add_filter("Watch list", &["wch"])
         .pick_file()?;
-    let text = match std::fs::read_to_string(&path) {
+    let text = match crate::bounded_read::read_to_string(&path) {
         Ok(t) => t,
         Err(e) => return Some(Err(format!("read failed: {e}"))),
     };
