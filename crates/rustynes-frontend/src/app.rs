@@ -4210,6 +4210,12 @@ impl App {
         // A project the loader would refuse is not written (v3.5.1 review):
         // the two share `MAX_TAS_PROJECT`.
         if bytes.len() as u64 > crate::bounded_read::MAX_TAS_PROJECT {
+            // On screen as well as on stderr (CodeRabbit on #630).
+            self.ui
+                .set_status(crate::ui_shell::StatusMessage::error(format!(
+                    "TAStudio project is over the {} MiB limit; not saved",
+                    crate::bounded_read::MAX_TAS_PROJECT / (1024 * 1024)
+                )));
             eprintln!(
                 "rustynes: TAStudio project is {} bytes, over the {} MiB a project may be; not saved",
                 bytes.len(),
