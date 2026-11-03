@@ -280,14 +280,17 @@ cycle-accurate core later replaced.
   Power Pad, Hyper Shot, microphone, controller or Family BASIC key while it
   was down left its input pressed for good, because its release no longer
   matched the position its press had set. A rebind now releases every
-  keyboard-held input.
+  keyboard-held input, every held gamepad button and the Rewind and
+  Fast-forward hold keys, all of whose maps a rebind replaces.
 - **Opening a device or a pipe no longer hangs the desktop app**: every ROM,
   patch, FDS BIOS, movie, TAS project, symbol file, source map, script,
   palette, splits file and per-game sidecar was read whole with no bound, so
   a FIFO blocked the window thread in `open` and a device such as `/dev/zero`
   (by name or through a symlink) filled memory. These are now refused if they
   are not regular files, and read up to 64 MiB, as are `rustynes verify`'s
-  and `rustynes speedrun`'s inputs.
+  and `rustynes speedrun`'s inputs. The ROM header editor, the files a
+  `.rnbundle` names, `rustynes dump-check` and the MCP server's `--rom` refuse
+  a file that is not a regular file the same way.
 
 ### Changed
 

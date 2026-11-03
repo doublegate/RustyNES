@@ -363,6 +363,8 @@ fn open_file(state: &mut HeaderEditorState) {
 
 /// Read just the first [`HEADER_LEN`] bytes of a ROM file (the header).
 fn read_header_bytes(path: &std::path::Path) -> std::io::Result<[u8; HEADER_LEN]> {
+    // A FIFO would block `open` on the window thread (Antigravity on #630).
+    crate::bounded_read::regular_file_metadata(path)?;
     let mut file = std::fs::File::open(path)?;
     let mut buf = [0u8; HEADER_LEN];
     file.read_exact(&mut buf)?;
@@ -398,4 +400,26 @@ fn overwrite_header(path: &std::path::Path, header: &[u8; HEADER_LEN]) -> std::i
     file.seek(SeekFrom::Start(0))?;
     file.write_all(header)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A FIFO would block `open` on the window thread until a writer
+    /// appears; it is refused before `open` is reached (Antigravity on #630).
+    /// A hang here, not a failure, is what the missing check looks like.
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_is_refused_without_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("pipe.nes");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo runs");
+        assert!(made.success(), "mkfifo {}", fifo.display());
+        let e = read_header_bytes(&fifo).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{e}");
+    }
 }
