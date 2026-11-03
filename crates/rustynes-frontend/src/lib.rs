@@ -47,6 +47,9 @@ pub mod battery_save;
 pub mod bounded_read;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod bundle;
+/// v3.6.0 — a ROM inside a `.zip` archive, for the desktop and the browser
+/// builds alike (the desktop's v1.2.0 extraction, moved here).
+pub mod rom_archive;
 /// v2.9.9 (NF-11) — which timeline-changing actions a running movie, netplay
 /// session or RA hardcore session refuses.
 ///

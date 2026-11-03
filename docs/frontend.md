@@ -583,13 +583,23 @@ native, and the desktop's `DroppedFile` handler reads its ROM list from the same
 
 | dropped file | wasm-winit | wasm-canvas |
 |---|---|---|
-| `.nes` / `.fds` / `.unf` / `.unif` | `AppEvent::RomLoaded`, as the picker | `load_rom_bytes`, as the picker (no FDS: its parse fails and is logged) |
+| `.nes` / `.fds` / `.unf` / `.unif` / `.zip` | `AppEvent::RomLoaded`, as the picker | `load_rom_bytes`, as the picker (no FDS: its parse fails and is logged) |
 | `.rnm` | `AppEvent::MovieLoaded`, as F7's picker | `start_movie_from_bytes`, as F7's picker |
 | `.rom` / `.bin` of exactly 8 KiB | `AppEvent::FdsBiosLoaded`, as the BIOS upload | refused (the embed has no FDS) |
 | anything else | refused, logged to the console by name | the same |
 
 The list is narrower than the desktop's File → Open on purpose: the browser load
-path extracts no `.zip` and plays no `.nsf`. A drop is a user gesture, so a
+path plays no `.nsf`. **Archives (v3.6.0):** both browser load paths unpack a
+`.zip` before anything else (`rom_archive::unpack_for_web`), whether it came
+from the picker, whose `accept` list now offers `.zip` (and `.unf` / `.unif`,
+which a drop already took), or from a drop. The bytes arrive without a name,
+so an archive is recognised by its `PK` signature; its first `.nes` / `.fds`
+/ `.unf` / `.unif` entry loads, an entry over 64 MiB is refused, and an
+archive with nothing loadable is reported (status bar; console in the canvas
+embed) with the running game left alone. Until v3.6.0 the `zip` crate was
+native-only and a zipped dump reached `Nes::from_rom` as an archive and failed
+to parse. The desktop drop takes `.zip` too now (it loads through File →
+Open's path, which always unpacked one). A drop is a user gesture, so a
 dropped ROM starts Web Audio exactly as the picker's `change` handler does.
 No unit test can run the DOM events. On 2026-10-20 the wasm-winit debug build
 (`trunk build`) was driven in headless Chromium over the DevTools protocol,

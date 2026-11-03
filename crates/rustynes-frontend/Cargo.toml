@@ -267,6 +267,14 @@ sha2.workspace = true
 pollster = "1.0"
 bytemuck = "1"
 web-time.workspace = true
+# v1.2.0 Workstream B — load ROMs directly from `.zip` archives, with
+# `default-features = false` + `deflate` only, so it reuses the already-present
+# flate2 / miniz_oxide rather than pulling in the AES / zstd / bzip2 extras.
+# v3.6.0: on every target (`src/rom_archive.rs`). It sat in the native-only
+# table until then, on the reasoning that the browser picker hands over raw
+# bytes; the bytes are whatever file the user picked, and a zipped dump failed
+# to load in the browser. miniz_oxide is pure Rust, so it builds for wasm32.
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # v2.3.0 — netplay (rollback netcode + UDP transport). Native-only: it
 # drives a `std::net::UdpSocket`, which does not exist on
@@ -362,13 +370,6 @@ tungstenite = { version = "0.30", default-features = false, features = ["handsha
 # build); native-only (in this `cfg(not(wasm))` table) so the wasm builds never
 # pull it in.
 png = "0.18"
-
-# v1.2.0 Workstream B — load ROMs directly from `.zip` archives. Native-only (in
-# this `cfg(not(wasm))` table) and `default-features = false` + `deflate` only,
-# so it reuses the already-present flate2 / miniz_oxide rather than pulling in
-# the AES / zstd / bzip2 extras. The wasm load path receives raw bytes from the
-# browser file picker, so it never needs zip.
-zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # v1.8.5 — the HD-pack loader + compositor + HD audio moved to `rustynes-hdpack`
 # (so the mobile bridge can reach it; the core is no_std). The frontend re-exports

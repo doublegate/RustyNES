@@ -110,7 +110,9 @@ pub fn start() -> Result<(), JsValue> {
     // movie or the FDS BIOS, routed by `drop_route::classify`.
     install_drop_loader(&document, proxy_for_movie);
 
-    log("RustyNES wasm32 — armed. Load (or drop) a .nes / .fds image to begin.");
+    log(
+        "RustyNES wasm32 — armed. Load (or drop) a .nes / .fds image, or a .zip holding one, to begin.",
+    );
     Ok(())
 }
 
@@ -156,7 +158,7 @@ fn install_drop_loader(document: &web_sys::Document, proxy: EventLoopProxy<AppEv
         let kind = classify(&name, len);
         if kind == DropKind::Unsupported {
             log(&format!(
-                "dropped file ignored (not a .nes / .fds / .unf / .rnm / 8 KiB BIOS): {name}"
+                "dropped file ignored (not a .nes / .fds / .unf / .zip / .rnm / 8 KiB BIOS): {name}"
             ));
             return;
         }

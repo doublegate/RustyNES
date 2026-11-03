@@ -207,6 +207,18 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **The browser builds load ROMs from `.zip` archives.** The web demo and the
+  canvas embed passed the picked or dropped file straight to the core, so a
+  dump kept zipped failed to parse, and the picker did not offer `.zip` at
+  all; the `zip` crate was in the native-only dependency table. The desktop's
+  extraction (since v1.2.0) moved to `rom_archive.rs`, shared by every
+  frontend: the browser recognises an archive by its signature, loads its
+  first `.nes`, `.fds`, `.unf` or `.unif` entry (64 MiB at most), and reports
+  an archive with nothing loadable without stopping the running game. The
+  picker now offers `.zip`, `.unf` and `.unif`, and a `.zip` can be dropped
+  on the page, or on the desktop window, which refused a dropped archive
+  although File -> Open took one. `.7z`, `.rar` and `.gz` are still not
+  read, on either.
 - **The noise channel plays at its documented pitch.** The NESdev page gives
   each noise period in CPU cycles between shifts of the noise generator, and
   RustyNES loaded that number into a timer that counts every other CPU

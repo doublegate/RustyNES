@@ -182,7 +182,7 @@
     <h1>RustyNES <span style="opacity:0.5">— wasm32 (wgpu + egui)</span></h1>
 
     <div id="controls">
-        <label>Load ROM: <input id="rom-input" type="file" accept=".nes,.fds" /></label>
+        <label>Load ROM: <input id="rom-input" type="file" accept=".nes,.fds,.unf,.unif,.zip" /></label>
         <label>FDS BIOS: <input id="fds-bios-input" type="file" accept=".rom,.bin" /></label>
     </div>
 
@@ -251,7 +251,7 @@
     <p class="hint">
         Keyboard: arrows = D-pad, Z = A, X = B, Enter = Start,
         Right Shift = Select. <strong>~</strong> toggles the egui
-        debugger overlay. Select a <code>.nes</code> ROM above to
+        debugger overlay. Select a <code>.nes</code> ROM (or a <code>.zip</code> holding one) above to
         begin — audio starts on the same click (browser autoplay
         policy). Check the devtools console for the boot log.
     </p>
