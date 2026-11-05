@@ -271,6 +271,11 @@ Tests: `ppu::tests::end_warmup_lets_masked_registers_write_immediately`
 - **Dots 321..=336** — first two BG tiles of next scanline.
 - **Dots 337..=340** — two extra NT fetches (purpose debated; preserve them so MMC5's frame-end detection works).
 
+Each of the background fetches above is two dots: an address (ALE) half, which drives the address and latches its low byte in the external octal latch, then a read half (ADR 0030). A coherent fetch reads the address its ALE half drove. A `$2006` second write during rendering copies `t` into `v` after a short delay, and when that copy lands between the two halves the reads differ by kind:
+
+- **Nametable read:** the hybrid address, the latched low byte under the live `v`'s high bits (`$2F19` in AccuracyCoin's `Hybrid Addresses` test, which pins it).
+- **Attribute read (v3.6.2):** the address its own ALE half drove. Until v3.6.2 it took the hybrid too. *Rad Racer*'s `$2006` on its road's mirroring split then read `$23EE`, palette 0, and drew an 8-pixel dash of sky colour in the sand on about one race frame in eleven. The narrower reading is the maintainer's decision, recorded with the evidence both ways in ADR 0030's 2026-11-05 amendment; it is not hardware-verified. Pinned by `an_attribute_read_takes_the_address_its_ale_drove`.
+
 ### Fast dot path vs exact dot path (v2.1.8 A1; default since v2.2.3)
 
 `Ppu::tick` is the emulator's single hottest function (~46% of frame self-time;

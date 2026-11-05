@@ -26,6 +26,25 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Emulation epoch 10**: movies recorded on v3.6.1 (epoch 9) and v3.6.1
+  netplay peers are refused, each with a message naming both epochs, because
+  the *Rad Racer* fix below changes frames from the same inputs.
+
+### Fixed
+
+- **Rad Racer's flicker in the sand right of the road.** On about one race
+  frame in eleven, an 8-pixel dash of sky colour appeared in the ground to the
+  right of the road, a third of the way down the screen. The game splits its
+  road with a mid-scanline `$2006` write; on those frames its sprite-0 wait
+  ended one loop early, so the PPU's address update landed in the middle of
+  an attribute fetch, which then read a mixed address and the sky's palette.
+  An attribute fetch now reads the address it started with; the nametable
+  fetch keeps the mixed address AccuracyCoin tests (ADR 0030 amendment). 0 of
+  2,000 race frames show the dash (69 of 800 before); Mesen, run on the same
+  inputs, shows none either. Not hardware-verified.
+
 ### Changed
 
 - **AccuracyCoin re-synced to upstream `66e87112`: 147 of 147.** Twelve

@@ -444,8 +444,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_exactly_151_entries() {
-        assert_eq!(catalog().len(), 151, "AccuracyCoin catalog size drifted");
+    fn catalog_has_exactly_152_entries() {
+        // 152 at upstream `66e87112` (v3.6.2, `DMC Playback Rate` added);
+        // 151 at `f5f41dc2`.
+        assert_eq!(catalog().len(), 152, "AccuracyCoin catalog size drifted");
     }
 
     #[test]
@@ -485,17 +487,23 @@ mod tests {
         // topics so much as a re-home for the advanced PPU tests that had
         // outgrown `PPU Misc.`, so eleven pre-existing tests changed suite
         // in the same commit without changing address or meaning.
+        //
+        // v3.6.2 (upstream `66e87112`): the eight unofficial-instruction page
+        // headers are spelled as the ROM now prints them, `SLO` where they
+        // read `Unofficial Instructions: SLO` (the `.byte` header strings
+        // were shortened upstream; the `;;` comment above each kept the long
+        // form). Same pages, same tests.
         let expected = [
             "CPU Behavior",
             "Addressing mode wraparound",
-            "Unofficial Instructions: SLO",
-            "Unofficial Instructions: RLA",
-            "Unofficial Instructions: SRE",
-            "Unofficial Instructions: RRA",
-            "Unofficial Instructions: *AX",
-            "Unofficial Instructions: DCP",
-            "Unofficial Instructions: ISC",
-            "Unofficial Instructions: SH*",
+            "SLO",
+            "RLA",
+            "SRE",
+            "RRA",
+            "*AX",
+            "DCP",
+            "ISC",
+            "SH*",
             "Unofficial Immediates",
             "CPU Interrupts",
             "APU Registers and DMA tests",
@@ -531,6 +539,8 @@ mod tests {
         assert_eq!(by_name.get("Frozen OAM2 Increment"), Some(&0x0493));
         assert_eq!(by_name.get("Misaligned OAM DMA"), Some(&0x0494));
         assert_eq!(by_name.get("Misaligned OAM2 Address"), Some(&0x0495));
+        // v3.6.2 (upstream `66e87112`, `f530d12`): the one test added since.
+        assert_eq!(by_name.get("DMC Playback Rate"), Some(&0x0498));
     }
 
     #[test]
@@ -572,7 +582,7 @@ mod tests {
         ram[e0.result_addr as usize] = 0x01;
         ram[e1.result_addr as usize] = (3 << 2) | 0x02; // fail code 3
         let statuses = decode_results(&ram).expect("decode");
-        assert_eq!(statuses.len(), 151);
+        assert_eq!(statuses.len(), catalog().len());
         assert_eq!(statuses[0], TestStatus::Pass);
         assert_eq!(statuses[1], TestStatus::Fail(3));
         // The five Power On State tests share $03FF (left at 0x00).

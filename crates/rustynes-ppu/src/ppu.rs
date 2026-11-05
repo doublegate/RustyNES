@@ -3814,7 +3814,12 @@ impl Ppu {
             self.copy_v_delay -= 1;
             if self.copy_v_delay == 0 {
                 self.v = self.t;
-                self.address_bus = self.v;
+                // v3.6.2: `address_bus` is NOT overwritten with the new `v`
+                // here. It holds the address the current fetch's ALE half
+                // drove, which the attribute read now uses (`fetch_at`); the
+                // nametable splice takes its high bits from the live `v`
+                // directly (`ale_splice`, since v2.3.6), so it never needed
+                // this assignment. Until v3.6.2 it was here and read by nothing.
                 // Preserve the `$2006`-write A12 edge (MMC3 timing). It is delayed
                 // by the countdown vs the flag-off immediate copy, but `$2006`
                 // writes during active render are rare and A12 during render is
@@ -4724,7 +4729,29 @@ impl Ppu {
             return;
         }
         let v = self.v;
-        let at_addr = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
+        // v3.6.2 (ADR 0030 amendment, maintainer decision 2026-11-05) — the
+        // attribute read takes the address its own ALE half drove (phase 2,
+        // `ale_drive_at`), not one recomputed from the live `v`. The live-`v`
+        // "Hybrid Addresses" splice is kept for the NAMETABLE read, the case
+        // AccuracyCoin documents and tests; it no longer reaches the attribute
+        // read. Why: *Rad Racer* writes `$2006` mid-scanline on its road's
+        // mirroring split (line 139), and on the frames its sprite-0 poll ends
+        // one iteration early the delayed copy lands between an attribute
+        // fetch's two halves. The live-`v` splice then read `$23EE` (the old
+        // low byte under the new `v`'s high bits), palette 0, and drew an
+        // 8-pixel dash of sky colour in the sand on 69 of 800 race frames.
+        // Mesen, run as a black box on the same inputs, draws none. Whether a
+        // real 2C02 does is not settled by any source we have (a 2012 nesdev
+        // report describes a right-side glitch on that line on hardware); the
+        // narrower reading is the maintainer's call, recorded in the ADR.
+        // Coherent fetches are unchanged: with `v` steady across the group,
+        // the ALE address IS the address the read would compute. The 2-bit
+        // quadrant select below still reads the live `v`, as before.
+        let at_addr = if self.ale_armed {
+            self.address_bus
+        } else {
+            0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07)
+        };
         // v2.0.3 (ADR 0030, Option 1) — 2-cycle-ALE read half (normal AT path).
         let at_addr = self.ale_splice(at_addr);
         let byte = self.read_vram(bus, at_addr);
@@ -7105,6 +7132,47 @@ mod tests {
         // Drive past the post-reset masking window.
         ppu.post_reset_mask_remaining = 0;
         (ppu, TestBus::new())
+    }
+
+    /// v3.6.2 (ADR 0030 amendment) — when `v` moves between an attribute
+    /// fetch's ALE half and its read half, the read takes the address the ALE
+    /// drove, not the live-`v` hybrid. The *Rad Racer* case: the ALE drives
+    /// `$2FEE` (old `v` `$2EF8`, nametable 3), then a `$2006` copy lands
+    /// `v = $2300` (nametable 0); the hybrid would read `$23EE`. The two
+    /// bytes differ (`$AA`, palette 2 in every quadrant, against `$00`), so
+    /// the attribute latch says which address was read.
+    #[test]
+    fn an_attribute_read_takes_the_address_its_ale_drove() {
+        let (mut p, mut b) = fresh_ppu();
+        // Horizontal mirroring (TestBus): nametable 3 is CIRAM bank 1,
+        // nametable 0 is bank 0.
+        p.ciram[0x0400 + 0x3EE] = 0xAA; // $2FEE, the ALE's address
+        p.ciram[0x3EE] = 0x00; // $23EE, the live-v hybrid
+        p.ciram[0x3F0] = 0x00; // $23F0, the new v's own attribute byte
+        let mut ticks = 0u32;
+        while !(p.scanline == 10 && p.dot == 0) {
+            p.tick(&mut b);
+            ticks += 1;
+            assert!(ticks < 2 * VBL_SWEEP_MAX_TICKS, "never reached line 10");
+        }
+        p.cpu_write_register(1, 0x0A, &mut b);
+        // The tick that starts at dot 178 runs the group's attribute ALE, the
+        // one at 179 its read.
+        while p.dot != 178 {
+            p.tick(&mut b);
+        }
+        p.v = 0x2EF8;
+        p.tick(&mut b);
+        assert!(p.ale_armed, "the tick at dot 178 armed an ALE");
+        assert_eq!(p.address_bus, 0x2FEE, "the ALE drove the old v's attribute");
+        // The delayed copy lands before the read half.
+        p.v = 0x2300;
+        p.tick(&mut b);
+        assert!(!p.ale_armed, "the tick at dot 179 was the attribute read");
+        assert_eq!(
+            p.at_latch, 0x02,
+            "the attribute read took $23EE (the hybrid), not the ALE's $2FEE"
+        );
     }
 
     /// v3.6.1 — the pre-render line's split queries (line 0's first two

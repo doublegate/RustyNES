@@ -3,7 +3,7 @@
 # RUSTYNES_BLESS_EPOCH_FINGERPRINT=1. `last_release_epoch` is the epoch
 # the last release shipped, set by hand at each release cut: output may
 # move only while EMULATION_EPOCH is above it.
-# epoch	9
+# epoch	10
 # last_release_epoch	9
 # rom	rom_fnv	frames	framebuffer_fnv	audio_fnv	ram_fnv	cpu_cycles
 accuracycoin/AccuracyCoin.nes	7fafbb1d0dc40233	3200	44b1cee4c304031e	999355fb69c9e64c	f2a4b15d2c6f3bfa	95268168
