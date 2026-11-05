@@ -18,7 +18,7 @@
 pure Rust.** It aims at the Mesen2 / higan / ares accuracy bar: one master clock,
 every CPU cycle a real bus access, and the PPU caught up to each half of it, so a
 sprite-zero hit, a mid-scanline scroll write or an MMC3 IRQ lands on the exact dot
-without a per-game patch. It passes **AccuracyCoin 146/146** and matches the
+without a per-game patch. It passes **AccuracyCoin 147/147** and matches the
 Nintendulator `nestest` log with **zero diff**.
 
 Around that core sits a complete, modern platform: 208 mapper families, the
@@ -72,7 +72,7 @@ audience: players, RetroArch, mobile and the Rust crates.
 
 | | |
 | --- | --- |
-| **Cycle-accurate** | CPU, PPU and APU on one master clock: AccuracyCoin 146/146, `nestest` 0-diff, blargg's CPU, APU and PAL suites |
+| **Cycle-accurate** | CPU, PPU and APU on one master clock: AccuracyCoin 147/147, `nestest` 0-diff, blargg's CPU, APU and PAL suites |
 | **208 mapper families** | NROM through MMC5, the whole VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company, the MMC3 and MMC1 multicarts, Waixing and Nanjing boards, homebrew flash boards with working saves, and a UNIF (`.unf`) loader. Each is classified Core, Curated or BestEffort by the evidence behind it |
 | **Famicom Disk System** | Real-BIOS boot, writable disks, side swapping, a timed disk-head model and 2C33 wavetable audio |
 | **Vs. / PlayChoice-10** | Arcade boards in true 2C03 / 2C04 / 2C05 RGB, per-game DIP presets, and Vs. DualSystem two-screen cabinets |
@@ -279,7 +279,7 @@ to player 1 automatically.
 
 | Suite | Result |
 | --- | --- |
-| **AccuracyCoin** | **146/146 (100.00%)** at upstream `f5f41dc2`, read from RAM rather than the screen. The 144/144 reported before v3.1.0 was overstated: the older ROM's `Misaligned OAM behavior` fail path fell through to a pass, hiding a real failure the re-sync found and fixed |
+| **AccuracyCoin** | **147/147 (100.00%)** at upstream `66e87112` since v3.6.2, read from RAM rather than the screen. The v3.1.0 re-sync to `f5f41dc2` (146/146) showed that the 144/144 reported before it was overstated: the older ROM's `Misaligned OAM behavior` fail path fell through to a pass, hiding a real failure the re-sync found and fixed |
 | `nestest` | 0-diff against the Nintendulator log |
 | blargg `cpu_interrupts_v2` | 5/5, and the unstable-store tests 6/6 |
 | blargg APU (NTSC and PAL) | 11/11 and 10/10 |
@@ -511,7 +511,7 @@ Full attribution is in [`NOTICE`](NOTICE).
   title   = {RustyNES: A Cycle-Accurate NES Emulator in Rust},
   year    = {2026},
   url     = {https://github.com/doublegate/RustyNES},
-  note    = {Cycle-accurate NES emulator; AccuracyCoin 146/146, nestest 0-diff}
+  note    = {Cycle-accurate NES emulator; AccuracyCoin 147/147, nestest 0-diff}
 }
 ```
 

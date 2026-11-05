@@ -26,6 +26,19 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **AccuracyCoin re-synced to upstream `66e87112`: 147 of 147.** Twelve
+  upstream commits since `f5f41dc2` (v3.1.0), among them a new test, `DMC
+  Playback Rate`, a revised `DMA Sync Pretest` and `DMA Landing on Write`, a
+  stack fix in `Misaligned OAM Behavior`, and extra checks in the tests that
+  rely on DMC DMAs. The catalog grows to 152 rows (147 scored), and RustyNES
+  passes all 147 with no emulator change. The mirror ROM is rebuilt from the
+  same commit (an unpatched build reproduces upstream's ROM byte for byte).
+- **The epoch fingerprint records each probe ROM's own hash** (a `rom_fnv`
+  column), so replacing a test ROM is a new probe rather than moved
+  emulation, and a ROM re-sync no longer needs an epoch rise.
+
 ## [3.6.1] - 2026-11-05 - "Threshold" (every dependency at its newest, the MMC5's fetch window ended where rendering ends, and MiSTer save states tied to their region)
 
 ### Breaking

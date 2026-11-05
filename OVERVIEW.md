@@ -56,7 +56,7 @@ A one-directional crate graph keeps each chip (`rustynes-cpu`, `rustynes-ppu`, `
 
 | Test | Result |
 |------|--------|
-| **AccuracyCoin** | **100.00% (146/146)** (RAM-direct decoder) at upstream `f5f41dc2` since v3.1.0, whose re-sync showed that the 144/144 reported from v2.6.18 to v3.0.1 was overstated, because the older ROM's `Misaligned OAM behavior` fail path fell through to a pass and hid a real failure. Before it: the 2026-09 upstream re-sync grew the battery to 144 assigned tests and v2.6.18 closed the last one (`Advanced Sprite Evaluation :: Frozen OAM2 Increment`), so `KNOWN_FAILING` is empty; the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") were closed by the v2.0.3 2-cycle-ALE promotion |
+| **AccuracyCoin** | **100.00% (147/147)** (RAM-direct decoder) at upstream `66e87112` since v3.6.2; the v3.1.0 re-sync to `f5f41dc2` (146/146) showed that the 144/144 reported from v2.6.18 to v3.0.1 was overstated, because the older ROM's `Misaligned OAM behavior` fail path fell through to a pass and hid a real failure. Before it: the 2026-09 upstream re-sync grew the battery to 144 assigned tests and v2.6.18 closed the last one (`Advanced Sprite Evaluation :: Frozen OAM2 Increment`), so `KNOWN_FAILING` is empty; the two newest upstream PPU tests ("ALE + Read", "Hybrid Addresses") were closed by the v2.0.3 2-cycle-ALE promotion |
 | **`nestest`** | **0-diff** against the Nintendulator golden log |
 | **blargg / kevtris / `mmc3_test_2`** | Green |
 | **Commercial-ROM oracle** | 60-ROM byte-identical regression gate + extended visual survey |
@@ -88,7 +88,7 @@ RustyNES uses **cycle-accurate** emulation rather than scanline-based shortcuts.
 
 | Area | What ships today |
 |------|----------------------|
-| **Accuracy** | One-clock scheduler (v2.0.0 "Timebase"), master-clock timebase, AccuracyCoin **146/146 (100.00%)** on the battery as re-synced to upstream `f5f41dc2` in v3.1.0 (the 144/144 before it hid a masked failure), `nestest` 0-diff |
+| **Accuracy** | One-clock scheduler (v2.0.0 "Timebase"), master-clock timebase, AccuracyCoin **147/147 (100.00%)** on the battery as re-synced to upstream `66e87112` in v3.6.2 (the 144/144 before the v3.1.0 re-sync hid a masked failure), `nestest` 0-diff |
 | **Cartridges** | **208** mapper families incl. expansion audio (VRC6/VRC7-OPLL/Sunsoft 5B/N163/MMC5) |
 | **Platforms** | iNES / NES 2.0, Famicom Disk System (real-BIOS boot, read/write, multi-side), Vs. System / PlayChoice-10 RGB |
 | **Online** | Rollback netplay, UDP (native) + WebRTC (browser), 2–4 players |

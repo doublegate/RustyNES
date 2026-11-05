@@ -19,9 +19,9 @@ are one directory, and two `README.md` paths collide on clone.
 
 ## Source
 
-`https://github.com/100thCoin/AccuracyCoin` (main branch, commit `f5f41dc2`,
-fetched 2026-10-07 for v3.1.0, md5 `a3635c87ffb1754f58923d070548898b`;
-previously `46199ae4`, fetched 2026-09-19, `69c8860`, fetched 2026-09-11, and
+`https://github.com/100thCoin/AccuracyCoin` (main branch, commit `66e87112`,
+fetched 2026-11-05 for v3.6.2, md5 `6cab1c9cc644e51ff4830fbe779f66d9`;
+previously `f5f41dc2`, fetched 2026-10-07 (v3.1.0), `46199ae4`, fetched 2026-09-19, `69c8860`, fetched 2026-09-11, and
 `71f57fb`, fetched 2026-05-10). Repository LICENSE is the MIT License,
 "Copyright (c) 2025 Chris Siebert".
 
@@ -47,9 +47,16 @@ which ran on to its final `LDA #1` and recorded a pass, so this emulator's
 three real failures there (tests 3, 6, 7) read as 144/144. The new ROM
 exposed them; v3.1.0 fixes them (`docs/ppu-2c02.md`).
 
+The `f5f41dc2` -> `66e87112` window is twelve commits: one new test (`DMC
+Playback Rate`, suite `CPU Behavior 2`, result address `$0498`), an updated
+`DMA Sync Pretest`, an updated `DMA Landing on Write`, a stack fix in
+`Misaligned OAM Behavior`, and extra checks in the tests that rely on DMC
+DMAs. This emulator passed the new ROM on first run with no emulator change
+(147 of 147).
+
 ## What it is
 
-AccuracyCoin is a single-NROM-cartridge battery of **146 NES accuracy
+AccuracyCoin is a single-NROM-cartridge battery of **147 NES accuracy
 tests** (plus 5 print-only `DRAW` tests) spanning CPU, PPU, APU, bus, IRQ, NMI, dummy-read / dummy-write,
 DMA, and mapper behaviour. It is interactive on real hardware (the user
 navigates with D-Pad / A / Start), but our harness uses a fixed
@@ -57,7 +64,7 @@ button-press script that triggers "run all" and then reads the result
 addresses out of CPU RAM directly.
 
 Current pass rate (measured via the RAM-direct decoder), against a catalog
-of 151 rows / 146 assigned tests: **100.00%** (146 of 146, v3.1.0). The last two
+of 152 rows / 147 assigned tests: **100.00%** (147 of 147, v3.6.2). The last two
 gaps were both on the `Advanced Sprite Evaluation` page — "Misaligned OAM2
 Address" closed in v2.6.17, and "Frozen OAM2 Increment" in v2.6.18 on the
 rule that a `$2001` mask change during dot N must not act on dot N

@@ -8,7 +8,7 @@ diagnostic decoder needs at compile time.
 
 | File | Purpose |
 |------|---------|
-| `SOURCE_CATALOG.tsv` | 151-row TSV mapping `(suite, name) -> result-byte address`, extracted from upstream `AccuracyCoin.asm`'s `Suite_*` blocks by `scripts/accuracycoin-build/extract_catalog.py`. `include_str!`'d by `rustynes_test_harness::accuracy_coin_catalog`. |
+| `SOURCE_CATALOG.tsv` | 152-row TSV mapping `(suite, name) -> result-byte address`, extracted from upstream `AccuracyCoin.asm`'s `Suite_*` blocks by `scripts/accuracycoin-build/extract_catalog.py`. `include_str!`'d by `rustynes_test_harness::accuracy_coin_catalog`. |
 | `sub-tests/*.nes` | Custom-built sub-test ROMs that boot directly into one target test (bypass menu + full-battery loop). Built by `scripts/accuracycoin-build/build_sub_test_rom.py`. Used to unblock the Session-22 Mesen2 wall-time oracle blocker. Inherits upstream MIT license. See `docs/audit/session-23-custom-accuracycoin-sub-test-roms-2026-05-22.md`. |
 
 The runtime `.nes` ROM lives at [`../accuracycoin/AccuracyCoin.nes`](../accuracycoin/AccuracyCoin.nes)
@@ -152,7 +152,8 @@ pass / fail breakdowns.
 ## Source
 
 `https://github.com/100thCoin/AccuracyCoin` (main branch; re-synced to
-upstream commit `f5f41dc2` on 2026-10-07 for v3.1.0; previously `46199ae4`,
+upstream commit `66e87112` on 2026-11-05 for v3.6.2; previously `f5f41dc2`
+(2026-10-07, v3.1.0), `46199ae4`,
 2026-09-19, `69c8860`, 2026-09-11, and `71f57fb` in v2.0.1). The `46199ae4`
 re-sync left this catalog
 **byte-identical** — re-running `extract_catalog.py` against the new
@@ -203,6 +204,13 @@ Immediates` rows now read `immediate` in lower case, as the ROM prints them
 the extractor returned 85 of the 151 rows and exited 0, because it only
 checked that the total was non-zero; it now aborts on any row-shaped line
 it cannot read, and on any suite that yields none.
+
+The **v3.6.2 re-sync** to `66e87112` grew it 151 -> 152 rows / 146 -> 147
+scored: one new `CPU Behavior 2` test, `DMC Playback Rate` (`$0498`). Twelve
+upstream commits landed in the window; the others updated `DMA Sync Pretest`
+and `DMA Landing on Write`, fixed the stack in `Misaligned OAM Behavior`, and
+added checks to the tests that rely on DMC DMAs. RustyNES passed 147 of 147
+(100.00%, RAM-direct decoder) on the first run with no emulator change.
 
 ## License
 
