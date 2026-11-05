@@ -26,6 +26,19 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.6.1] - 2026-11-05 - "Threshold" (every dependency at its newest, the MMC5's fetch window ended where rendering ends, and MiSTer save states tied to their region)
+
+### Breaking
+
+- **Emulation epoch 9**: movies recorded on v3.6.0 (epoch 8) are refused, and
+  a v3.6.0 netplay peer is refused, each with a message naming both epochs.
+  No golden, snapshot or epoch fingerprint moved; the epoch rises, as at
+  v3.5.1, because two MMC5 fixes below change a frame and a `$2007` value from
+  the same inputs for software that makes those accesses. Save states from
+  v3.6.0 load; netplay protocol 9 and `.rnm` format 7 are unchanged.
+- **MiSTer core:** save states from v3.6.0 are refused (the state header now
+  records the console's region, and its layout fingerprint changed with it).
+
 ### Changed
 
 - **Dependencies, every ecosystem at its newest compatible release** (one
