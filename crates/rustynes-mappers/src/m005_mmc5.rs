@@ -1916,6 +1916,17 @@ impl Mapper for Mmc5 {
                     // transition from disabled to enabled resets the scanline
                     // counter.")
                     self.leave_frame_and_acknowledge();
+                    // v3.6.1 (CodeRabbit on #639): restart the idle count, so
+                    // the fetch window's idle close (`notify_cpu_cycle`) can
+                    // fire for THIS rendering-on stretch. Rendering switched
+                    // off long enough saturates the count at 3 with the window
+                    // deliberately kept open; re-enabled on post-render line
+                    // 240, with no fetch to clear the count, it would never
+                    // reach 3 again and the window would stay open until
+                    // vertical blank. Nothing else the count drives can
+                    // change: in-frame is already clear and the matcher was
+                    // reset by the disable.
+                    self.det_idle_cycles = 0;
                 }
                 self.ppu_rendering = enabled;
             }
@@ -3524,13 +3535,41 @@ mod tests {
             m.render_window,
             "the window survives a rendering-off idle run"
         );
-        // Re-enabled with no line start in between.
+        // Re-enabled with no line start in between: the window is still open.
         m.notify_ppu_register_write(0x2001, 0x18);
         assert_eq!(
             m.ppu_read(0x0000),
             12,
             "substitution resumes with rendering"
         );
+    }
+
+    /// v3.6.1 (CodeRabbit on #639) — a rendering-off idle run saturates the
+    /// idle count with the window kept open; re-enabled where nothing is
+    /// fetched (post-render line 240), three more idle cycles must still close
+    /// it, so the count restarts on the off-to-on `$2001` transition.
+    #[test]
+    fn a_re_enable_without_fetches_still_closes_the_fetch_window() {
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5104, 0b01);
+        m.exram[0] = 0b00_000011;
+        rendering(&mut m);
+        let _ = m.peek_ex_attribute(0);
+        m.notify_ppu_register_write(0x2001, 0x00);
+        vblank_idle(&mut m); // the count saturates; the window stays open
+        assert!(m.render_window);
+        m.notify_ppu_register_write(0x2001, 0x18);
+        assert_eq!(m.ppu_read(0x0000), 12, "just re-enabled: still substituted");
+        for _ in 0..3 {
+            m.notify_cpu_cycle();
+        }
+        assert!(
+            !m.render_window,
+            "three idle cycles after the re-enable close it"
+        );
+        let want = unsubstituted(&m, 0x0000);
+        assert_ne!(want, 12);
+        assert_eq!(m.ppu_read(0x0000), want);
     }
 
     /// The nametable half of `T-MMC5-LATCH-VBLANK`, found by the MiSTer

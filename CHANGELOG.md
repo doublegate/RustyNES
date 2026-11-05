@@ -61,12 +61,15 @@ cycle-accurate core later replaced.
   (`T-TAS-PROJECT-DECODE-BOUND`). A `.rnmproj` has been capped at 1 GiB on
   disk since v3.5.1, but a 5-byte frame record decodes to a whole
   `FrameInput` and every branch carries its own log, so a valid file near
-  the cap could ask for several GiB. Each input log's and marker list's
-  declared count is now charged against a 1 GiB decoded budget before its
-  records are decoded, across the main log and every branch; a project past
-  it is refused with `RnmProjError::DecodeBudget` and the editor is left as
-  it was. The budget holds tens of millions of frames, so no real project is
-  affected (a million-frame project is tested to open).
+  the cap could ask for several GiB. A pre-pass now walks the whole file and
+  charges, against a 1 GiB decoded budget and before anything is decoded or
+  reserved, every input log (its frames, the decoder's per-frame extra-input
+  vector and its event list), every marker, and each branch's own record and
+  saved state; a project past it is refused with `RnmProjError::DecodeBudget`
+  and the editor is left as it was. Saving runs the same check, so the app
+  never writes a project it would refuse to reopen. The budget holds tens of
+  millions of frames, so no real project is affected (a million-frame project
+  is tested to open).
 - **The MMC5's background-fetch window ends where rendering does**
   (`T-MMC5-WINDOW-END`, both cores). Since v3.5.1 the split's and an extended
   attribute's CHR banks apply only inside that window with rendering on, but
@@ -76,7 +79,9 @@ cycle-accurate core later replaced.
   window open through that whole blank. It now also closes on the in-frame
   flag's idle rule (three CPU cycles without a PPU read, a few dots into line
   240) while rendering is on, and the PPU tells the mapper about vertical blank
-  on every frame. A `$2001` disable mid-frame keeps the window, as before.
+  on every frame. A `$2001` disable mid-frame keeps the window, as before, and
+  re-enabling rendering restarts the idle count, so the window still closes
+  when nothing is fetched after the re-enable.
 - **The MMC5 split's first two tiles of line 0 come from the right row**.
   They are fetched on the pre-render line, whose scanline the PPU passed to the
   split as 261 (311 on PAL and Dendy): its test for the pre-render line,

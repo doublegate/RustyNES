@@ -87,8 +87,8 @@ pub enum RnmProjError {
 }
 
 /// v3.6.1 (`T-TAS-PROJECT-DECODE-BOUND`) — the most memory a `.rnmproj` load
-/// may decode into, across the main input log, every branch's input log and
-/// every marker: 1 GiB.
+/// may decode into, across the main input log, every branch's input log, every
+/// marker and every branch's own struct and state: 1 GiB.
 ///
 /// The file itself is bounded at [`crate::bounded_read::MAX_TAS_PROJECT`]
 /// (1 GiB) since v3.5.1, but the file is not what the load allocates. A
@@ -97,7 +97,10 @@ pub enum RnmProjError {
 /// every branch carries its own copy of the log, so a valid file near the
 /// bound could decode to several GiB. Every count is charged against this
 /// budget BEFORE its records are decoded, so a project whose header claims
-/// too much is refused without allocating it.
+/// too much is refused without allocating it ([`rnmproj_decoded_cost_within`],
+/// a pre-pass over the whole file). A log's charge includes the decoder's peak:
+/// its per-frame `Option<ExtraInput>` vector, live beside the frames, and its
+/// event list (`FrameInput::decode_log_cost`).
 ///
 /// At `size_of::<FrameInput>()` per frame the budget holds tens of millions
 /// of frames (a 60 fps project of more than a hundred hours, counting every
@@ -210,25 +213,17 @@ impl<'a> Reader<'a> {
         self.b.len() - self.pos
     }
 
-    /// Read an input log in the file's `version` encoding.
+    /// Read an input log in the file's `version` encoding. Its cost was
+    /// charged by [`Self::cost_input_log`] in the pre-pass; a version-2 log is
+    /// decoded from the borrowed slice, never copied first.
     fn input_log(&mut self, version: u16) -> Result<Vec<FrameInput>, RnmProjError> {
-        let frame_bytes = size_of::<FrameInput>() as u64;
         if version >= 2 {
-            let blob = self.bytes()?;
-            // The log's own first field is its frame count (`encode_log`);
-            // charge it before `decode_log` builds a `FrameInput` per record.
-            // A blob too short to hold one is left to `decode_log` to refuse.
-            if let Some(c) = blob.get(..4) {
-                self.charge(
-                    u64::from(u32::from_le_bytes([c[0], c[1], c[2], c[3]])),
-                    frame_bytes,
-                )?;
-            }
-            return FrameInput::decode_log(&blob)
+            let n = self.len()?;
+            let blob = self.take(n)?;
+            return FrameInput::decode_log(blob)
                 .map_err(|e| RnmProjError::BadInputLog(e.to_string()));
         }
         let n = self.len()?;
-        self.charge(n as u64, frame_bytes)?;
         // Each frame is 3 bytes; never pre-allocate beyond what the blob holds.
         let mut v = Vec::with_capacity(n.min(self.remaining() / 3));
         for _ in 0..n {
@@ -248,17 +243,91 @@ impl<'a> Reader<'a> {
 
     fn markers(&mut self) -> Result<BTreeMap<usize, String>, RnmProjError> {
         let n = self.len()?;
-        self.charge(n as u64, MARKER_DECODED_BYTES)?;
         let mut m = BTreeMap::new();
         for _ in 0..n {
             let frame = self.len()?;
-            let raw = self.bytes()?;
-            self.charge(raw.len() as u64, 1)?;
-            let label = String::from_utf8(raw).map_err(|_| RnmProjError::BadLabel)?;
+            let label = String::from_utf8(self.bytes()?).map_err(|_| RnmProjError::BadLabel)?;
             m.insert(frame, label);
         }
         Ok(m)
     }
+
+    // --- The cost pre-pass (v3.6.1, `T-TAS-PROJECT-DECODE-BOUND`). These walk
+    // the same layout as the decoders above, charging what each piece will
+    // need decoded and allocating nothing, so a refusal costs no memory. --- #
+
+    /// Charge one input log: a version-2 log's own counts through the core's
+    /// [`FrameInput::decode_log_cost`] (its frames, the decoder's per-frame
+    /// `Option<ExtraInput>` vector, its event list), a version-1 log's frames.
+    fn cost_input_log(&mut self, version: u16) -> Result<(), RnmProjError> {
+        let n = self.len()?;
+        if version >= 2 {
+            let blob = self.take(n)?;
+            return self.charge(FrameInput::decode_log_cost(blob), 1);
+        }
+        self.charge(n as u64, size_of::<FrameInput>() as u64)?;
+        let records = n.checked_mul(3).ok_or(RnmProjError::Truncated(self.pos))?;
+        self.take(records).map(|_| ())
+    }
+
+    /// Charge one marker map: each entry's map key and `String`, then its
+    /// label's bytes.
+    fn cost_markers(&mut self) -> Result<(), RnmProjError> {
+        let n = self.len()?;
+        self.charge(n as u64, MARKER_DECODED_BYTES)?;
+        for _ in 0..n {
+            let _frame = self.len()?;
+            let len = self.len()?;
+            self.take(len)?;
+            self.charge(len as u64, 1)?;
+        }
+        Ok(())
+    }
+
+    /// Walk a whole `.rnmproj` and return what it decodes to: every input log,
+    /// every marker map, each branch's own struct and its state bytes.
+    fn cost_project(&mut self) -> Result<u64, RnmProjError> {
+        if self.take(8)? != RNMPROJ_MAGIC {
+            return Err(RnmProjError::BadMagic);
+        }
+        let version = self.u16()?;
+        if version > RNMPROJ_VERSION {
+            return Err(RnmProjError::UnsupportedVersion {
+                got: version,
+                max: RNMPROJ_VERSION,
+            });
+        }
+        self.cost_input_log(version)?;
+        self.cost_markers()?;
+        let branches = self.len()?;
+        self.charge(branches as u64, size_of::<Branch>() as u64)?;
+        for _ in 0..branches {
+            let _frame = self.len()?;
+            self.cost_input_log(version)?;
+            self.cost_markers()?;
+            let state = self.len()?;
+            self.take(state)?;
+            self.charge(state as u64, 1)?;
+        }
+        Ok(self.charged)
+    }
+}
+
+/// v3.6.1 (`T-TAS-PROJECT-DECODE-BOUND`) — what loading `bytes` would decode
+/// to, refused once it passes `budget`.
+///
+/// Computed from the declared counts and lengths alone (nothing is decoded or
+/// allocated). The load runs it before
+/// decoding anything, and the desktop app runs it on a project before saving
+/// it, so a project the loader would refuse is never written.
+///
+/// # Errors
+///
+/// [`RnmProjError::DecodeBudget`] past `budget`; the structural errors
+/// ([`RnmProjError::BadMagic`], a too-new version, `Truncated`) where the
+/// walk cannot continue.
+pub fn rnmproj_decoded_cost_within(bytes: &[u8], budget: u64) -> Result<u64, RnmProjError> {
+    Reader::new(bytes, budget).cost_project()
 }
 
 /// Default greenzone byte budget (256 MiB) — generous for desktop TAS work
@@ -719,6 +788,9 @@ impl TasEditor {
     /// [`Self::load_rnmproj`] against an explicit decode budget (the tests use
     /// a small one to reach the refusal without gigabyte fixtures).
     fn load_rnmproj_within(&mut self, bytes: &[u8], budget: u64) -> Result<(), RnmProjError> {
+        // The cost pre-pass first: a project past the budget is refused
+        // before anything is decoded or reserved.
+        rnmproj_decoded_cost_within(bytes, budget)?;
         let mut r = Reader::new(bytes, budget);
         if r.take(8)? != RNMPROJ_MAGIC {
             return Err(RnmProjError::BadMagic);
@@ -1635,14 +1707,11 @@ mod tests {
         ));
     }
 
-    /// v3.6.1 (`T-TAS-PROJECT-DECODE-BOUND`) — the budget is the AGGREGATE:
-    /// the main log and every branch's log count together, and a project
-    /// inside the budget still opens, byte for byte.
-    ///
-    /// A 1,000-frame log with three branches holds 4,000 decoded frames. A
-    /// budget of 3,999 frames refuses it (no single log comes near it, so a
-    /// per-log bound would not); a budget of exactly 4,000 frames (plus the
-    /// markers' share) loads it and round-trips.
+    /// v3.6.1 (`T-TAS-PROJECT-DECODE-BOUND`) — the budget is the AGGREGATE,
+    /// and the pre-pass's cost is exact: the main log and every branch's log
+    /// (each frame's `FrameInput` and the decoder's `Option<ExtraInput>`
+    /// beside it), every marker, each branch's own struct and its state bytes.
+    /// A project inside the budget still opens, byte for byte.
     #[test]
     fn rnmproj_decode_budget_counts_every_branch() {
         let nes = {
@@ -1656,17 +1725,26 @@ mod tests {
             src.create_branch(&nes);
         }
         let blob = src.to_rnmproj();
-        let frame = size_of::<FrameInput>() as u64;
-        // One marker in the main log, copied into each of the three branches.
-        let markers = 4 * (MARKER_DECODED_BYTES + 2);
-        let fits = 4000 * frame + markers;
+        let per_frame =
+            (size_of::<FrameInput>() + size_of::<Option<rustynes_core::ExtraInput>>()) as u64;
+        let states: u64 = (0..3)
+            .map(|i| src.branch(i).unwrap().state.len() as u64)
+            .sum();
+        // Four logs of 1,000 frames (varied_inputs carries no extra input, so
+        // no events), one marker in each of the four marker maps, three
+        // branch structs, three states.
+        let expected = 4 * 1000 * per_frame
+            + 4 * (MARKER_DECODED_BYTES + 2)
+            + 3 * size_of::<Branch>() as u64
+            + states;
+        assert_eq!(rnmproj_decoded_cost_within(&blob, u64::MAX), Ok(expected));
 
         let mut ed = TasEditor::new(&nes, 1 << 20, 16);
         assert!(matches!(
-            ed.load_rnmproj_within(&blob, fits - frame),
+            ed.load_rnmproj_within(&blob, expected - 1),
             Err(RnmProjError::DecodeBudget { .. })
         ));
-        assert_eq!(ed.load_rnmproj_within(&blob, fits), Ok(()));
+        assert_eq!(ed.load_rnmproj_within(&blob, expected), Ok(()));
         assert_eq!(
             ed.to_rnmproj(),
             blob,
@@ -1680,6 +1758,85 @@ mod tests {
             TasEditor::new(&nes, 1 << 20, 16).load_rnmproj(&long),
             Ok(())
         );
+    }
+
+    /// v3.6.1 (Copilot on #639) — branches are charged too: a version-1
+    /// project of empty branches (no frames, no markers, no state) costs one
+    /// `Branch` each, so enough of them are refused before the branch vector
+    /// is reserved.
+    #[test]
+    fn rnmproj_empty_branches_are_charged() {
+        let nes = {
+            let mut n = Nes::from_rom(&synth_nrom()).unwrap();
+            n.power_cycle();
+            n
+        };
+        let mut blob = RNMPROJ_MAGIC.to_vec();
+        blob.extend_from_slice(&1u16.to_le_bytes()); // version 1
+        blob.extend_from_slice(&0u32.to_le_bytes()); // no frames
+        blob.extend_from_slice(&0u32.to_le_bytes()); // no markers
+        let n = 1000u32;
+        blob.extend_from_slice(&n.to_le_bytes());
+        for _ in 0..n {
+            // frame, empty log, no markers, empty state
+            blob.extend_from_slice(&[0u8; 16]);
+        }
+        let cost = u64::from(n) * size_of::<Branch>() as u64;
+        assert_eq!(rnmproj_decoded_cost_within(&blob, u64::MAX), Ok(cost));
+        let mut ed = TasEditor::new(&nes, 1 << 20, 16);
+        assert!(matches!(
+            ed.load_rnmproj_within(&blob, cost - 1),
+            Err(RnmProjError::DecodeBudget { .. })
+        ));
+        assert_eq!(ed.load_rnmproj_within(&blob, cost), Ok(()));
+        assert_eq!(ed.branch_count(), n as usize);
+    }
+
+    /// v3.6.1 (Copilot on #639) — a version-2 log's INPUT EVENTS block is
+    /// charged from its declared count (bounded by its bytes, as the decoder
+    /// bounds its reservation): zero frames and a block declaring `u32::MAX`
+    /// events over 50,000 bytes cost the 10,000 events those bytes could hold.
+    #[test]
+    fn rnmproj_input_events_are_charged() {
+        let mut log = 0u32.to_le_bytes().to_vec(); // no frames
+        let block_len = 50_000u32;
+        log.extend_from_slice(&(block_len + 4).to_le_bytes());
+        log.extend_from_slice(&u32::MAX.to_le_bytes()); // declared events
+        log.extend(core::iter::repeat_n(0u8, block_len as usize));
+        let cost = FrameInput::decode_log_cost(&log);
+        assert!(
+            cost >= 10_000 * 8,
+            "the 10,000 events are charged, at least a word each: {cost}"
+        );
+        let mut blob = RNMPROJ_MAGIC.to_vec();
+        blob.extend_from_slice(&RNMPROJ_VERSION.to_le_bytes());
+        blob.extend_from_slice(&u32::try_from(log.len()).unwrap().to_le_bytes());
+        blob.extend_from_slice(&log);
+        blob.extend_from_slice(&0u32.to_le_bytes()); // markers
+        blob.extend_from_slice(&0u32.to_le_bytes()); // branches
+        assert!(matches!(
+            rnmproj_decoded_cost_within(&blob, cost - 1),
+            Err(RnmProjError::DecodeBudget { .. })
+        ));
+    }
+
+    /// v3.6.1 (Copilot on #639) — the save check is the load's: a project
+    /// whose decoded size passes a budget is refused by the same pre-pass
+    /// the loader runs, so the app never writes a project it would not reopen.
+    #[test]
+    fn rnmproj_save_and_load_share_the_budget() {
+        let nes = {
+            let mut n = Nes::from_rom(&synth_nrom()).unwrap();
+            n.power_cycle();
+            n
+        };
+        let ed = TasEditor::from_inputs(&nes, varied_inputs(500), 1 << 20, 16);
+        let blob = ed.to_rnmproj();
+        let cost = rnmproj_decoded_cost_within(&blob, u64::MAX).unwrap();
+        assert!(rnmproj_decoded_cost_within(&blob, cost - 1).is_err());
+        let mut other = TasEditor::new(&nes, 1 << 20, 16);
+        assert!(other.load_rnmproj_within(&blob, cost - 1).is_err());
+        assert_eq!(other.load_rnmproj_within(&blob, cost), Ok(()));
     }
 
     /// v2.9.9 (NF-14) — a cheat added mid-session does not reach `TAStudio`'s

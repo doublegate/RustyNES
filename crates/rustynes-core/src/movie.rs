@@ -343,6 +343,44 @@ impl FrameInput {
         w.into_vec()
     }
 
+    /// v3.6.1 (`T-TAS-PROJECT-DECODE-BOUND`) — an upper bound on the memory
+    /// [`Self::decode_log`] needs for `bytes` at its peak, from the log's
+    /// declared counts alone, before anything is decoded or reserved: the
+    /// frame vector, the per-frame `Option<ExtraInput>` vector the INPUT
+    /// EVENTS block decodes into while the frames are still live, and the
+    /// event list itself. A host that stores logs outside a movie (the
+    /// desktop `TAStudio` project) charges this against its own budget before
+    /// it decodes, and before it saves, so it never writes a log it would
+    /// refuse to read back. A truncated log costs what its counts say;
+    /// [`Self::decode_log`] then refuses it.
+    #[must_use]
+    pub fn decode_log_cost(bytes: &[u8]) -> u64 {
+        let Some(c) = bytes.get(..4) else {
+            return 0;
+        };
+        let frames = u64::from(u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+        let per_frame =
+            (core::mem::size_of::<Self>() + core::mem::size_of::<Option<ExtraInput>>()) as u64;
+        let mut cost = frames.saturating_mul(per_frame);
+        // The INPUT EVENTS block follows the records, length-prefixed.
+        let records = usize::try_from(frames)
+            .ok()
+            .and_then(|f| f.checked_mul(usize::from(BYTES_PER_FRAME)))
+            .and_then(|n| n.checked_add(4));
+        if let Some(block_at) = records
+            && let Some(len) = bytes.get(block_at..block_at + 4)
+        {
+            let len = u32::from_le_bytes([len[0], len[1], len[2], len[3]]) as usize;
+            let start = block_at + 4;
+            // A truncated block is charged on what is there; `decode_log`
+            // refuses it. `start` is in range: the length was read below it.
+            let end = start.saturating_add(len).min(bytes.len());
+            let block = &bytes[start..end];
+            cost = cost.saturating_add(movie_extra::decoded_events_bytes(block));
+        }
+        cost
+    }
+
     /// v3.5.0 — decode what [`Self::encode_log`] wrote, exactly (trailing
     /// bytes are refused).
     ///

@@ -4223,6 +4223,21 @@ impl App {
             );
             return;
         }
+        // ...and the same for what it DECODES to (v3.6.1, Copilot on #639):
+        // the loader refuses a project past `RNMPROJ_DECODE_BUDGET`, so a save
+        // that ignored it could replace a loadable project with one the app
+        // cannot reopen. The check is the loader's own pre-pass.
+        if let Err(e) = crate::tastudio::rnmproj_decoded_cost_within(
+            &bytes,
+            crate::tastudio::RNMPROJ_DECODE_BUDGET,
+        ) {
+            self.ui
+                .set_status(crate::ui_shell::StatusMessage::error(format!(
+                    "TAStudio project would not load again ({e}); not saved"
+                )));
+            eprintln!("rustynes: TAStudio project not saved: {e}");
+            return;
+        }
         let Some(path) = rfd::FileDialog::new()
             .add_filter("TAStudio project", &["rnmproj"])
             .set_file_name("project.rnmproj")
