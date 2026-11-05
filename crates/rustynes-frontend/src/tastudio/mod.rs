@@ -146,9 +146,12 @@ fn write_markers(w: &mut Vec<u8>, m: &BTreeMap<usize, String>) {
 struct Reader<'a> {
     b: &'a [u8],
     pos: usize,
-    /// Decoded bytes the counts read so far commit the load to.
+    /// Decoded bytes the counts read so far commit the load to. Used by the
+    /// cost pre-pass (`cost_*`) only; the decoders run after it has passed and
+    /// charge nothing.
     charged: u64,
     /// The most [`Self::charged`] may reach ([`RNMPROJ_DECODE_BUDGET`]).
+    /// Pre-pass only, like `charged`.
     budget: u64,
 }
 
@@ -278,8 +281,10 @@ impl<'a> Reader<'a> {
         for _ in 0..n {
             let _frame = self.len()?;
             let len = self.len()?;
-            self.take(len)?;
+            // Charged before the slice, so an oversized declared label is
+            // refused for the budget rather than as truncated.
             self.charge(len as u64, 1)?;
+            self.take(len)?;
         }
         Ok(())
     }
@@ -306,8 +311,8 @@ impl<'a> Reader<'a> {
             self.cost_input_log(version)?;
             self.cost_markers()?;
             let state = self.len()?;
-            self.take(state)?;
             self.charge(state as u64, 1)?;
+            self.take(state)?;
         }
         Ok(self.charged)
     }

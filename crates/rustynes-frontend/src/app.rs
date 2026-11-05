@@ -4267,6 +4267,12 @@ impl App {
             match crate::bounded_read::read_limited(&path, crate::bounded_read::MAX_TAS_PROJECT) {
                 Ok(b) => b,
                 Err(e) => {
+                    // On screen as well as on stderr (v3.6.1, Antigravity on
+                    // #639): a desktop launch has no terminal to show stderr.
+                    self.ui
+                        .set_status(crate::ui_shell::StatusMessage::error(format!(
+                            "TAStudio project not opened: {e}"
+                        )));
                     eprintln!(
                         "rustynes: TAStudio project read failed {}: {e}",
                         path.display()
@@ -4274,12 +4280,19 @@ impl App {
                     return;
                 }
             };
-        if let Some(e) = self
+        let refused = self
             .debugger
             .as_mut()
             .and_then(DebuggerOverlay::tas_editor_mut)
-            && let Err(err) = e.load_rnmproj(&bytes)
-        {
+            .and_then(|e| e.load_rnmproj(&bytes).err());
+        if let Some(err) = refused {
+            // A malformed project, and since v3.6.1 one past the decode budget,
+            // is refused with the editor unchanged; say so where the user is
+            // looking.
+            self.ui
+                .set_status(crate::ui_shell::StatusMessage::error(format!(
+                    "TAStudio project not opened: {err}"
+                )));
             eprintln!("rustynes: TAStudio project parse failed: {err}");
         }
     }
