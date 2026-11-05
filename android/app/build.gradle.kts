@@ -72,8 +72,8 @@ android {
         // `scripts/release-automation/bump_release.py` from now on, starting
         // with the 3.0.0 cut. versionCode = MAJOR * 10000 + MINOR * 100 +
         // PATCH, so 20909 still rises past 20004.
-        versionCode = 30600
-        versionName = "3.6.0"
+        versionCode = 30601
+        versionName = "3.6.1"
         // No abiFilters here — set per buildType so release ships arm64 only
         // while debug keeps x86_64 for the emulator.
         // PLAY_BUILD is set per-flavor below (`false` for `foss`, `true` for `play`),
@@ -441,7 +441,7 @@ dependencies {
     // Cast Application Framework sender (v1.8.7, #38). Linked but DORMANT: it does
     // nothing until CastContext is initialized, which only happens behind the
     // default-off BuildConfig.CHROMECAST_ENABLED flag (see ChromecastSender.kt).
-    "playImplementation"("com.google.android.gms:play-services-cast-framework:22.3.1")
+    "playImplementation"("com.google.android.gms:play-services-cast-framework:23.0.0")
     // v1.8.8 "Atlas" (Workstreams D+E): Play Games Services v2 — the cloud-save
     // Snapshots client (D), the PGS achievements + leaderboards clients (E), and the
     // PGS v2 auto-sign-in (GamesSignInClient). The v2 SDK is current (the v1

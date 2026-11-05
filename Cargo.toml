@@ -79,7 +79,7 @@ default-members = ["crates/rustynes-libretro"]
 # `release-auto.yml` reads the `## [X.Y.Z]` line for BOTH the release body
 # fallback and the title codename — so the date and quoted codename are load-
 # bearing, not decoration.
-version = "3.6.0"
+version = "3.6.1"
 edition = "2024"
 # The toolchain is 1.99 (rust-toolchain.toml), and every crate inherits this
 # floor, the libretro path included: the libretro buildbot follows the same pin
@@ -146,7 +146,7 @@ sha2 = { version = "0.11", default-features = false }
 md-5 = { version = "0.11", default-features = false }
 sha1 = { version = "0.11", default-features = false }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
-toml = "1.1"
+toml = "1.2"
 # v1.7.0 "Forge" H4 — per-game `<rom>.json` config overlays (frontend-only).
 # A sibling/config-dir JSON layered over the v1.2.0 game-DB; absent file is a
 # no-op so the default load path stays byte-identical. Native + wasm frontend.
@@ -245,11 +245,11 @@ directories = "6"
 # `docs/audit/v1.3-sprint-1.1-wasm32-research-2026-05-24.md` for
 # the full ecosystem-state-2026 research that informed the
 # version pins.
-wasm-bindgen = "0.2.129"
-wasm-bindgen-futures = "0.4.79"
+wasm-bindgen = "0.2.130"
+wasm-bindgen-futures = "0.4.80"
 console_error_panic_hook = "0.1.7"
-js-sys = "0.3.106"
-web-sys = "0.3.106"
+js-sys = "0.3.107"
+web-sys = "0.3.107"
 # `web_time::Instant` is a drop-in for `std::time::Instant` that
 # routes to `Performance.now()` on wasm32 (where `std::time::Instant`
 # panics) and to the std impl on native. winit itself depends on

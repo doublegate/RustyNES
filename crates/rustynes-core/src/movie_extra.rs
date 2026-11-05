@@ -469,6 +469,20 @@ const EV_BARCODE: u8 = 0x07;
 /// Smallest event on disk: frame (4) + kind (1), for the allocation bound.
 const MIN_EVENT_LEN: usize = 5;
 
+/// v3.6.1 — the most memory [`decode_events`] would reserve for `block`'s
+/// event list, from its declared count alone and before anything is decoded:
+/// the count, bounded by what the block's bytes could hold (the bound
+/// `decode_events` itself applies), times one decoded event. A block too
+/// short to carry a count costs nothing here; `decode_events` refuses it.
+pub fn decoded_events_bytes(block: &[u8]) -> u64 {
+    let Some(c) = block.get(..4) else {
+        return 0;
+    };
+    let declared = u32::from_le_bytes([c[0], c[1], c[2], c[3]]) as usize;
+    let held = declared.min((block.len() - 4) / MIN_EVENT_LEN);
+    (held as u64).saturating_mul(core::mem::size_of::<(usize, Event)>() as u64)
+}
+
 /// Encode the non-controller half of `frames` as the INPUT EVENTS block body:
 /// `u32` event count, then each event as `u32` frame index, `u8` kind and a
 /// kind-specific payload, in frame order and, within a frame, in kind (then

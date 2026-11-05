@@ -3974,14 +3974,22 @@ impl Ppu {
         // disagreement is about CPU/PPU alignment rather than about the read.
         #[cfg(feature = "phi2-write-sweep")]
         let vbl_set_dot = u16::from(VBL_SET_DOT.load(core::sync::atomic::Ordering::Relaxed));
+        // v3.6.1 (`T-MMC5-WINDOW-END`): the mapper is told about vertical
+        // blank on EVERY frame, independent of the CPU-visible flag. A
+        // `$2002` read at the set dot suppresses the flag (and the NMI) for
+        // that frame; it does not stop the PPU entering vertical blank, and
+        // before v3.6.1 it also skipped this notification, so the MMC5's
+        // background-fetch window stayed open through that whole blank.
+        if self.scanline == self.region.vblank_start_line() && self.dot == vbl_set_dot {
+            // Inform the mapper that we have entered VBL — MMC5 uses this
+            // to close its background-fetch window.
+            bus.notify_vblank();
+        }
         if self.scanline == self.region.vblank_start_line()
             && self.dot == vbl_set_dot
             && !self.suppress_vbl_this_frame
         {
             self.status.insert(PpuStatus::VBLANK);
-            // Inform the mapper that we have entered VBL — MMC5 uses this
-            // to clear its in-frame flag.
-            bus.notify_vblank();
             // R2 (mc-r1-substrate): /NMI is asserted on the SAME dot as
             // VBL-set when NMI_ENABLE is set (Mesen2 `NesPpu.cpp:1339-1343`).
             // On R1's on-time access the CPU read at dot 1 lands AFTER
@@ -4617,9 +4625,20 @@ impl Ppu {
     #[inline]
     fn fetch_nt<B: PpuBus>(&mut self, bus: &mut B) {
         // Compute the (scanline_y, coarse_x) the alt region would be sampled
-        // at. The pre-render line passes 0 (the alt region only renders on
-        // visible lines, but the query is benign for pre-render).
-        let scanline_y = if self.scanline < 0 {
+        // at. The pre-render line passes 0: its last two fetch groups are
+        // visible line 0's first two tiles, and `MMC5.xhtml` gives the split
+        // "a separate v-split scanline counter that resets to the vertical
+        // scrolling value in $5201 each v-blank", so those tiles take row
+        // `$5201 + 0`.
+        //
+        // v3.6.1: this used to test `self.scanline < 0`, but `scanline` holds
+        // the region's pre-render line itself (261, or 311 on PAL and Dendy;
+        // `PpuRegion::prerender_line`) and is never negative, so the pre-render
+        // query passed 261 / 311 and line 0's first two split tiles came from
+        // row `($5201 + 261) % 240` (or `+ 311`). Found by the MiSTer core's
+        // v3.6.1 `mapper5window491` stimulus, whose split takes `$5201` = $23;
+        // the core already took the pre-render line as 0.
+        let scanline_y = if self.scanline == self.region.prerender_line() {
             0
         } else {
             self.scanline as u16
@@ -7028,6 +7047,10 @@ mod tests {
         chr: [u8; 0x2000],
         a12_count: u32,
         last_a12: bool,
+        /// v3.6.1 — `notify_vblank` calls seen.
+        vblank_notifications: u32,
+        /// v3.6.1 — the `scanline_y` of every `bg_split_state` query.
+        split_queries: alloc::vec::Vec<u16>,
     }
 
     impl TestBus {
@@ -7036,6 +7059,8 @@ mod tests {
                 chr: [0u8; 0x2000],
                 a12_count: 0,
                 last_a12: false,
+                vblank_notifications: 0,
+                split_queries: alloc::vec::Vec::new(),
             }
         }
     }
@@ -7059,6 +7084,13 @@ mod tests {
                 self.last_a12 = level;
             }
         }
+        fn notify_vblank(&mut self) {
+            self.vblank_notifications += 1;
+        }
+        fn bg_split_state(&mut self, scanline_y: u16, _coarse_x: u16) -> Option<BgSplitState> {
+            self.split_queries.push(scanline_y);
+            None
+        }
         fn nametable_address(&self, addr: u16) -> u16 {
             // Horizontal mirroring: tables 0/1 -> bank 0, 2/3 -> bank 1.
             let table = ((addr.wrapping_sub(0x2000)) / 0x0400) & 0x03;
@@ -7073,6 +7105,94 @@ mod tests {
         // Drive past the post-reset masking window.
         ppu.post_reset_mask_remaining = 0;
         (ppu, TestBus::new())
+    }
+
+    /// v3.6.1 — the pre-render line's split queries (line 0's first two
+    /// tiles) pass scanline 0, on every region, so an MMC5 split takes row
+    /// `$5201 + 0` for them; visible lines pass their own number.
+    #[test]
+    fn the_pre_render_lines_split_queries_pass_scanline_zero() {
+        for region in [PpuRegion::Ntsc, PpuRegion::Pal, PpuRegion::Dendy] {
+            let mut p = Ppu::new(region);
+            p.post_reset_mask_remaining = 0;
+            let mut b = TestBus::new();
+            let pre = region.prerender_line();
+            // Run to the start of the pre-render line, render on.
+            let mut ticks = 0u32;
+            while !(p.scanline == pre && p.dot == 0) {
+                p.tick(&mut b);
+                ticks += 1;
+                assert!(
+                    ticks < 2 * VBL_SWEEP_MAX_TICKS,
+                    "never reached the pre-render line"
+                );
+            }
+            p.cpu_write_register(1, 0x0A, &mut b);
+            b.split_queries.clear();
+            while p.scanline == pre {
+                p.tick(&mut b);
+            }
+            assert!(
+                !b.split_queries.is_empty(),
+                "{region:?}: the pre-render line fetches"
+            );
+            assert!(
+                b.split_queries.iter().all(|&y| y == 0),
+                "{region:?}: pre-render queries {:?}",
+                b.split_queries
+            );
+            // Line 0's own fetch groups pass 0 too, and line 1's pass 1.
+            while p.scanline == 0 {
+                p.tick(&mut b);
+            }
+            b.split_queries.clear();
+            while p.scanline == 1 {
+                p.tick(&mut b);
+            }
+            assert!(
+                b.split_queries.iter().all(|&y| y == 1),
+                "{region:?}: line 1"
+            );
+        }
+    }
+
+    /// v3.6.1 (`T-MMC5-WINDOW-END`) — the mapper hears about vertical blank
+    /// on a frame whose VBL flag a `$2002` read suppressed.
+    ///
+    /// A read at scanline 241 dot 0 (the race window) suppresses the flag
+    /// and the NMI for that frame. The PPU still enters vertical blank, and
+    /// the MMC5 closes its background-fetch window on this notification, so
+    /// before v3.6.1 (which sent it only with the flag) that window stayed
+    /// open through the whole blank. The flag itself must stay suppressed.
+    #[test]
+    fn vblank_reaches_the_mapper_when_a_status_read_suppresses_the_flag() {
+        for suppress in [false, true] {
+            let (mut p, mut b) = fresh_ppu();
+            let line = p.region.vblank_start_line();
+            let mut ticks = 0u32;
+            while !(p.scanline == line && p.dot == 0) {
+                p.tick(&mut b);
+                ticks += 1;
+                assert!(ticks < VBL_SWEEP_MAX_TICKS, "never reached 241:0");
+            }
+            assert_eq!(b.vblank_notifications, 0);
+            if suppress {
+                let _ = p.cpu_read_register(2, &mut b);
+                assert!(p.suppress_vbl_this_frame, "the dot-0 read suppresses");
+            }
+            for _ in 0..4 {
+                p.tick(&mut b);
+            }
+            assert_eq!(
+                b.vblank_notifications, 1,
+                "the mapper is told once (suppressed: {suppress})"
+            );
+            assert_eq!(
+                p.status.contains(PpuStatus::VBLANK),
+                !suppress,
+                "the CPU-visible flag still follows the suppression"
+            );
+        }
     }
 
     /// v3.1.0 (`T-PAL-EMPHASIS`, ACC-01): on the PAL (2C07) and Dendy PPUs

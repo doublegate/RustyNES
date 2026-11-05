@@ -657,7 +657,10 @@ pub struct Mmc5 {
     /// The window in which a pattern fetch counts as a BACKGROUND fetch for
     /// the 8x16 CHR-set choice ([`Mmc5::non_sprite_set`]): opened at dot 0 of
     /// the pre-render and every visible line (`notify_scanline_start`),
-    /// closed at vertical blank (`notify_vblank`). This is exactly what
+    /// closed when three idle M2 cycles pass with rendering enabled (a few
+    /// dots into line 240; v3.6.1) and at vertical blank (`notify_vblank`,
+    /// which the PPU sends on every frame since v3.6.1, including one whose
+    /// VBL flag a `$2002` read suppressed). This is exactly what
     /// `in_frame` meant before v3.5.0; it was split off so the scanline-IRQ
     /// fix moves no CHR-set choice. Whether the chip's own set choice follows
     /// its detector instead (Fiskbit's hardware note that the first fetches
@@ -1764,6 +1767,19 @@ impl Mapper for Mmc5 {
             if self.det_idle_cycles == 3 {
                 self.in_frame = false;
                 self.reset_matcher();
+                // v3.6.1 (`T-MMC5-WINDOW-END`): with rendering enabled, an
+                // idle M2 run happens only once the PPU stops fetching, a
+                // few dots into post-render line 240 (or at vertical blank),
+                // so the background-fetch window closes here too, as the
+                // in-frame flag does. Before v3.6.1 it closed only at
+                // `notify_vblank`, so a `$2007` access on line 240 could still
+                // take the split or extended-attribute substitution. An idle
+                // run caused by a `$2001` disable (rendering off) leaves the
+                // window as it was, so a mid-frame re-enable fetches with the
+                // same CHR set choice as before.
+                if self.ppu_rendering {
+                    self.render_window = false;
+                }
             }
         }
         self.det_read_this_cycle = false;
@@ -1900,6 +1916,17 @@ impl Mapper for Mmc5 {
                     // transition from disabled to enabled resets the scanline
                     // counter.")
                     self.leave_frame_and_acknowledge();
+                    // v3.6.1 (CodeRabbit on #639): restart the idle count, so
+                    // the fetch window's idle close (`notify_cpu_cycle`) can
+                    // fire for THIS rendering-on stretch. Rendering switched
+                    // off long enough saturates the count at 3 with the window
+                    // deliberately kept open; re-enabled on post-render line
+                    // 240, with no fetch to clear the count, it would never
+                    // reach 3 again and the window would stay open until
+                    // vertical blank. Nothing else the count drives can
+                    // change: in-frame is already clear and the matcher was
+                    // reset by the disable.
+                    self.det_idle_cycles = 0;
                 }
                 self.ppu_rendering = enabled;
             }
@@ -3447,6 +3474,102 @@ mod tests {
         assert_eq!(m.ppu_read(0x0000), 8, "rendering back on");
         m.notify_vblank();
         assert_eq!(m.ppu_read(0x0000), want, "vertical blank");
+    }
+
+    /// `T-MMC5-WINDOW-END` (v3.6.1). The background-fetch window closed only
+    /// at `notify_vblank`, so on post-render line 240 (rendering still on,
+    /// the PPU fetching nothing) a `$2007` access still took the split and
+    /// extended-attribute substitutions the page confines to rendering. The
+    /// page's own end-of-frame signal is the in-frame flag's idle rule ("3
+    /// CPU cycles pass without a PPU read", a few dots into line 240); the
+    /// window now closes there too. No `notify_vblank` is sent in this test,
+    /// which is also the frame whose VBL flag a `$2002` read suppressed.
+    #[test]
+    fn line_240_closes_the_fetch_window_with_rendering_on() {
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5104, 0b01);
+        m.exram[0] = 0b00_000011; // tile 0: 4 KiB bank 3
+        rendering(&mut m);
+        let _ = m.peek_ex_attribute(0);
+        assert_eq!(m.ppu_read(0x0000), 12, "while rendering");
+        let want = unsubstituted(&m, 0x0000);
+        assert_ne!(want, 12, "the fixture must tell the two banks apart");
+        // Two idle cycles are still inside the frame (a fetch can follow).
+        m.notify_cpu_cycle();
+        m.notify_cpu_cycle();
+        assert_eq!(m.ppu_read(0x0000), 12, "two idle cycles: still rendering");
+        // (`ppu_read` is the CHR fetch itself; only `notify_ppu_read`, the
+        // snoop, counts for the idle rule.) The third idle cycle closes it.
+        assert!(m.render_window);
+        m.notify_cpu_cycle();
+        assert!(!m.render_window, "the third idle cycle closed the window");
+        assert_eq!(m.ppu_read(0x0000), want, "line 240, rendering on");
+
+        // The split substitution follows the same window.
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5200, 0x80 | 16);
+        m.cpu_write(0x5202, 2);
+        rendering(&mut m);
+        let _ = m.bg_split_state(0, 0).unwrap();
+        assert_eq!(m.ppu_read(0x0000), 8, "split while rendering");
+        let want = unsubstituted(&m, 0x0000);
+        vblank_idle(&mut m);
+        assert_eq!(m.ppu_read(0x0000), want, "split on line 240");
+    }
+
+    /// The other half of `T-MMC5-WINDOW-END`'s rule: an idle run caused by
+    /// switching rendering OFF in `$2001` leaves the fetch window as it was,
+    /// so when rendering comes back on before the next line starts the
+    /// fetches are classified exactly as before v3.6.1 (no CHR-set choice
+    /// moves for a game that blanks part of a frame).
+    #[test]
+    fn an_idle_run_with_rendering_off_keeps_the_fetch_window() {
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5104, 0b01);
+        m.exram[0] = 0b00_000011;
+        rendering(&mut m);
+        let _ = m.peek_ex_attribute(0);
+        m.notify_ppu_register_write(0x2001, 0x00);
+        vblank_idle(&mut m);
+        assert!(
+            m.render_window,
+            "the window survives a rendering-off idle run"
+        );
+        // Re-enabled with no line start in between: the window is still open.
+        m.notify_ppu_register_write(0x2001, 0x18);
+        assert_eq!(
+            m.ppu_read(0x0000),
+            12,
+            "substitution resumes with rendering"
+        );
+    }
+
+    /// v3.6.1 (CodeRabbit on #639) — a rendering-off idle run saturates the
+    /// idle count with the window kept open; re-enabled where nothing is
+    /// fetched (post-render line 240), three more idle cycles must still close
+    /// it, so the count restarts on the off-to-on `$2001` transition.
+    #[test]
+    fn a_re_enable_without_fetches_still_closes_the_fetch_window() {
+        let mut m = fresh(8, 16);
+        m.cpu_write(0x5104, 0b01);
+        m.exram[0] = 0b00_000011;
+        rendering(&mut m);
+        let _ = m.peek_ex_attribute(0);
+        m.notify_ppu_register_write(0x2001, 0x00);
+        vblank_idle(&mut m); // the count saturates; the window stays open
+        assert!(m.render_window);
+        m.notify_ppu_register_write(0x2001, 0x18);
+        assert_eq!(m.ppu_read(0x0000), 12, "just re-enabled: still substituted");
+        for _ in 0..3 {
+            m.notify_cpu_cycle();
+        }
+        assert!(
+            !m.render_window,
+            "three idle cycles after the re-enable close it"
+        );
+        let want = unsubstituted(&m, 0x0000);
+        assert_ne!(want, 12);
+        assert_eq!(m.ppu_read(0x0000), want);
     }
 
     /// The nametable half of `T-MMC5-LATCH-VBLANK`, found by the MiSTer

@@ -34,7 +34,7 @@ port = 8081
 # LIBRARY version resolved in Cargo.lock exactly — the CLI and the
 # library are released in lockstep and version-check each other.
 # Check with `grep -A1 'name = "wasm-bindgen"' Cargo.lock`.
-wasm_bindgen = "0.2.129"
+wasm_bindgen = "0.2.130"
 # v3.0.1: wasm-opt (binaryen) pinned too. Unset, trunk 0.21.14 falls back to
 # its built-in default (`version_123`, about two years old), so the optimiser
 # that shapes the shipped demo was whatever that trunk release happened to

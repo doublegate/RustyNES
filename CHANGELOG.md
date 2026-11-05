@@ -26,6 +26,86 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.6.1] - 2026-11-05 - "Threshold" (every dependency at its newest, the MMC5's fetch window ended where rendering ends, and MiSTer save states tied to their region)
+
+### Breaking
+
+- **Emulation epoch 9**: movies recorded on v3.6.0 (epoch 8) are refused, and
+  a v3.6.0 netplay peer is refused, each with a message naming both epochs.
+  No golden, snapshot or epoch fingerprint moved; the epoch rises, as at
+  v3.5.1, because two MMC5 fixes below change a frame and a `$2007` value from
+  the same inputs for software that makes those accesses. Save states from
+  v3.6.0 load; netplay protocol 9 and `.rnm` format 7 are unchanged.
+- **MiSTer core:** save states from v3.6.0 are refused (the state header now
+  records the console's region, and its layout fingerprint changed with it).
+
+### Changed
+
+- **Dependencies, every ecosystem at its newest compatible release** (one
+  consolidated change that supersedes Dependabot #627, #629, #632, #633, #635,
+  #636 and #637). Cargo: `rmcp` 3.8, `rusqlite` 0.41 (bundled SQLite), `toml`
+  1.2, the `wasm-bindgen` family 0.2.130 (the `Trunk.toml` CLI pin moved with
+  it), the mobile bridge's `getrandom` 0.2 to 0.4 (`getrandom::fill`), and a
+  lockfile refresh (tokio 1.54, zip 9.3, ureq 3.5, and others). The two
+  `getrandom` shims behind `script-wasm` stay on 0.2 / 0.3: piccolo's own
+  dependency tree selects those majors. Android: AGP 9.5.0, the Gradle wrapper
+  9.8.2, `play-services-cast-framework` 23.0.0. Hosted services: wrangler
+  4.157, vitest 5.1, the Workers vitest plugin 1.5.1 (undici 7.30.1 through
+  miniflare). CI: `taiki-e/install-action` 2.88.1, `gradle/actions` 6.4.1.
+  Pre-commit: markdownlint-cli 0.50.0 and ruff 0.17.3, both measured clean on
+  the whole corpus before the pin moved.
+
+### Fixed
+
+- **A `TAStudio` project's decoded size is bounded, not only its file size**
+  (`T-TAS-PROJECT-DECODE-BOUND`). A `.rnmproj` has been capped at 1 GiB on
+  disk since v3.5.1, but a 5-byte frame record decodes to a whole
+  `FrameInput` and every branch carries its own log, so a valid file near
+  the cap could ask for several GiB. A pre-pass now walks the whole file and
+  charges, against a 1 GiB decoded budget and before anything is decoded or
+  reserved, every input log (its frames, the decoder's per-frame extra-input
+  vector and its event list), every marker, and each branch's own record and
+  saved state; a project past it is refused with `RnmProjError::DecodeBudget`
+  and the editor is left as it was. Saving runs the same check, so the app
+  never writes a project it would refuse to reopen. The budget holds tens of
+  millions of frames, so no real project is affected (a million-frame project
+  is tested to open).
+- **The MMC5's background-fetch window ends where rendering does**
+  (`T-MMC5-WINDOW-END`, both cores). Since v3.5.1 the split's and an extended
+  attribute's CHR banks apply only inside that window with rendering on, but
+  the window closed only at vertical blank, so a `$2007` access on
+  post-render line 240 still took them; and a `$2002` read that suppressed a
+  frame's VBL flag also skipped the PPU's vertical-blank notice, keeping the
+  window open through that whole blank. It now also closes on the in-frame
+  flag's idle rule (three CPU cycles without a PPU read, a few dots into line
+  240) while rendering is on, and the PPU tells the mapper about vertical blank
+  on every frame. A `$2001` disable mid-frame keeps the window, as before, and
+  re-enabling rendering restarts the idle count, so the window still closes
+  when nothing is fetched after the re-enable.
+- **The MMC5 split's first two tiles of line 0 come from the right row**.
+  They are fetched on the pre-render line, whose scanline the PPU passed to the
+  split as 261 (311 on PAL and Dendy): its test for the pre-render line,
+  `scanline < 0`, never held, because the PPU counts the pre-render line as
+  the region's last. They now take row `$5201 + 0`, as the page's v-split
+  counter "resets to the vertical scrolling value in $5201 each v-blank". Found
+  by the MiSTer core's new `mapper5window491` stimulus.
+- **MiSTer core:** the MMC5 takes the region's pre-render line (311 on PAL and
+  Dendy), for the split's row and for opening its fetch window
+  (`T-MISTER-PAL-MMC5-PRERENDER`); until now it used NTSC's 261 on every
+  region, so a PAL or Dendy split frame took the wrong row for line 0's first
+  tiles and a `$2007` read late in PAL's vertical blank took the split's bank.
+- **MiSTer core: a save state is tied to its region**
+  (`T-MISTER-REGION-SAVESTATE`). The state header now records the region, and
+  a state saved under PAL is refused under NTSC (or Dendy) instead of
+  restoring a PAL console's counters into an NTSC one. A region change during a
+  save or a rewind capture abandons it, as a cartridge change does, rather than
+  storing a scrambled state; a manual save abandoned that way empties its slot,
+  and the rewind ring is emptied. States from v3.6.0 are refused (the header
+  format changed).
+- `cargo clippy --features script-sqlite --all-targets` failed on one
+  `assert!(..is_empty())` in the SQLite key-value test; no CI job lints that
+  feature with its tests, so it had never been reported.
+
 ## [3.6.0] - 2026-10-28 - "Octave" (the noise channel at its documented pitch, PAL and Dendy at full speed on the MiSTer core, a source-level debugger, audio stems and NSF ripping, and libretro Core Options v2)
 
 ### Breaking
