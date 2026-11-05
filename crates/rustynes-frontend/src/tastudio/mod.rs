@@ -73,7 +73,40 @@ pub enum RnmProjError {
     /// block, or a truncated record); the message is the core's.
     #[error("rnmproj input log is malformed: {0}")]
     BadInputLog(String),
+    /// v3.6.1 (`T-TAS-PROJECT-DECODE-BOUND`) — the project's declared frame
+    /// and marker counts would decode to more memory than
+    /// [`RNMPROJ_DECODE_BUDGET`] allows. Raised from the counts alone, before
+    /// the records they describe are decoded.
+    #[error("rnmproj would decode to more than {budget} bytes (needs at least {needed})")]
+    DecodeBudget {
+        /// Bytes the counts read so far would need, decoded.
+        needed: u64,
+        /// The budget the load was given.
+        budget: u64,
+    },
 }
+
+/// v3.6.1 (`T-TAS-PROJECT-DECODE-BOUND`) — the most memory a `.rnmproj` load
+/// may decode into, across the main input log, every branch's input log and
+/// every marker: 1 GiB.
+///
+/// The file itself is bounded at [`crate::bounded_read::MAX_TAS_PROJECT`]
+/// (1 GiB) since v3.5.1, but the file is not what the load allocates. A
+/// version-2 frame is a 5-byte record on disk and a whole [`FrameInput`] in
+/// memory (players 1-4, the expansion byte and an `Option<ExtraInput>`), and
+/// every branch carries its own copy of the log, so a valid file near the
+/// bound could decode to several GiB. Every count is charged against this
+/// budget BEFORE its records are decoded, so a project whose header claims
+/// too much is refused without allocating it.
+///
+/// At `size_of::<FrameInput>()` per frame the budget holds tens of millions
+/// of frames (a 60 fps project of more than a hundred hours, counting every
+/// branch), which no real project approaches.
+pub const RNMPROJ_DECODE_BUDGET: u64 = 1024 * 1024 * 1024;
+
+/// Bytes one decoded marker costs at least: its `BTreeMap` key and `String`
+/// header (the label's own bytes are charged separately, from its length).
+const MARKER_DECODED_BYTES: u64 = (size_of::<usize>() + size_of::<String>()) as u64;
 
 // --- `.rnmproj` binary codec helpers ------------------------------------- #
 
@@ -110,11 +143,37 @@ fn write_markers(w: &mut Vec<u8>, m: &BTreeMap<usize, String>) {
 struct Reader<'a> {
     b: &'a [u8],
     pos: usize,
+    /// Decoded bytes the counts read so far commit the load to.
+    charged: u64,
+    /// The most [`Self::charged`] may reach ([`RNMPROJ_DECODE_BUDGET`]).
+    budget: u64,
 }
 
 impl<'a> Reader<'a> {
-    const fn new(b: &'a [u8]) -> Self {
-        Self { b, pos: 0 }
+    const fn new(b: &'a [u8], budget: u64) -> Self {
+        Self {
+            b,
+            pos: 0,
+            charged: 0,
+            budget,
+        }
+    }
+
+    /// Charge `count` decoded items of `each` bytes against the budget,
+    /// refusing (before anything is decoded) once it would be exceeded.
+    fn charge(&mut self, count: u64, each: u64) -> Result<(), RnmProjError> {
+        let needed = count
+            .checked_mul(each)
+            .and_then(|n| n.checked_add(self.charged))
+            .unwrap_or(u64::MAX);
+        if needed > self.budget {
+            return Err(RnmProjError::DecodeBudget {
+                needed,
+                budget: self.budget,
+            });
+        }
+        self.charged = needed;
+        Ok(())
     }
 
     fn take(&mut self, n: usize) -> Result<&'a [u8], RnmProjError> {
@@ -153,12 +212,23 @@ impl<'a> Reader<'a> {
 
     /// Read an input log in the file's `version` encoding.
     fn input_log(&mut self, version: u16) -> Result<Vec<FrameInput>, RnmProjError> {
+        let frame_bytes = size_of::<FrameInput>() as u64;
         if version >= 2 {
             let blob = self.bytes()?;
+            // The log's own first field is its frame count (`encode_log`);
+            // charge it before `decode_log` builds a `FrameInput` per record.
+            // A blob too short to hold one is left to `decode_log` to refuse.
+            if let Some(c) = blob.get(..4) {
+                self.charge(
+                    u64::from(u32::from_le_bytes([c[0], c[1], c[2], c[3]])),
+                    frame_bytes,
+                )?;
+            }
             return FrameInput::decode_log(&blob)
                 .map_err(|e| RnmProjError::BadInputLog(e.to_string()));
         }
         let n = self.len()?;
+        self.charge(n as u64, frame_bytes)?;
         // Each frame is 3 bytes; never pre-allocate beyond what the blob holds.
         let mut v = Vec::with_capacity(n.min(self.remaining() / 3));
         for _ in 0..n {
@@ -178,10 +248,13 @@ impl<'a> Reader<'a> {
 
     fn markers(&mut self) -> Result<BTreeMap<usize, String>, RnmProjError> {
         let n = self.len()?;
+        self.charge(n as u64, MARKER_DECODED_BYTES)?;
         let mut m = BTreeMap::new();
         for _ in 0..n {
             let frame = self.len()?;
-            let label = String::from_utf8(self.bytes()?).map_err(|_| RnmProjError::BadLabel)?;
+            let raw = self.bytes()?;
+            self.charge(raw.len() as u64, 1)?;
+            let label = String::from_utf8(raw).map_err(|_| RnmProjError::BadLabel)?;
             m.insert(frame, label);
         }
         Ok(m)
@@ -636,10 +709,17 @@ impl TasEditor {
     /// re-warm. On a malformed blob returns `Err` WITHOUT mutating the editor.
     ///
     /// # Errors
-    /// [`RnmProjError`] for a bad magic, a too-new version, a truncated blob, or
-    /// a non-UTF-8 marker label.
+    /// [`RnmProjError`] for a bad magic, a too-new version, a truncated blob,
+    /// a non-UTF-8 marker label, or (v3.6.1) counts that would decode past
+    /// [`RNMPROJ_DECODE_BUDGET`] ([`RnmProjError::DecodeBudget`]).
     pub fn load_rnmproj(&mut self, bytes: &[u8]) -> Result<(), RnmProjError> {
-        let mut r = Reader::new(bytes);
+        self.load_rnmproj_within(bytes, RNMPROJ_DECODE_BUDGET)
+    }
+
+    /// [`Self::load_rnmproj`] against an explicit decode budget (the tests use
+    /// a small one to reach the refusal without gigabyte fixtures).
+    fn load_rnmproj_within(&mut self, bytes: &[u8], budget: u64) -> Result<(), RnmProjError> {
+        let mut r = Reader::new(bytes, budget);
         if r.take(8)? != RNMPROJ_MAGIC {
             return Err(RnmProjError::BadMagic);
         }
@@ -1508,6 +1588,97 @@ mod tests {
             ed.input_log(),
             before.as_slice(),
             "editor unmutated on error"
+        );
+    }
+
+    /// v3.6.1 (`T-TAS-PROJECT-DECODE-BOUND`) — a project whose DECLARED counts
+    /// exceed the decode budget is refused from the counts, before the
+    /// records are decoded.
+    ///
+    /// The blob claims `u32::MAX` frames in a version-2 log and carries none
+    /// of them. Without the budget this reaches `decode_log`, which refuses it
+    /// as a truncated log (`BadInputLog`); with it, the refusal is
+    /// `DecodeBudget`, which can only be raised from the count, so the
+    /// variant itself shows the order. The editor is left as it was.
+    #[test]
+    fn rnmproj_counts_past_the_decode_budget_are_refused_before_decoding() {
+        let nes = {
+            let mut n = Nes::from_rom(&synth_nrom()).unwrap();
+            n.power_cycle();
+            n
+        };
+        let mut ed = TasEditor::from_inputs(&nes, varied_inputs(5), 1 << 20, 16);
+        let before = ed.input_log().to_vec();
+        let mut blob = RNMPROJ_MAGIC.to_vec();
+        blob.extend_from_slice(&RNMPROJ_VERSION.to_le_bytes());
+        // A version-2 input log: its length prefix, then its own frame count.
+        blob.extend_from_slice(&4u32.to_le_bytes());
+        blob.extend_from_slice(&u32::MAX.to_le_bytes());
+        match ed.load_rnmproj(&blob) {
+            Err(RnmProjError::DecodeBudget { needed, budget }) => {
+                assert_eq!(budget, RNMPROJ_DECODE_BUDGET);
+                assert!(needed > budget);
+            }
+            other => panic!("expected DecodeBudget, got {other:?}"),
+        }
+        assert_eq!(ed.input_log(), before.as_slice(), "editor unmutated");
+
+        // The same refusal for a marker count no blob could back.
+        let mut markers = RNMPROJ_MAGIC.to_vec();
+        markers.extend_from_slice(&RNMPROJ_VERSION.to_le_bytes());
+        markers.extend_from_slice(&FrameInput::encode_log(&[]).len().to_le_bytes()[..4]);
+        markers.extend_from_slice(&FrameInput::encode_log(&[]));
+        markers.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(matches!(
+            ed.load_rnmproj(&markers),
+            Err(RnmProjError::DecodeBudget { .. })
+        ));
+    }
+
+    /// v3.6.1 (`T-TAS-PROJECT-DECODE-BOUND`) — the budget is the AGGREGATE:
+    /// the main log and every branch's log count together, and a project
+    /// inside the budget still opens, byte for byte.
+    ///
+    /// A 1,000-frame log with three branches holds 4,000 decoded frames. A
+    /// budget of 3,999 frames refuses it (no single log comes near it, so a
+    /// per-log bound would not); a budget of exactly 4,000 frames (plus the
+    /// markers' share) loads it and round-trips.
+    #[test]
+    fn rnmproj_decode_budget_counts_every_branch() {
+        let nes = {
+            let mut n = Nes::from_rom(&synth_nrom()).unwrap();
+            n.power_cycle();
+            n
+        };
+        let mut src = TasEditor::from_inputs(&nes, varied_inputs(1000), 1 << 20, 16);
+        src.set_marker(10, "ab");
+        for _ in 0..3 {
+            src.create_branch(&nes);
+        }
+        let blob = src.to_rnmproj();
+        let frame = size_of::<FrameInput>() as u64;
+        // One marker in the main log, copied into each of the three branches.
+        let markers = 4 * (MARKER_DECODED_BYTES + 2);
+        let fits = 4000 * frame + markers;
+
+        let mut ed = TasEditor::new(&nes, 1 << 20, 16);
+        assert!(matches!(
+            ed.load_rnmproj_within(&blob, fits - frame),
+            Err(RnmProjError::DecodeBudget { .. })
+        ));
+        assert_eq!(ed.load_rnmproj_within(&blob, fits), Ok(()));
+        assert_eq!(
+            ed.to_rnmproj(),
+            blob,
+            "a project inside the budget loads exactly"
+        );
+
+        // A real long project opens under the shipped budget: a million
+        // frames is more than four and a half hours at 60 fps.
+        let long = TasEditor::from_inputs(&nes, varied_inputs(1_000_000), 1 << 20, 16).to_rnmproj();
+        assert_eq!(
+            TasEditor::new(&nes, 1 << 20, 16).load_rnmproj(&long),
+            Ok(())
         );
     }
 

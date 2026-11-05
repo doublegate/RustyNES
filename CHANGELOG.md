@@ -44,6 +44,16 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **A `TAStudio` project's decoded size is bounded, not only its file size**
+  (`T-TAS-PROJECT-DECODE-BOUND`). A `.rnmproj` has been capped at 1 GiB on
+  disk since v3.5.1, but a 5-byte frame record decodes to a whole
+  `FrameInput` and every branch carries its own log, so a valid file near
+  the cap could ask for several GiB. Each input log's and marker list's
+  declared count is now charged against a 1 GiB decoded budget before its
+  records are decoded, across the main log and every branch; a project past
+  it is refused with `RnmProjError::DecodeBudget` and the editor is left as
+  it was. The budget holds tens of millions of frames, so no real project is
+  affected (a million-frame project is tested to open).
 - `cargo clippy --features script-sqlite --all-targets` failed on one
   `assert!(..is_empty())` in the SQLite key-value test; no CI job lints that
   feature with its tests, so it had never been reported.

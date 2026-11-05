@@ -62,6 +62,10 @@ non-controller input (`extra` is `None`) and leaves the machine's devices and
 disk as they are, so it cannot unplug a Zapper or eject a disk. The TAStudio
 project file (`.rnmproj`) keeps the whole frame since its version 2 (players 3
 and 4 included); a version-1 project still loads, with players 1 and 2 only.
+A project is refused when its file exceeds 1 GiB (since v3.5.1), and when its
+input logs and markers, every branch included, would decode to more than
+1 GiB of memory (since v3.6.1; checked from the declared counts before any
+record is decoded).
 
 `rustynes verify` catches a divergent replay after the fact, because its
 attestation folds in the input (controller and non-controller) and the video
