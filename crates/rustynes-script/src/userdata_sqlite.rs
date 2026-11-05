@@ -108,6 +108,6 @@ mod tests {
         let mut kv = SqliteKv::open_in_memory().unwrap();
         kv.save_pairs(&[pair("k", "v")]).unwrap();
         kv.save_pairs(&[]).unwrap();
-        assert!(kv.load_pairs().unwrap().is_empty());
+        assert_eq!(kv.load_pairs().unwrap(), Vec::<(String, String)>::new());
     }
 }

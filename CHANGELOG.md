@@ -26,6 +26,28 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **Dependencies, every ecosystem at its newest compatible release** (one
+  consolidated change that supersedes Dependabot #627, #629, #632, #633, #635,
+  #636 and #637). Cargo: `rmcp` 3.8, `rusqlite` 0.41 (bundled SQLite), `toml`
+  1.2, the `wasm-bindgen` family 0.2.130 (the `Trunk.toml` CLI pin moved with
+  it), the mobile bridge's `getrandom` 0.2 to 0.4 (`getrandom::fill`), and a
+  lockfile refresh (tokio 1.54, zip 9.3, ureq 3.5, and others). The two
+  `getrandom` shims behind `script-wasm` stay on 0.2 / 0.3: piccolo's own
+  dependency tree selects those majors. Android: AGP 9.5.0, the Gradle wrapper
+  9.8.2, `play-services-cast-framework` 23.0.0. Hosted services: wrangler
+  4.157, vitest 5.1, the Workers vitest plugin 1.5.1 (undici 7.30.1 through
+  miniflare). CI: `taiki-e/install-action` 2.88.1, `gradle/actions` 6.4.1.
+  Pre-commit: markdownlint-cli 0.50.0 and ruff 0.17.3, both measured clean on
+  the whole corpus before the pin moved.
+
+### Fixed
+
+- `cargo clippy --features script-sqlite --all-targets` failed on one
+  `assert!(..is_empty())` in the SQLite key-value test; no CI job lints that
+  feature with its tests, so it had never been reported.
+
 ## [3.6.0] - 2026-10-28 - "Octave" (the noise channel at its documented pitch, PAL and Dendy at full speed on the MiSTer core, a source-level debugger, audio stems and NSF ripping, and libretro Core Options v2)
 
 ### Breaking

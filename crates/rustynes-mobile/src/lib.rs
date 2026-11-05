@@ -3371,7 +3371,7 @@ fn nondeterministic_seed() -> u64 {
     // session RNG, the STUN / TURN transaction ids, which should not be
     // guessable. The time-and-address mix below is the fallback only.
     let mut buf = [0u8; 8];
-    if getrandom::getrandom(&mut buf).is_ok() {
+    if getrandom::fill(&mut buf).is_ok() {
         return u64::from_le_bytes(buf);
     }
     // Truncating the 128-bit nanosecond count to 64 bits is intentional — this is
