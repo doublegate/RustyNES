@@ -54,6 +54,36 @@ cycle-accurate core later replaced.
   it is refused with `RnmProjError::DecodeBudget` and the editor is left as
   it was. The budget holds tens of millions of frames, so no real project is
   affected (a million-frame project is tested to open).
+- **The MMC5's background-fetch window ends where rendering does**
+  (`T-MMC5-WINDOW-END`, both cores). Since v3.5.1 the split's and an extended
+  attribute's CHR banks apply only inside that window with rendering on, but
+  the window closed only at vertical blank, so a `$2007` access on
+  post-render line 240 still took them; and a `$2002` read that suppressed a
+  frame's VBL flag also skipped the PPU's vertical-blank notice, keeping the
+  window open through that whole blank. It now also closes on the in-frame
+  flag's idle rule (three CPU cycles without a PPU read, a few dots into line
+  240) while rendering is on, and the PPU tells the mapper about vertical blank
+  on every frame. A `$2001` disable mid-frame keeps the window, as before.
+- **The MMC5 split's first two tiles of line 0 come from the right row**.
+  They are fetched on the pre-render line, whose scanline the PPU passed to the
+  split as 261 (311 on PAL and Dendy): its test for the pre-render line,
+  `scanline < 0`, never held, because the PPU counts the pre-render line as
+  the region's last. They now take row `$5201 + 0`, as the page's v-split
+  counter "resets to the vertical scrolling value in $5201 each v-blank". Found
+  by the MiSTer core's new `mapper5window491` stimulus.
+- **MiSTer core:** the MMC5 takes the region's pre-render line (311 on PAL and
+  Dendy), for the split's row and for opening its fetch window
+  (`T-MISTER-PAL-MMC5-PRERENDER`); until now it used NTSC's 261 on every
+  region, so a PAL or Dendy split frame took the wrong row for line 0's first
+  tiles and a `$2007` read late in PAL's vertical blank took the split's bank.
+- **MiSTer core: a save state is tied to its region**
+  (`T-MISTER-REGION-SAVESTATE`). The state header now records the region, and
+  a state saved under PAL is refused under NTSC (or Dendy) instead of
+  restoring a PAL console's counters into an NTSC one. A region change during a
+  save or a rewind capture abandons it, as a cartridge change does, rather than
+  storing a scrambled state; a manual save abandoned that way empties its slot,
+  and the rewind ring is emptied. States from v3.6.0 are refused (the header
+  format changed).
 - `cargo clippy --features script-sqlite --all-targets` failed on one
   `assert!(..is_empty())` in the SQLite key-value test; no CI job lints that
   feature with its tests, so it had never been reported.

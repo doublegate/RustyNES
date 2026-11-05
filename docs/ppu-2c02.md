@@ -24,7 +24,7 @@ pub trait PpuBus {
 
 pub struct Ppu {
     pub dot: u16,           // 0..=340
-    pub scanline: i16,      // -1 (pre-render) ..= 260 (or 311 PAL)
+    pub scanline: i16,      // 0 ..= 261 (NTSC) / 311 (PAL, Dendy); the last is the pre-render line, never -1
     pub frame: u64,
     /* opaque internal state */
 }
@@ -48,6 +48,21 @@ impl Ppu {
 The PPU owns its 2 KB internal VRAM but routes all `$0000-$3FFF` accesses through the `PpuBus` so the mapper can override CHR (banking) and nametable mirroring. Palette RAM (`$3F00-$3FFF`) is internal to the PPU.
 
 **Every PPU read is reported (v3.5.0).** `read_vram_unobserved`, the choke point for background nametable / attribute / pattern fetches, the sprite window's garbage nametable reads and `$2007` reads, calls `PpuBus::notify_ppu_read(addr)` with the address the PPU drives (before any `$3xxx` fold) just before the read; the sprite pattern fetches, which call `ppu_read_sprite` directly, report themselves. Writes are not reported, nor are the display-only extra sprite reads of the "disable sprite limit" option, so that option still cannot change emulation. The MMC5 builds its scanline detector and in-frame flag from this stream (`docs/mappers.md`, IRQ family 3); the core's adapter forwards it only to a board whose `Mapper::snoops_ppu_reads` is true, so every other board pays one branch per read. Default no-op on the trait.
+
+**The pre-render line is the region's last line, not -1 (v3.6.1).** `scanline`
+counts 0 to 261 on NTSC and 0 to 311 on PAL and Dendy, and the pre-render line
+is `PpuRegion::prerender_line()` (261 / 311). Code that means "the pre-render
+line" must compare with that. The MMC5 split query in `fetch_nt` tested
+`scanline < 0` until v3.6.1, which never held, so the pre-render line passed
+261 / 311 as the split's scanline (`docs/mappers.md`, MMC5 CHR bank sets); this
+document's own interface sketch said -1 until then.
+
+**Vertical blank reaches the mapper on every frame (v3.6.1).**
+`PpuBus::notify_vblank` fires at scanline 241 (291 on Dendy) dot 1 whether or
+not a `$2002` read on the race dot suppressed the VBL flag for that frame: the
+suppression is of the CPU-visible flag and the NMI, not of the PPU entering
+vertical blank. Until v3.6.1 the notification sat inside the flag's branch, so
+the MMC5's background-fetch window stayed open through a suppressed blank.
 
 ## State
 
