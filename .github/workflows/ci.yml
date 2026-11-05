@@ -475,6 +475,13 @@ jobs:
       # cfg-gated-code coverage gap (#11a) without a per-feature matrix.
       - name: clippy (full — every native feature)
         run: cargo clippy -p rustynes-frontend --all-targets --features full -- -D warnings
+      # v3.6.1 (Antigravity on #639): `--all-targets` lints the NAMED package's
+      # test targets only, so the frontend's `full` compiles rustynes-script's
+      # library with `script-sqlite` / `script-ipc` but never its `#[cfg(test)]`
+      # modules. A clippy failure in the SQLite key-value test sat unreported
+      # until the v3.6.1 dependency sweep ran this exact command by hand.
+      - name: clippy (rustynes-script tests with script-sqlite + script-ipc)
+        run: cargo clippy -p rustynes-script --all-targets --features script-sqlite,script-ipc -- -D warnings
       # `rustynes-mappers` with `mapper-audio` OFF. Every combo above turns
       # features ON; this is the only gate that compiles a feature OUT, and the
       # subtraction is where the rot happens: this configuration was outright
