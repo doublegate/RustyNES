@@ -59,6 +59,50 @@ fn locate_band(idx: &[u16], target: u64) -> (u16, usize, u16) {
     (sky, hz, ground)
 }
 
+/// v3.6.2: `--events SL0 SL1` prints the target frame's register events
+/// (scanline, dot, address, value) on scanlines `SL0..=SL1`: which write
+/// landed where, which is the question once provenance has named the tile.
+/// Returns whether the mode was selected.
+fn print_events(nes: &Nes, args: &[String]) -> bool {
+    if args.len() < 7 || args[4] != "--events" {
+        return false;
+    }
+    let n = |s: &str| -> i16 {
+        s.parse().unwrap_or_else(|_| {
+            eprintln!("rad_racer_prov: --events expects two scanlines, got {s:?}");
+            std::process::exit(2);
+        })
+    };
+    let (s0, s1) = (n(&args[5]), n(&args[6]));
+    for e in nes.events() {
+        if (s0..=s1).contains(&e.scanline) {
+            println!(
+                "sl {:>3} dot {:>3}  {:?} {:#06X} = {:#04X}",
+                e.scanline, e.dot, e.kind, e.addr, e.value
+            );
+        }
+    }
+    true
+}
+
+/// v3.6.2: the `--rect X0 X1 Y0 Y1` rectangle, when that mode was asked for:
+/// every pixel of it is printed instead of the automatic band. The band trusts
+/// `locate_band`'s horizon, the lowest row holding the sky colour, so a stray
+/// dash OF sky colour down in the sand (the v3.6.2 report) becomes the
+/// "horizon" and is never itself inspected.
+fn rect_args(args: &[String]) -> Option<(usize, usize, usize, usize)> {
+    if args.len() < 9 || args[4] != "--rect" {
+        return None;
+    }
+    let n = |s: &str| -> usize {
+        s.parse().unwrap_or_else(|_| {
+            eprintln!("rad_racer_prov: --rect expects four integers, got {s:?}");
+            std::process::exit(2);
+        })
+    };
+    Some((n(&args[5]), n(&args[6]), n(&args[7]), n(&args[8])))
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 4 {
@@ -93,6 +137,7 @@ fn main() {
         // it never did, and the code below is the correct behaviour.)
         if frame == target {
             nes.set_pixel_provenance(true);
+            nes.set_event_logging(true);
         }
         nes.run_frame();
         if frame == target {
@@ -110,6 +155,10 @@ fn main() {
     if !reached {
         eprintln!("rad_racer_prov: the movie ended at frame {frame}; target {target} is past it");
         std::process::exit(2);
+    }
+
+    if print_events(&nes, &args) {
+        return;
     }
 
     let idx = nes.index_framebuffer().to_vec();
@@ -170,6 +219,12 @@ fn main() {
             ),
         }
     };
+    if let Some((x0, x1, y0, y1)) = rect_args(&args) {
+        for y in y0..=y1.min(239) {
+            (x0..=x1.min(255)).for_each(|x| row(x, y, "rect"));
+        }
+        return;
+    }
     for y in (hz + 1)..(hz + 6).min(200) {
         row(210, y, "control");
         for x in 200..256usize {
