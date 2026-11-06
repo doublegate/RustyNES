@@ -596,8 +596,11 @@ pub struct Ppu {
     /// per-group phase-0 nametable ALE keeps loading `octal_latch` with the
     /// CURRENT (pre-copy) `v`'s NT-low byte — so by the time the countdown lands
     /// the latch NATURALLY holds the one-tile-ahead low byte (`$19`), and the
-    /// landing's `address_bus = v` splice yields the hybrid address (`$2F19`)
-    /// with no `+1 coarse-X` reconstruction. 0 = inactive.
+    /// nametable read's splice of the live `v`'s high bits with that latch
+    /// (`ale_splice`) yields the hybrid address (`$2F19`) with no `+1 coarse-X`
+    /// reconstruction. The landing sets `v = t` only; since v3.6.2 it no longer
+    /// writes `address_bus`, which keeps the address the current fetch's ALE
+    /// drove for the attribute read (`fetch_at`). 0 = inactive.
     pub(crate) copy_v_delay: u8,
 
     // === Internal scroll/address registers (loopy v/t/x/w) ===
@@ -3260,9 +3263,9 @@ impl Ppu {
                     // v2.0.3 (ADR 0030, Option 1) — "Hybrid Addresses" the natural
                     // way. During rendering, a `$2006` second write does NOT copy
                     // `t -> v` immediately; it stages the delayed-`CopyV` countdown
-                    // (`TriCNES` `PPU_Update2006Delay`). The `v = t` and the
-                    // `address_bus = v` splice happen when the countdown lands
-                    // (`Self::tick`), by which point the fetch cadence has advanced
+                    // (`TriCNES` `PPU_Update2006Delay`). The `v = t` happens when
+                    // the countdown lands (`Self::tick`; since v3.6.2 the landing
+                    // no longer writes `address_bus`), by which point the fetch cadence has advanced
                     // coarse-X and the per-group phase-0 nametable ALE has NATURALLY
                     // loaded `octal_latch` with the one-tile-ahead NT-low (`$19`),
                     // so the landing read splices `$2F00 | $19 = $2F19` with no
@@ -3805,8 +3808,9 @@ impl Ppu {
 
         // v2.0.3 (ADR 0030, Option 1) — the delayed-`CopyV` landing (`TriCNES`
         // `Emulator.cs:1684-1704`). Ticked at the TOP of the dot, BEFORE the fetch
-        // dispatch, so the `address_bus = v` splice is in place for THIS dot's
-        // nametable read (the corrupted "Hybrid Addresses" fetch). The phase-0 NT
+        // dispatch, so the new `v` is in place for THIS dot's nametable read
+        // (the corrupted "Hybrid Addresses" fetch, whose splice takes the live
+        // `v`'s high bits; see the v3.6.2 note below). The phase-0 NT
         // ALE of the corrupt group ran on the PREVIOUS dot and already loaded
         // `octal_latch` with the one-tile-ahead NT-low, so the armed splice at the
         // read below yields `(v & 0x3F00) | octal_latch = $2F19` naturally.
@@ -4747,7 +4751,15 @@ impl Ppu {
         // Coherent fetches are unchanged: with `v` steady across the group,
         // the ALE address IS the address the read would compute. The 2-bit
         // quadrant select below still reads the live `v`, as before.
-        let at_addr = if self.ale_armed {
+        //
+        // The ALE address is used only when it IS an attribute address
+        // (`$23C0 | NT | $3F` under the `$33C0` mask): `ale_armed` is set by
+        // every ALE and cleared only by a read half, so with rendering
+        // disabled right after a pattern ALE (phase 4 / 6) and re-enabled
+        // on an attribute read dot, the armed `address_bus` is that pattern
+        // address, not this read's own ALE. Then this read had no ALE of its
+        // own and takes the pre-v3.6.2 path below (Antigravity on #640).
+        let at_addr = if self.ale_armed && (self.address_bus & 0x33C0) == 0x23C0 {
             self.address_bus
         } else {
             0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07)
@@ -7165,13 +7177,53 @@ mod tests {
         p.tick(&mut b);
         assert!(p.ale_armed, "the tick at dot 178 armed an ALE");
         assert_eq!(p.address_bus, 0x2FEE, "the ALE drove the old v's attribute");
-        // The delayed copy lands before the read half.
-        p.v = 0x2300;
+        // The delayed copy lands at the top of the read half's dot: stage it
+        // the way a `$2006` second write does, one dot from landing, so the
+        // countdown's landing is exercised too (Copilot on #640: restoring an
+        // `address_bus = v` there must fail this test).
+        p.t = 0x2300;
+        p.copy_v_delay = 1;
         p.tick(&mut b);
+        assert_eq!(p.copy_v_delay, 0, "the delayed copy landed");
+        assert_eq!(p.v, 0x2300, "the landing copied t into v");
         assert!(!p.ale_armed, "the tick at dot 179 was the attribute read");
         assert_eq!(
             p.at_latch, 0x02,
             "the attribute read took $23EE (the hybrid), not the ALE's $2FEE"
+        );
+    }
+
+    /// v3.6.2 (Antigravity on #640) — an attribute read whose own ALE did not
+    /// run must not take a leftover ALE's address. `ale_armed` is cleared only
+    /// by a read half, so rendering disabled right after a pattern ALE and
+    /// re-enabled on an attribute read dot leaves the pattern address armed.
+    /// Injected here at the read dot: the armed `address_bus` is a pattern
+    /// address (`$0FF8`, its CHR byte `$FF`, palette 3 in every quadrant);
+    /// the read must fall back to the attribute address computed from `v`
+    /// (CIRAM all zero, palette 0), as before v3.6.2.
+    #[test]
+    fn an_attribute_read_ignores_an_armed_pattern_address() {
+        let (mut p, mut b) = fresh_ppu();
+        b.chr[0x0FF8] = 0xFF;
+        let mut ticks = 0u32;
+        while !(p.scanline == 10 && p.dot == 0) {
+            p.tick(&mut b);
+            ticks += 1;
+            assert!(ticks < 2 * VBL_SWEEP_MAX_TICKS, "never reached line 10");
+        }
+        p.cpu_write_register(1, 0x0A, &mut b);
+        while p.dot != 179 {
+            p.tick(&mut b);
+        }
+        // A pattern ALE loads both halves: the bus and the octal latch.
+        p.ale_armed = true;
+        p.address_bus = 0x0FF8;
+        p.octal_latch = 0xF8;
+        p.tick(&mut b);
+        assert!(!p.ale_armed, "the tick at dot 179 was the attribute read");
+        assert_eq!(
+            p.at_latch, 0x00,
+            "the attribute read took the armed pattern address $0FF8"
         );
     }
 

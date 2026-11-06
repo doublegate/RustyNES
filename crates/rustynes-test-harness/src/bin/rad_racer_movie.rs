@@ -12,8 +12,9 @@
 //! rad_racer_movie <rom> <out.rnm> <frames> <schedule> [--png DIR F1,F2,...]
 //! ```
 //!
-//! `<schedule>` is a comma-separated list of `FROM-TO:BUTTONS` entries (`TO`
-//! may be omitted for "to the end"), BUTTONS a `+`-joined subset of
+//! `<schedule>` is a comma-separated list of `FROM-TO:BUTTONS` entries. `TO`
+//! may be omitted for "to the end" (`5-:A` holds A from frame 5 on), and a
+//! bare frame is that frame only (`5:A`). BUTTONS is a `+`-joined subset of
 //! `A B SELECT START UP DOWN LEFT RIGHT`. Overlapping entries OR together. The
 //! movie starts from power-on ([`power_on_for_movie`]), so `rad_racer_probe`
 //! replays it exactly.
@@ -86,27 +87,51 @@ fn write_png(path: &Path, fb: &[u8]) {
     writer.write_image_data(fb).expect("png data");
 }
 
+const USAGE: &str =
+    "usage: rad_racer_movie <rom> <out.rnm> <frames> <schedule> [--png DIR F1,F2,...]";
+
+/// Every argument mistake is a usage error with status 2, checked before the
+/// ROM is run, as `rad_racer_prov` does (`CodeRabbit` and Antigravity on #640:
+/// the frame count used to panic, a dangling `--png` was silently ignored and
+/// a malformed PNG frame number silently dropped).
+fn usage_exit(why: &str) -> ! {
+    eprintln!("rad_racer_movie: {why}\n{USAGE}");
+    std::process::exit(2);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 5 {
-        eprintln!(
-            "usage: rad_racer_movie <rom> <out.rnm> <frames> <schedule> [--png DIR F1,F2,...]"
-        );
+        eprintln!("{USAGE}");
         std::process::exit(2);
     }
-    let rom = std::fs::read(&args[1]).unwrap_or_else(|e| panic!("read rom: {e}"));
-    let frames: u64 = args[3].parse().expect("frame count");
+    let frames: u64 = args[3]
+        .parse()
+        .unwrap_or_else(|_| usage_exit(&format!("<frames> expects an integer, got {:?}", args[3])));
     let schedule = parse_schedule(&args[4]);
-    let (png_dir, png_frames): (Option<&str>, Vec<u64>) = if args.len() >= 7 && args[5] == "--png" {
-        std::fs::create_dir_all(&args[6]).expect("create png dir");
-        let list = args
-            .get(7)
-            .map(|l| l.split(',').filter_map(|f| f.parse().ok()).collect())
-            .unwrap_or_default();
-        (Some(args[6].as_str()), list)
-    } else {
-        (None, Vec::new())
-    };
+    let (png_dir, png_frames): (Option<&str>, Vec<u64>) =
+        match (args.get(5).map(String::as_str), args.len()) {
+            (None, _) => (None, Vec::new()),
+            (Some("--png"), 7 | 8) => {
+                let list = args.get(7).map_or_else(Vec::new, |l| {
+                    l.split(',')
+                        .filter(|f| !f.is_empty())
+                        .map(|f| {
+                            f.parse().unwrap_or_else(|_| {
+                                usage_exit(&format!("bad --png frame number {f:?}"))
+                            })
+                        })
+                        .collect()
+                });
+                (Some(args[6].as_str()), list)
+            }
+            (Some("--png"), _) => usage_exit("--png expects DIR and an optional frame list"),
+            (Some(other), _) => usage_exit(&format!("unknown option {other:?}")),
+        };
+    if let Some(dir) = png_dir {
+        std::fs::create_dir_all(dir).unwrap_or_else(|e| panic!("create png dir {dir}: {e}"));
+    }
+    let rom = std::fs::read(&args[1]).unwrap_or_else(|e| panic!("read rom: {e}"));
 
     let mut nes = Nes::from_rom(&rom).unwrap_or_else(|e| panic!("load rom: {e}"));
     power_on_for_movie(&mut nes);

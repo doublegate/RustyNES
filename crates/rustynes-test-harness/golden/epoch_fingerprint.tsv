@@ -4,7 +4,7 @@
 # the last release shipped, set by hand at each release cut: output may
 # move only while EMULATION_EPOCH is above it.
 # epoch	10
-# last_release_epoch	9
+# last_release_epoch	10
 # rom	rom_fnv	frames	framebuffer_fnv	audio_fnv	ram_fnv	cpu_cycles
 accuracycoin/AccuracyCoin.nes	7fafbb1d0dc40233	3200	44b1cee4c304031e	999355fb69c9e64c	f2a4b15d2c6f3bfa	95268168
 blargg/apu_mixer/triangle.nes	8bfe1e8f8b0c5733	600	1b6dac56c42f267a	87f291ef58273cac	983e19fe15e197d6	17838587

@@ -76,7 +76,7 @@ See `docs/STATUS.md` for the authoritative breakdown.
 | Harness file | Purpose |
 |--------------|---------|
 | `crates/rustynes-test-harness/src/accuracy_coin.rs` | Drives ROM from power-on; reads pass-rate from RAM via the catalog decoder. |
-| `crates/rustynes-test-harness/src/accuracy_coin_catalog.rs` | `OnceLock`-lazy 151-entry catalog parsed from the TSV in `../AccuracyCoin/SOURCE_CATALOG.tsv`. |
+| `crates/rustynes-test-harness/src/accuracy_coin_catalog.rs` | `OnceLock`-lazy 152-entry catalog parsed from the TSV in `../AccuracyCoin/SOURCE_CATALOG.tsv`. |
 | `crates/rustynes-test-harness/tests/accuracycoin.rs` | The CI gate — prints per-suite breakdown + per-failing-test list. |
 
 ## Why two directories?
