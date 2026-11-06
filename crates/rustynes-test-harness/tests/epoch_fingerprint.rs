@@ -360,7 +360,23 @@ fn output_moves_only_with_the_emulation_epoch() {
         match classify(f, &table.rows) {
             Verdict::Unchanged => {}
             Verdict::Changed => moved.push(line),
-            Verdict::New => added.push(line),
+            Verdict::New => {
+                // Say WHY it is new when the path is already recorded: a
+                // replaced ROM (its bytes changed) reads very differently
+                // from a probe that is simply missing (Antigravity on #640).
+                let replaced = table
+                    .rows
+                    .iter()
+                    .find(|r| r.rom == f.rom && r.frames == f.frames && r.rom_fnv != f.rom_fnv);
+                added.push(match replaced {
+                    Some(r) => format!(
+                        "{line}  [ROM bytes changed: the table records rom_fnv {}]",
+                        r.rom_fnv
+                            .map_or_else(|| "-".to_owned(), |v| format!("{v:016x}"))
+                    ),
+                    None => line,
+                });
+            }
         }
     }
     // The rule (ADR 0045): output may differ from the LAST RELEASE only under

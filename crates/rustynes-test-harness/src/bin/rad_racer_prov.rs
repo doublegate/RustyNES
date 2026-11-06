@@ -105,14 +105,28 @@ fn parse_mode(args: &[String]) -> Mode {
     }
     match args.get(4).map(String::as_str) {
         None => Mode::Band,
-        Some("--events") if args.len() == 7 => Mode::Events(
-            num(&args[5], "--events expects two scanlines"),
-            num(&args[6], "--events expects two scanlines"),
-        ),
+        Some("--events") if args.len() == 7 => {
+            let s0 = num(&args[5], "--events expects two scanlines");
+            let s1 = num(&args[6], "--events expects two scanlines");
+            if s0 > s1 {
+                usage_exit(&format!(
+                    "--events SL0 SL1 needs SL0 <= SL1, got {s0} > {s1}"
+                ));
+            }
+            Mode::Events(s0, s1)
+        }
         Some("--events") => usage_exit("--events expects exactly two scanlines"),
         Some("--rect") if args.len() == 9 => {
             let n = |s: &str| num::<usize>(s, "--rect expects four integers");
-            Mode::Rect(n(&args[5]), n(&args[6]), n(&args[7]), n(&args[8]))
+            let (x0, x1, y0, y1) = (n(&args[5]), n(&args[6]), n(&args[7]), n(&args[8]));
+            // The order is X0 X1 Y0 Y1, not X0 Y0 X1 Y1: an inverted pair is
+            // almost always that transposition, and would print nothing.
+            if x0 > x1 || y0 > y1 || x0 > 255 || y0 > 239 {
+                usage_exit(&format!(
+                    "--rect X0 X1 Y0 Y1 needs X0 <= X1 <= 255 and Y0 <= Y1 <= 239 (order X0 X1 Y0 Y1), got {x0} {x1} {y0} {y1}"
+                ));
+            }
+            Mode::Rect(x0, x1, y0, y1)
         }
         Some("--rect") => usage_exit("--rect expects exactly four integers"),
         Some(other) => usage_exit(&format!("unknown option {other:?}")),

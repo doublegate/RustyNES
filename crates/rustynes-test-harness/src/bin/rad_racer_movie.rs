@@ -58,6 +58,10 @@ fn parse_schedule(s: &str) -> Vec<Entry> {
                 eprintln!("schedule entry {e:?} needs FROM-TO:BUTTONS");
                 std::process::exit(2);
             };
+            if range.is_empty() {
+                eprintln!("schedule entry {e:?} has no frame range");
+                std::process::exit(2);
+            }
             let (from, to) = range.split_once('-').unwrap_or((range, range));
             let num = |v: &str, dflt: u64| {
                 if v.is_empty() {
@@ -69,9 +73,15 @@ fn parse_schedule(s: &str) -> Vec<Entry> {
                     })
                 }
             };
+            let (from, to) = (num(from, 0), num(to, u64::MAX));
+            // An inverted range would silently never fire (Antigravity on #640).
+            if from > to {
+                eprintln!("schedule entry {e:?} ends before it starts");
+                std::process::exit(2);
+            }
             Entry {
-                from: num(from, 0),
-                to: num(to, u64::MAX),
+                from,
+                to,
                 buttons: parse_buttons(buttons),
             }
         })

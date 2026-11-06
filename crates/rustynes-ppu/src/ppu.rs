@@ -7199,8 +7199,14 @@ mod tests {
     /// re-enabled on an attribute read dot leaves the pattern address armed.
     /// Injected here at the read dot: the armed `address_bus` is a pattern
     /// address (`$0FF8`, its CHR byte `$FF`, palette 3 in every quadrant);
-    /// the read must fall back to the attribute address computed from `v`
-    /// (CIRAM all zero, palette 0), as before v3.6.2.
+    /// the read must take the pre-v3.6.2 path instead. That path still
+    /// splices: the high bits from the attribute address computed from the
+    /// live `v`, the low byte from the octal latch (`$F8`), so it reads a
+    /// nametable byte, `$23F8` here (CIRAM all zero, palette 0). That is
+    /// deliberate: it is the same live-bus model as the nametable read's
+    /// "Hybrid Addresses" splice (the latch holds whatever the last ALE
+    /// latched), and it keeps every case outside the v3.6.2 rule exactly as
+    /// it was. Only a read whose OWN attribute ALE ran takes the ALE address.
     #[test]
     fn an_attribute_read_ignores_an_armed_pattern_address() {
         let (mut p, mut b) = fresh_ppu();
