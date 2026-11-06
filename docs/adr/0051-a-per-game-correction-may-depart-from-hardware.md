@@ -26,7 +26,7 @@ A **per-game correction** may depart from hardware when all of these hold:
 3. **It is recorded.** It is a `HardwareOptions` field. A movie records it (`.rnm` format 8), the netplay configuration digest covers it, and the libretro save-state options record carries it. A replay or a peer therefore runs the same picture.
 4. **It is render-only, or as close to it as the mechanism allows,** and stated as a departure wherever it is described.
 
-**The correction itself (`coherent_midline_copy`).** A delayed `$2006` copy whose countdown ends inside a fetch group, on a rendered line with rendering on (dots 2-248, not a group's first dot), is held to the end of that group. It lands just before the group's coarse-X increment (dots 8-248), in the fetch pipeline itself, so the increment applies to it under the same rendering gate as the hardware path. So every tile is fetched from one address, and from there on `v` is exactly what the unheld copy gives.
+**The correction itself (`coherent_midline_copy`).** A delayed `$2006` copy whose countdown ends inside a fetch group, on a rendered line with rendering on as the fetch pipeline sees it (the `$2001` bit one dot late, the gate the landing runs under) (dots 2-248, not a group's first dot), is held to the end of that group. It lands just before the group's coarse-X increment (dots 8-248), in the fetch pipeline itself, so the increment applies to it under the same rendering gate as the hardware path. So every tile is fetched from one address, and from there on `v` is exactly what the unheld copy gives.
 
 No snapshot field is added: a held copy is the `copy_v_delay` value `COPY_V_HELD` (0xFF). The PPU's hardware path is unchanged when the correction is off.
 

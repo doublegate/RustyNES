@@ -1858,11 +1858,23 @@ impl Ppu {
     /// copy only here, so the increment it waits for (dots 8-248) is always
     /// in the same fetch run and is a coarse-X one, never the dot-256
     /// vertical increment or the dot-257 copy.
+    ///
+    /// "Rendering on" is the rendering bit as the fetch pipeline sees it,
+    /// one dot late (`rendering_enabled_delayed`, which becomes this dot's
+    /// `rendering_gate`), not the live `$2001` bit: the held copy lands in
+    /// that pipeline's phase-7 step, so holding under the live bit could
+    /// hold a copy on a dot whose phase-7 step does not run. Review round 7
+    /// on #640 (Antigravity): with rendering switched back on the dot a
+    /// copy fell due at phase 7, the copy was held and reached `v` a dot
+    /// after the hardware's. Read at the top of the dot, before the
+    /// `phi2-write-sweep` analysis feature can re-point the gate's depth, so
+    /// under that feature at a depth other than one the two can still part;
+    /// the shipped build has no re-point.
     fn inside_fetch_group(&self) -> bool {
         let render_line = (self.scanline >= 0 && self.scanline <= self.region.last_visible_line())
             || self.scanline == self.region.prerender_line();
         render_line
-            && self.mask.rendering_enabled()
+            && self.rendering_enabled_delayed
             && (2..=248).contains(&self.dot)
             && (self.dot.wrapping_sub(1) & 7) != 0
     }
@@ -7296,6 +7308,21 @@ mod tests {
     /// copy of `t` staged so that the next `tick` (which advances to `dot`
     /// and runs the landing check there) is the one it is due on.
     fn ppu_with_copy_due_at(dot: u16, v0: u16, t: u16, coherent: bool) -> (Ppu, TestBus) {
+        ppu_with_copy_staged(dot - 1, dot, v0, t, coherent)
+    }
+
+    /// As [`ppu_with_copy_due_at`], but stopped earlier, at `start`, with the
+    /// copy's countdown set so that it still falls due on `dot`: a test can
+    /// then act on the dots before the landing (a `$2001` write the dot
+    /// before it, say), which a PPU stopped at `dot - 1` has already passed.
+    fn ppu_with_copy_staged(
+        start: u16,
+        dot: u16,
+        v0: u16,
+        t: u16,
+        coherent: bool,
+    ) -> (Ppu, TestBus) {
+        assert!(start < dot, "the copy is staged before it falls due");
         let (mut p, mut b) = fresh_ppu();
         p.set_coherent_midline_copy(coherent);
         let mut ticks = 0u32;
@@ -7305,12 +7332,12 @@ mod tests {
             assert!(ticks < 2 * VBL_SWEEP_MAX_TICKS, "never reached line 10");
         }
         p.cpu_write_register(1, 0x0A, &mut b);
-        while p.dot != dot - 1 {
+        while p.dot != start {
             p.tick(&mut b);
         }
         p.v = v0;
         p.t = t;
-        p.copy_v_delay = 1;
+        p.copy_v_delay = u8::try_from(dot - start).expect("a short countdown");
         (p, b)
     }
 
@@ -7354,32 +7381,45 @@ mod tests {
     /// separately, off and straight back on) at that dot on two PPUs, one with
     /// the correction and one without, and from the end of the group on both
     /// must hold the same `v` on every dot to the end of the fetch run.
+    ///
+    /// The copy falls due on every dot of the group (194-200), not only its
+    /// nametable read, so a toggle can coincide with the phase-7 landing
+    /// itself. Review round 7 on #640 (Antigravity): with the copy due on
+    /// dot 200 and rendering switched back on that dot, the hold used to
+    /// read the LIVE bit (on) while the phase-7 landing ran under the
+    /// fetch's one-dot-late gate (still off), so the copy was held, not
+    /// landed, and reached `v` a dot after the hardware's. The hold now
+    /// reads the fetch's gate.
     #[test]
     fn a_held_copy_and_an_unheld_one_agree_across_a_rendering_toggle() {
-        for toggle_dot in 194..=210u16 {
-            for re_enable in [false, true] {
-                let (mut on, mut bo) = ppu_with_copy_due_at(194, 0x2EF9, 0x2300, true);
-                let (mut off, mut bf) = ppu_with_copy_due_at(194, 0x2EF9, 0x2300, false);
-                while on.dot != 256 {
-                    if on.dot == toggle_dot {
-                        on.cpu_write_register(1, 0x00, &mut bo);
-                        off.cpu_write_register(1, 0x00, &mut bf);
+        for due in 194..=200u16 {
+            for toggle_dot in (due - 6)..=210u16 {
+                for re_enable in [false, true] {
+                    let (mut on, mut bo) = ppu_with_copy_staged(186, due, 0x2EF9, 0x2300, true);
+                    let (mut off, mut bf) = ppu_with_copy_staged(186, due, 0x2EF9, 0x2300, false);
+                    while on.dot != 256 {
+                        if on.dot == toggle_dot {
+                            on.cpu_write_register(1, 0x00, &mut bo);
+                            off.cpu_write_register(1, 0x00, &mut bf);
+                        }
+                        if re_enable && on.dot == toggle_dot + 1 {
+                            on.cpu_write_register(1, 0x0A, &mut bo);
+                            off.cpu_write_register(1, 0x0A, &mut bf);
+                        }
+                        on.tick(&mut bo);
+                        off.tick(&mut bf);
+                        // From dot 200, the group's phase-7 landing, on.
+                        if on.dot >= 200 {
+                            assert_eq!(
+                                on.v, off.v,
+                                "copy due at dot {due}, toggle at dot {toggle_dot} \
+                                 (re-enable {re_enable}): v differs at dot {}",
+                                on.dot
+                            );
+                        }
                     }
-                    if re_enable && on.dot == toggle_dot + 1 {
-                        on.cpu_write_register(1, 0x0A, &mut bo);
-                        off.cpu_write_register(1, 0x0A, &mut bf);
-                    }
-                    on.tick(&mut bo);
-                    off.tick(&mut bf);
-                    if on.dot > 200 {
-                        assert_eq!(
-                            on.v, off.v,
-                            "toggle at dot {toggle_dot} (re-enable {re_enable}): v differs at dot {}",
-                            on.dot
-                        );
-                    }
+                    assert_ne!(on.copy_v_delay, COPY_V_HELD, "never left held");
                 }
-                assert_ne!(on.copy_v_delay, COPY_V_HELD, "never left held");
             }
         }
     }
