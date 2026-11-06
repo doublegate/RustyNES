@@ -352,6 +352,23 @@ fn output_moves_only_with_the_emulation_epoch() {
         "last_release_epoch {} is above EMULATION_EPOCH {EMULATION_EPOCH}",
         table.last_release_epoch
     );
+    // The six-column (pre-`rom_fnv`) form is still READ, so an old table can
+    // be blessed forward, but the committed table must not keep it: a legacy
+    // row matches on its path alone and would pass without ever recording its
+    // ROM's hash (Antigravity on #640). A bless writes every row with one.
+    if !bless {
+        let legacy: Vec<&str> = table
+            .rows
+            .iter()
+            .filter(|r| r.rom_fnv.is_none())
+            .map(|r| r.rom.as_str())
+            .collect();
+        assert!(
+            legacy.is_empty(),
+            "epoch_fingerprint.tsv has rows without rom_fnv; re-bless with \
+             RUSTYNES_BLESS_EPOCH_FINGERPRINT=1: {legacy:?}"
+        );
+    }
 
     let mut moved: Vec<String> = Vec::new();
     let mut added: Vec<String> = Vec::new();

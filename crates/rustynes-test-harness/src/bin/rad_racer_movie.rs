@@ -41,10 +41,7 @@ fn parse_buttons(s: &str) -> Buttons {
             "DOWN" => Buttons::DOWN,
             "LEFT" => Buttons::LEFT,
             "RIGHT" => Buttons::RIGHT,
-            other => {
-                eprintln!("unknown button {other:?}");
-                std::process::exit(2);
-            }
+            other => usage_exit(&format!("unknown button {other:?}")),
         };
     }
     b
@@ -55,29 +52,24 @@ fn parse_schedule(s: &str) -> Vec<Entry> {
         .filter(|e| !e.is_empty())
         .map(|e| {
             let Some((range, buttons)) = e.split_once(':') else {
-                eprintln!("schedule entry {e:?} needs FROM-TO:BUTTONS");
-                std::process::exit(2);
+                usage_exit(&format!("schedule entry {e:?} needs FROM-TO:BUTTONS"));
             };
             if range.is_empty() {
-                eprintln!("schedule entry {e:?} has no frame range");
-                std::process::exit(2);
+                usage_exit(&format!("schedule entry {e:?} has no frame range"));
             }
             let (from, to) = range.split_once('-').unwrap_or((range, range));
             let num = |v: &str, dflt: u64| {
                 if v.is_empty() {
                     dflt
                 } else {
-                    v.parse().unwrap_or_else(|_| {
-                        eprintln!("bad frame number {v:?}");
-                        std::process::exit(2);
-                    })
+                    v.parse()
+                        .unwrap_or_else(|_| usage_exit(&format!("bad frame number {v:?}")))
                 }
             };
             let (from, to) = (num(from, 0), num(to, u64::MAX));
             // An inverted range would silently never fire (Antigravity on #640).
             if from > to {
-                eprintln!("schedule entry {e:?} ends before it starts");
-                std::process::exit(2);
+                usage_exit(&format!("schedule entry {e:?} ends before it starts"));
             }
             Entry {
                 from,
@@ -133,6 +125,13 @@ fn main() {
                         })
                         .collect()
                 });
+                // A frame past the end is never reached; say so now rather
+                // than after the run (Antigravity on #640).
+                if let Some(&late) = list.iter().find(|&&f| f >= frames) {
+                    usage_exit(&format!(
+                        "--png frame {late} is past the movie's {frames} frames"
+                    ));
+                }
                 (Some(args[6].as_str()), list)
             }
             (Some("--png"), _) => usage_exit("--png expects DIR and a frame list F1,F2,..."),

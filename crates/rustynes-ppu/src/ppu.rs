@@ -4760,10 +4760,17 @@ impl Ppu {
         // address, not this read's own ALE. Then this read had no ALE of its
         // own and takes the pre-v3.6.2 path below (Antigravity on #640).
         // A leftover NAMETABLE ALE on coarse rows 30-31 also passes the mask
-        // (those rows alias the attribute table), and that is harmless: its
-        // address `$2000 | (v & $0FFF)` has the same high byte as this
-        // read's `$23C0 | (v & $0C00)`, and the splice below would take the
-        // same ALE's low byte, so both paths read the same address.
+        // (those rows alias the attribute table). While `v`'s nametable bits
+        // are unchanged since that ALE it is harmless: its address
+        // `$2000 | (v & $0FFF)` has the same high byte as this read's
+        // `$23C0 | (v & $0C00)`, and the splice below would take the same
+        // ALE's low byte. If a `$2006` moved the nametable bits while
+        // rendering was off, this read takes the old nametable's byte where
+        // the fallback would take the new one's. Telling the two apart needs
+        // a record of which fetch armed the ALE, which is new snapshot state;
+        // not worth a save-state change for a case that needs rendering off
+        // at phase 1, a `$2006` while off, a re-enable exactly at phase 3 and
+        // coarse rows 30-31 at once (Antigravity on #640, round 4).
         let at_addr = if self.ale_armed && (self.address_bus & 0x33C0) == 0x23C0 {
             self.address_bus
         } else {
