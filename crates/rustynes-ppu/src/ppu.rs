@@ -7300,7 +7300,7 @@ mod tests {
         assert!(!p.ale_armed, "the tick at dot 179 was the attribute read");
         assert_eq!(
             p.at_latch, 0x00,
-            "the attribute read took the ALE's $2FEE, not the live-bus hybrid $23EE"
+            "the attribute read takes the live-bus hybrid $23EE, not the ALE's $2FEE"
         );
     }
 
@@ -7392,33 +7392,52 @@ mod tests {
     /// reads the fetch's gate.
     #[test]
     fn a_held_copy_and_an_unheld_one_agree_across_a_rendering_toggle() {
-        for due in 194..=200u16 {
-            for toggle_dot in (due - 6)..=210u16 {
-                for re_enable in [false, true] {
-                    let (mut on, mut bo) = ppu_with_copy_staged(186, due, 0x2EF9, 0x2300, true);
-                    let (mut off, mut bf) = ppu_with_copy_staged(186, due, 0x2EF9, 0x2300, false);
-                    while on.dot != 256 {
-                        if on.dot == toggle_dot {
-                            on.cpu_write_register(1, 0x00, &mut bo);
-                            off.cpu_write_register(1, 0x00, &mut bf);
-                        }
-                        if re_enable && on.dot == toggle_dot + 1 {
-                            on.cpu_write_register(1, 0x0A, &mut bo);
-                            off.cpu_write_register(1, 0x0A, &mut bf);
-                        }
-                        on.tick(&mut bo);
-                        off.tick(&mut bf);
-                        // From dot 200, the group's phase-7 landing, on.
-                        if on.dot >= 200 {
-                            assert_eq!(
-                                on.v, off.v,
-                                "copy due at dot {due}, toggle at dot {toggle_dot} \
-                                 (re-enable {re_enable}): v differs at dot {}",
-                                on.dot
-                            );
+        // Each group's last dot: dot 200 (the line-139 case) and dot 248, the
+        // last group the correction holds in (CodeRabbit, review round 8): a
+        // copy held there must land in that group's phase-7 step, before the
+        // dot-256 vertical increment and the dot-257 copy can see it. Past
+        // dot 248 nothing is held: a copy due on dots 249-255 lands at once.
+        for group_end in [200u16, 248] {
+            let last_due = if group_end == 248 { 255 } else { group_end };
+            for due in (group_end - 6)..=last_due {
+                let held_until = group_end.max(due - 1);
+                for toggle_dot in (due - 6)..=(last_due + 1) {
+                    for re_enable in [false, true] {
+                        let start = group_end - 14;
+                        let (mut on, mut bo) =
+                            ppu_with_copy_staged(start, due, 0x2EF9, 0x2300, true);
+                        let (mut off, mut bf) =
+                            ppu_with_copy_staged(start, due, 0x2EF9, 0x2300, false);
+                        while on.dot != 256 {
+                            if on.dot == toggle_dot {
+                                on.cpu_write_register(1, 0x00, &mut bo);
+                                off.cpu_write_register(1, 0x00, &mut bf);
+                            }
+                            if re_enable && on.dot == toggle_dot + 1 {
+                                on.cpu_write_register(1, 0x0A, &mut bo);
+                                off.cpu_write_register(1, 0x0A, &mut bf);
+                            }
+                            on.tick(&mut bo);
+                            off.tick(&mut bf);
+                            // From the group's phase-7 landing on.
+                            if on.dot >= group_end {
+                                assert_eq!(
+                                    on.v, off.v,
+                                    "copy due at dot {due}, toggle at dot {toggle_dot} \
+                                     (re-enable {re_enable}): v differs at dot {}",
+                                    on.dot
+                                );
+                            }
+                            if on.dot > held_until {
+                                assert_ne!(
+                                    on.copy_v_delay, COPY_V_HELD,
+                                    "copy due at dot {due}, toggle at dot {toggle_dot}: \
+                                     still held at dot {}",
+                                    on.dot
+                                );
+                            }
                         }
                     }
-                    assert_ne!(on.copy_v_delay, COPY_V_HELD, "never left held");
                 }
             }
         }
@@ -7467,7 +7486,7 @@ mod tests {
         assert!(!p.ale_armed, "the tick at dot 179 was the attribute read");
         assert_eq!(
             p.at_latch, 0x00,
-            "the attribute read took the armed pattern address $0FF8"
+            "the attribute read takes the live-bus splice $23F8, not the armed pattern address $0FF8"
         );
     }
 

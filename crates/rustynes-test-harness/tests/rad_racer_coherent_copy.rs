@@ -115,6 +115,23 @@ fn rad_racer_draws_no_dash_with_the_correction_and_does_without_it() {
         nes.coherent_midline_copy(),
         "the correction is on by default for this dump"
     );
+    // The key is the PRG and CHR data, so the same dump with trailing bytes,
+    // or with a trainer before its PRG, is still recognised (review round 8
+    // on #640: the key once covered everything after the header).
+    let mut padded = rom.clone();
+    padded.extend_from_slice(&[0xFF; 128]);
+    assert!(
+        rustynes_core::game_corrections::coherent_midline_copy_by_default(&padded),
+        "trailing bytes do not hide the dump"
+    );
+    let mut trainer = rom[..16].to_vec();
+    trainer[6] |= 0x04;
+    trainer.extend(std::iter::repeat_n(0u8, 512));
+    trainer.extend_from_slice(&rom[16..]);
+    assert!(
+        rustynes_core::game_corrections::coherent_midline_copy_by_default(&trainer),
+        "a trainer does not hide the dump"
+    );
     let with = count_dash_frames(None);
     let without = count_dash_frames(Some(false));
     eprintln!("line-139 dash frames, {FIRST}..={LAST}: correction on {with}, off {without}");

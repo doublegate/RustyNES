@@ -22,9 +22,13 @@
 //! `coherent_midline_copy`), which draws every tile from one address. Decided
 //! by the maintainer on 2026-11-06; see the ADR 0030 withdrawal note.
 //!
-//! The dumps are matched by the CRC32 of the ROM after its 16-byte header,
-//! the key the vendored game database (`rustynes-gamedb`) uses for the same
-//! three entries. Only the USA dump was available to measure; the other two
+//! The dumps are matched by the CRC32 of the ROM's PRG and CHR data (after
+//! the 16-byte header and any 512-byte trainer, and no further than the sizes
+//! the header declares), the key the vendored game database
+//! (`rustynes-gamedb`'s `rom_crc32`) uses for the same three entries. Hashing
+//! everything after the header instead would miss a dump that carries a
+//! trainer or trailing bytes, which the cartridge parser accepts (review round
+//! 8 on #640). Only the USA dump was available to measure; the other two
 //! CRCs are the database's, and their games are the same program.
 
 /// The headerless CRC32s of the dumps that get the coherent mid-line copy
@@ -39,10 +43,30 @@ pub const COHERENT_MIDLINE_COPY_DUMPS: [(u32, &str); 3] = [
 /// [`COHERENT_MIDLINE_COPY_DUMPS`].
 #[must_use]
 pub fn coherent_midline_copy_by_default(rom: &[u8]) -> bool {
-    rom.len() > 16 && {
-        let crc = crc32(&rom[16..]);
+    prg_chr(rom).is_some_and(|data| {
+        let crc = crc32(data);
         COHERENT_MIDLINE_COPY_DUMPS.iter().any(|&(c, _)| c == crc)
+    })
+}
+
+/// The PRG and CHR data of an iNES image, the bytes the database's CRC
+/// covers: after the header and any trainer (header byte 6, bit 2), and
+/// `16 KiB x byte 4 + 8 KiB x byte 5` long. `None` for a file without the
+/// `NES\x1A` magic, with no PRG, or shorter than the header says. The
+/// bounds are `rustynes_gamedb::rom_crc32`'s, so a listed CRC means the
+/// same bytes in both places.
+fn prg_chr(rom: &[u8]) -> Option<&[u8]> {
+    if rom.len() < 16 || &rom[0..4] != b"NES\x1A" {
+        return None;
     }
+    let prg = usize::from(rom[4]) * 16 * 1024;
+    let chr = usize::from(rom[5]) * 8 * 1024;
+    let start: usize = 16 + if rom[6] & 0x04 != 0 { 512 } else { 0 };
+    let end = start.checked_add(prg)?.checked_add(chr)?;
+    if prg == 0 || end > rom.len() {
+        return None;
+    }
+    Some(&rom[start..end])
 }
 
 /// CRC-32 (IEEE 802.3, reflected, `0xEDB88320`), as `rustynes-gamedb` and
@@ -67,6 +91,44 @@ mod tests {
     fn crc32_matches_the_standard_check_value() {
         // The CRC-32 check value: crc32("123456789") = 0xCBF43926.
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+    }
+
+    /// The hashed bytes are the PRG and CHR data, wherever the file puts
+    /// them: a trainer before them and padding after them do not move the
+    /// key (review round 8 on #640), and a truncated or unmarked file has
+    /// none.
+    #[test]
+    fn the_key_covers_prg_and_chr_only() {
+        let mut plain = alloc::vec![0x4Eu8, 0x45, 0x53, 0x1A, 1, 1, 0, 0];
+        plain.resize(16, 0);
+        let body: alloc::vec::Vec<u8> = (0..24 * 1024u32)
+            .map(|i| (i * 7 + 3).to_le_bytes()[0])
+            .collect();
+        plain.extend_from_slice(&body);
+        assert_eq!(prg_chr(&plain), Some(&body[..]));
+
+        let mut trainer = plain[..16].to_vec();
+        trainer[6] |= 0x04;
+        trainer.extend(core::iter::repeat_n(0xAAu8, 512));
+        trainer.extend_from_slice(&body);
+        assert_eq!(prg_chr(&trainer), Some(&body[..]), "a trainer is skipped");
+
+        let mut padded = plain.clone();
+        padded.extend_from_slice(&[0xFF; 128]);
+        assert_eq!(
+            prg_chr(&padded),
+            Some(&body[..]),
+            "trailing bytes are ignored"
+        );
+
+        assert_eq!(
+            prg_chr(&plain[..plain.len() - 1]),
+            None,
+            "short of the header's sizes"
+        );
+        let mut unmarked = plain.clone();
+        unmarked[3] = 0;
+        assert_eq!(prg_chr(&unmarked), None, "no NES magic");
     }
 
     #[test]

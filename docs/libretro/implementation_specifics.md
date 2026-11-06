@@ -153,15 +153,19 @@ with it, replacing the menu's values until the frontend next reports an
 option change, and says so in the log when they differ. The overclock goes in
 before the restore, because the state holds the position inside the
 overclocked cycle pattern and the core keeps a restored position only under a
-multiplier that could have produced it; a refused restore puts the
-multiplier and the machine back. A state without a record (every state from
+multiplier that could have produced it. Since v3.6.2 the per-game
+correction setting goes in before the restore too: the PPU keeps a copy the
+coherent mid-line copy correction is holding only while the correction is on,
+so restoring under the menu's setting would replay that frame differently. A
+refused restore puts the multiplier, the correction and the machine back. A state without a record (every state from
 before v3.6.0: its last 16 bytes are zero padding, or a cabinet's section
 data) loads as before and leaves the options alone; a record with a value no
 menu offers (an overclock of 9, a DIP position outside its mask, a non-zero
 reserved byte) refuses the state. Tests: `a_state_carries_its_emulation_options`,
 `states_without_a_record_load_and_bad_records_refuse`,
 `tests::a_refused_restore_under_a_new_multiplier_puts_the_console_back`,
-`tests::a_cabinet_restores_under_the_state_multiplier_on_both_consoles`.
+`tests::a_cabinet_restores_under_the_state_multiplier_on_both_consoles`,
+`tests::a_restore_applies_the_state_correction_first_and_puts_it_back_if_refused`.
 
 **Found, not fixed: a cabinet's state under the overclock.** A Vs.
 `DualSystem` state saved and restored at x2, with no option change at all,
