@@ -122,8 +122,8 @@ fn main() {
     let (png_dir, png_frames): (Option<&str>, Vec<u64>) =
         match (args.get(5).map(String::as_str), args.len()) {
             (None, _) => (None, Vec::new()),
-            (Some("--png"), 7 | 8) => {
-                let list = args.get(7).map_or_else(Vec::new, |l| {
+            (Some("--png"), 8) => {
+                let list: Vec<u64> = args.get(7).map_or_else(Vec::new, |l| {
                     l.split(',')
                         .filter(|f| !f.is_empty())
                         .map(|f| {
@@ -135,7 +135,7 @@ fn main() {
                 });
                 (Some(args[6].as_str()), list)
             }
-            (Some("--png"), _) => usage_exit("--png expects DIR and an optional frame list"),
+            (Some("--png"), _) => usage_exit("--png expects DIR and a frame list F1,F2,..."),
             (Some(other), _) => usage_exit(&format!("unknown option {other:?}")),
         };
     if let Some(dir) = png_dir {
@@ -157,11 +157,11 @@ fn main() {
             FrameInput::four_players(b, Buttons::empty(), Buttons::empty(), Buttons::empty());
         input.apply_to(&mut nes);
         rec.capture_input(input);
-        let fb = nes.run_frame().to_vec();
+        let fb = nes.run_frame();
         if let Some(dir) = png_dir
             && png_frames.contains(&f)
         {
-            write_png(&Path::new(dir).join(format!("f{f:05}.png")), &fb);
+            write_png(&Path::new(dir).join(format!("f{f:05}.png")), fb);
         }
     }
     let movie = rec.finish();

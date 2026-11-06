@@ -123,7 +123,7 @@ fn parse_mode(args: &[String]) -> Mode {
             // almost always that transposition, and would print nothing.
             if x0 > x1 || y0 > y1 || x0 > 255 || y0 > 239 {
                 usage_exit(&format!(
-                    "--rect X0 X1 Y0 Y1 needs X0 <= X1 <= 255 and Y0 <= Y1 <= 239 (order X0 X1 Y0 Y1), got {x0} {x1} {y0} {y1}"
+                    "--rect X0 X1 Y0 Y1 needs X0 <= X1, Y0 <= Y1, X0 <= 255 and Y0 <= 239 (order X0 X1 Y0 Y1; X1 and Y1 past the screen are clamped), got {x0} {x1} {y0} {y1}"
                 ));
             }
             Mode::Rect(x0, x1, y0, y1)

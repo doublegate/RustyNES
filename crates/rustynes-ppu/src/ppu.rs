@@ -4759,6 +4759,11 @@ impl Ppu {
         // on an attribute read dot, the armed `address_bus` is that pattern
         // address, not this read's own ALE. Then this read had no ALE of its
         // own and takes the pre-v3.6.2 path below (Antigravity on #640).
+        // A leftover NAMETABLE ALE on coarse rows 30-31 also passes the mask
+        // (those rows alias the attribute table), and that is harmless: its
+        // address `$2000 | (v & $0FFF)` has the same high byte as this
+        // read's `$23C0 | (v & $0C00)`, and the splice below would take the
+        // same ALE's low byte, so both paths read the same address.
         let at_addr = if self.ale_armed && (self.address_bus & 0x33C0) == 0x23C0 {
             self.address_bus
         } else {
