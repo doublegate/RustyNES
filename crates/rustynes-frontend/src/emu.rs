@@ -3698,6 +3698,37 @@ mod tests {
         );
     }
 
+    /// v3.6.2, Antigravity on #640 (round 9): a movie started while paused
+    /// captures the player's options, and puts them back when it stops. The
+    /// app's three playback entry points sync first, as here, so what comes
+    /// back is the configured setting rather than the last frame's. Without
+    /// the sync the stale setting is what playback restores.
+    #[test]
+    fn playback_started_after_the_sync_gives_back_the_configured_options() {
+        for synced in [false, true] {
+            let mut core = EmuCore::new();
+            core.set_nes(Nes::from_rom(&battery_rom()).unwrap());
+            let movie = rustynes_core::MovieRecorder::power_on(core.nes.as_ref().unwrap()).finish();
+            core.disable_sprite_limit = true;
+            if synced {
+                core.sync_idle_player_options();
+            }
+            core.movie
+                .start_playback(core.nes.as_mut().unwrap(), movie)
+                .unwrap();
+            assert!(
+                !core.nes.as_ref().unwrap().sprite_limit_disabled(),
+                "synced {synced}: the movie runs under its own options"
+            );
+            core.movie.stop_playback(core.nes.as_mut());
+            assert_eq!(
+                core.nes.as_ref().unwrap().sprite_limit_disabled(),
+                synced,
+                "synced {synced}: what playback gives back"
+            );
+        }
+    }
+
     /// Copilot on #561: starting a power-on movie cleared the live save RAM,
     /// and the next periodic comparison wrote those zeros over the `.sav`.
     /// Through [`EmuCore::start_sandboxed_session`] the file keeps the game's

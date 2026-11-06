@@ -1888,6 +1888,19 @@ impl Ppu {
     /// rendering bit as the fetch sees it, one dot late) and never on a dot
     /// that fetches nothing. The fast render path needs no call: its guard
     /// requires `copy_v_delay == 0`.
+    ///
+    /// Unlike the copy landing at the top of a dot, it does not put the new
+    /// `v` on the address bus or report an A12 level to the mapper (review
+    /// round 9 on #640). A held copy is the correction's own departure from
+    /// the hardware, and its landing is not a bus cycle: on the hardware the
+    /// copy reaches the bus mid-group, and holding it is exactly the choice
+    /// not to draw what that bus traffic draws. Driving `v` here, after the
+    /// group's pattern fetch, would invent an address the hardware never
+    /// drives at that dot, and the next dot's nametable fetch drives the bus
+    /// anyway. The correction is on only for *Rad Racer*'s dumps (MMC1,
+    /// whose registers ignore A12), so no listed game sees the difference; a
+    /// host that turns it on for an A12-counting board (MMC3) gets that
+    /// board's IRQ timing from the fetches alone.
     const fn land_held_copy(&mut self) {
         if self.copy_v_delay == COPY_V_HELD {
             self.copy_v_delay = 0;

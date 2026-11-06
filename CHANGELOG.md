@@ -65,7 +65,9 @@ cycle-accurate core later replaced.
   it, and the session ran with it. Power-on and branch recordings (desktop
   and browser) and every netplay host, join, spectate and browser-lobby
   connect now apply the configured options first (CodeRabbit and Antigravity
-  on #640). A branch from a playing movie keeps that movie's options.
+  on #640). A branch from a playing movie keeps that movie's options. A
+  movie played from pause now gives back the configured setting when it
+  stops, not the last frame's.
 
 ### Withdrawn
 

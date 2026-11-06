@@ -3392,6 +3392,10 @@ impl App {
         // must not reach the `.sav` (`EmuCore::start_sandboxed_session`).
         let mut seek_error = None;
         let began = guard.start_sandboxed_session(|emu| {
+            // Review round 9 on #640: the player's options are captured
+            // below and put back when playback stops, so take the
+            // configured ones, as every other paused capture does.
+            emu.sync_idle_player_options();
             let Some(nes) = emu.nes.as_mut() else {
                 return false;
             };
@@ -3585,6 +3589,8 @@ impl App {
             // v2.9.0 — see `EmuCore::start_sandboxed_session`.
             let mut seek_error = None;
             let began = guard.start_sandboxed_session(|emu| {
+                // Review round 9 on #640: see `handle_movie_play_toggle`.
+                emu.sync_idle_player_options();
                 let Some(nes) = emu.nes.as_mut() else {
                     return false;
                 };
@@ -4588,6 +4594,8 @@ impl App {
         };
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
+        // Review round 9 on #640: see `handle_movie_play_toggle`.
+        emu.sync_idle_player_options();
         let Some(nes) = emu.nes.as_mut() else {
             crate::wasm_io::log("movie play: no ROM loaded");
             return;
