@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.6.2] - 2026-11-06 - "Latchkey" (the latest AccuracyCoin, 147 of 147, and Rad Racer's ground flicker fixed)
+
 ### Breaking
 
 - **Emulation epoch 10**: movies recorded on v3.6.1 (epoch 9) and v3.6.1
@@ -36,7 +38,7 @@ cycle-accurate core later replaced.
 
 - **Rad Racer's flicker in the sand right of the road.** On about one race
   frame in eleven, an 8-pixel dash of sky colour appeared in the ground to the
-  right of the road, a third of the way down the screen. The game splits its
+  right of the road, just below the middle of the screen. The game splits its
   road with a mid-scanline `$2006` write; on those frames its sprite-0 wait
   ended one loop early, so the PPU's address update landed in the middle of
   an attribute fetch, which then read a mixed address and the sky's palette.
