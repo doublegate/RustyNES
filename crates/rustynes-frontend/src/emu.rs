@@ -1671,25 +1671,55 @@ impl EmuCore {
 
     /// v3.6.2 (`CodeRabbit` on #640) — ready the console for a power-on
     /// recording: end any playback, which puts back the options the player had
-    /// when it began, then apply the options configured NOW (the CPU
-    /// overclock, the sprite limit, the per-game corrections). Without the
-    /// second step those reach the console only at the top of the next frame
-    /// produced, so a setting changed while paused and a recording started
-    /// before another frame ran recorded (and replayed) the previous one.
+    /// when it began, then apply the options configured NOW
+    /// ([`Self::sync_idle_player_options`]). Without the second step those
+    /// reach the console only at the top of the next frame produced, so a
+    /// setting changed while paused and a recording started before another
+    /// frame ran recorded (and replayed) the previous one.
     /// [`MovieUi::start_recording_power_on`](crate::movie_ui::MovieUi::start_recording_power_on)
-    /// then captures what the console runs with. A branch recording does not
-    /// call this: it continues the machine as it is (v2.9.8).
+    /// then captures what the console runs with.
     pub fn prepare_power_on_recording(&mut self) {
         let Some(nes) = self.nes.as_mut() else {
             return;
         };
         self.movie.stop_playback(Some(nes));
+        self.sync_idle_player_options();
+    }
+
+    /// v3.6.2 (Antigravity on #640, round 6) — apply the player's configured
+    /// options (the CPU overclock, the sprite limit, the per-game corrections)
+    /// to the console now, as the top of every idle frame does, so a capture
+    /// taken before the next frame (a branch recording, a netplay handshake's
+    /// [`SessionIdentity`](rustynes_netplay::SessionIdentity)) sees what the
+    /// player configured rather than the previous setting. Only while no movie
+    /// is recording or playing: a playing movie holds the console to its own
+    /// options, and a recording keeps the options it began with, exactly as
+    /// the per-frame sync behaves. With no single console loaded it does
+    /// nothing.
+    pub fn sync_idle_player_options(&mut self) {
+        if self.movie.mode() != crate::movie_ui::MovieMode::Idle {
+            return;
+        }
+        let Some(nes) = self.nes.as_mut() else {
+            return;
+        };
         apply_player_options(
             nes,
             self.cpu_overclock,
             self.disable_sprite_limit,
             self.game_correction_default && !self.disable_game_corrections,
         );
+    }
+
+    /// v3.6.2 (Antigravity on #640, round 6) — the netplay handshake identity
+    /// of the loaded console, taken after [`Self::sync_idle_player_options`]:
+    /// the identity hashes the console's options, and netplay drives the core
+    /// around [`Self::produce_one_frame`], so without the sync a setting
+    /// changed while paused reached the peer (and the whole session) as the
+    /// previous one. `None` with no single console loaded.
+    pub fn netplay_identity(&mut self) -> Option<rustynes_netplay::SessionIdentity> {
+        self.sync_idle_player_options();
+        self.nes.as_ref().map(rustynes_netplay::SessionIdentity::of)
     }
 
     /// Advance the emulator by exactly one SINGLE-PLAYER frame and push the
@@ -2710,7 +2740,7 @@ pub(crate) fn drive_ra(
 /// differ, so an unchanged frame writes nothing): the CPU overclock (`cpu`,
 /// clamped to 1), the sprite limit, and the per-game coherent mid-line copy
 /// correction (`corrections`, already folded with the ROM's default). Shared
-/// by the top of every idle frame and [`EmuCore::prepare_power_on_recording`].
+/// by the top of every idle frame and [`EmuCore::sync_idle_player_options`].
 fn apply_player_options(nes: &mut Nes, cpu: u8, sprites_unlimited: bool, corrections: bool) {
     let cpu = cpu.max(1);
     if nes.cpu_overclock() != cpu {
@@ -3622,6 +3652,49 @@ mod tests {
         assert!(
             !movie.options.coherent_midline_copy,
             "the movie records it off"
+        );
+    }
+
+    /// v3.6.2, Antigravity on #640 (round 6): a branch recording and a
+    /// netplay handshake taken while paused saw the options of the last frame
+    /// produced. Idle, the sync applies the configured ones; under a playing
+    /// movie it leaves the movie's options alone.
+    #[test]
+    fn captures_while_paused_see_the_configured_options_only_when_idle() {
+        let mut core = EmuCore::new();
+        core.set_nes(Nes::from_rom(&battery_rom()).unwrap());
+        let before = core.netplay_identity().unwrap();
+        core.disable_sprite_limit = true;
+        let after = core.netplay_identity().unwrap();
+        assert!(
+            core.nes.as_ref().unwrap().sprite_limit_disabled(),
+            "the handshake syncs the option first"
+        );
+        assert_ne!(before, after, "and the identity carries it");
+        core.movie
+            .start_recording_branch(core.nes.as_mut().unwrap(), false);
+        assert!(
+            core.movie
+                .finish_recording()
+                .unwrap()
+                .options
+                .sprite_limit_disabled,
+            "a branch after the sync records the configured option"
+        );
+
+        // A playing movie keeps its own options.
+        let mut player = EmuCore::new();
+        player.set_nes(Nes::from_rom(&battery_rom()).unwrap());
+        let movie = rustynes_core::MovieRecorder::power_on(player.nes.as_ref().unwrap()).finish();
+        player
+            .movie
+            .start_playback(player.nes.as_mut().unwrap(), movie)
+            .unwrap();
+        player.disable_sprite_limit = true;
+        player.sync_idle_player_options();
+        assert!(
+            !player.nes.as_ref().unwrap().sprite_limit_disabled(),
+            "not under playback"
         );
     }
 

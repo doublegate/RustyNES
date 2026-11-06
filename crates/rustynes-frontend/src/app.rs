@@ -3435,6 +3435,9 @@ impl App {
         }
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
+        // v3.6.2 (Antigravity on #640) — from idle, the options configured
+        // now; under playback the movie's own (`sync_idle_player_options`).
+        emu.sync_idle_player_options();
         let Some(nes) = emu.nes.as_mut() else {
             eprintln!("rustynes: movie branch: no ROM loaded");
             return;
@@ -4558,6 +4561,9 @@ impl App {
         }
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
+        // v3.6.2 (Antigravity on #640) — from idle, the options configured
+        // now; under playback the movie's own (`sync_idle_player_options`).
+        emu.sync_idle_player_options();
         let Some(nes) = emu.nes.as_mut() else {
             crate::wasm_io::log("movie branch: no ROM loaded");
             return;
@@ -8016,13 +8022,7 @@ impl App {
                 host: _,
                 num_players,
             } => {
-                let Some(identity) = self
-                    .emu
-                    .lock()
-                    .nes
-                    .as_ref()
-                    .map(rustynes_netplay::SessionIdentity::of)
-                else {
+                let Some(identity) = self.emu.lock().netplay_identity() else {
                     crate::wasm_io::log("rustynes: browser netplay needs a loaded ROM first");
                     return;
                 };
@@ -8092,13 +8092,7 @@ impl App {
                 );
             }
             NetplayRequest::Host { port, num_players } => {
-                let Some(identity) = self
-                    .emu
-                    .lock()
-                    .nes
-                    .as_ref()
-                    .map(rustynes_netplay::SessionIdentity::of)
-                else {
+                let Some(identity) = self.emu.lock().netplay_identity() else {
                     return;
                 };
                 // v2.8.0 Phase 5 increment 3 — pause the emulation thread
@@ -8112,13 +8106,7 @@ impl App {
                 self.netplay.start_host(port, num_players, identity);
             }
             NetplayRequest::Join { remote } => {
-                let Some(identity) = self
-                    .emu
-                    .lock()
-                    .nes
-                    .as_ref()
-                    .map(rustynes_netplay::SessionIdentity::of)
-                else {
+                let Some(identity) = self.emu.lock().netplay_identity() else {
                     return;
                 };
                 match remote.parse::<std::net::SocketAddr>() {
@@ -8133,13 +8121,7 @@ impl App {
             // v1.7.0 H8 — read-only spectator: same ROM + emu-thread plumbing as
             // Join, but the spectator never authors input (see `start_spectate`).
             NetplayRequest::Spectate { remote } => {
-                let Some(identity) = self
-                    .emu
-                    .lock()
-                    .nes
-                    .as_ref()
-                    .map(rustynes_netplay::SessionIdentity::of)
-                else {
+                let Some(identity) = self.emu.lock().netplay_identity() else {
                     return;
                 };
                 match remote.parse::<std::net::SocketAddr>() {

@@ -1158,7 +1158,14 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   frame-top step: `EmuCore::prepare_power_on_recording` (v3.6.2) ends any
   playback and applies the configured overclock, sprite limit and
   corrections before `MovieUi::start_recording_power_on` captures the
-  options, so a setting changed while paused is the one recorded. A Vs. DualSystem cabinet never gets a correction. The **Accuracy** group above it carries OAM decay and,
+  options, so a setting changed while paused is the one recorded. The other
+  captures taken outside `produce_one_frame` do the same through
+  `EmuCore::sync_idle_player_options`: a branch recording (desktop and the
+  winit browser build; the lightweight canvas build has no player options to
+  sync) and every netplay handshake, whose identity comes from
+  `EmuCore::netplay_identity`. The sync applies only while no movie is
+  recording or playing, as the frame-top step does, so a branch from a playing
+  movie keeps that movie's options. A Vs. DualSystem cabinet never gets a correction. The **Accuracy** group above it carries OAM decay and,
   from v2.9.8, **Famicom console (PPU leaves reset early)** —
   `[emulation] famicom_console` (default `false`, the NES model, byte-identical).
   `console_model_for` maps it to `rustynes_core::ConsoleModel`;
