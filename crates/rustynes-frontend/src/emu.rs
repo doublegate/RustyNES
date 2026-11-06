@@ -1669,6 +1669,29 @@ impl EmuCore {
         }
     }
 
+    /// v3.6.2 (`CodeRabbit` on #640) — ready the console for a power-on
+    /// recording: end any playback, which puts back the options the player had
+    /// when it began, then apply the options configured NOW (the CPU
+    /// overclock, the sprite limit, the per-game corrections). Without the
+    /// second step those reach the console only at the top of the next frame
+    /// produced, so a setting changed while paused and a recording started
+    /// before another frame ran recorded (and replayed) the previous one.
+    /// [`MovieUi::start_recording_power_on`](crate::movie_ui::MovieUi::start_recording_power_on)
+    /// then captures what the console runs with. A branch recording does not
+    /// call this: it continues the machine as it is (v2.9.8).
+    pub fn prepare_power_on_recording(&mut self) {
+        let Some(nes) = self.nes.as_mut() else {
+            return;
+        };
+        self.movie.stop_playback(Some(nes));
+        apply_player_options(
+            nes,
+            self.cpu_overclock,
+            self.disable_sprite_limit,
+            self.game_correction_default && !self.disable_game_corrections,
+        );
+    }
+
     /// Advance the emulator by exactly one SINGLE-PLAYER frame and push the
     /// produced audio into the sink. Caller is responsible for the
     /// wall-clock schedule and for routing netplay AROUND this method.
@@ -1772,17 +1795,12 @@ impl EmuCore {
         // recording captures what the console runs with when it starts, and a
         // playing movie holds the console to its own options every frame.
         if self.movie.mode() == crate::movie_ui::MovieMode::Idle {
-            let want = self.cpu_overclock.max(1);
-            if nes.cpu_overclock() != want {
-                nes.set_cpu_overclock(want);
-            }
-            if nes.sprite_limit_disabled() != self.disable_sprite_limit {
-                nes.set_sprite_limit_disabled(self.disable_sprite_limit);
-            }
-            let want = self.game_correction_default && !self.disable_game_corrections;
-            if nes.coherent_midline_copy() != want {
-                nes.set_coherent_midline_copy(want);
-            }
+            apply_player_options(
+                nes,
+                self.cpu_overclock,
+                self.disable_sprite_limit,
+                self.game_correction_default && !self.disable_game_corrections,
+            );
         }
         // v2.7.0 — RetroAchievements hardcore mode disables rewind. `App`
         // folds it into `inputs.rewind_held`; v3.4.0 refuses it here as well,
@@ -2688,6 +2706,24 @@ pub(crate) fn drive_ra(
     crate::debugger::CheevosStatusView::from_session(ra)
 }
 
+/// Apply the player's configured console options to `nes` (only those that
+/// differ, so an unchanged frame writes nothing): the CPU overclock (`cpu`,
+/// clamped to 1), the sprite limit, and the per-game coherent mid-line copy
+/// correction (`corrections`, already folded with the ROM's default). Shared
+/// by the top of every idle frame and [`EmuCore::prepare_power_on_recording`].
+fn apply_player_options(nes: &mut Nes, cpu: u8, sprites_unlimited: bool, corrections: bool) {
+    let cpu = cpu.max(1);
+    if nes.cpu_overclock() != cpu {
+        nes.set_cpu_overclock(cpu);
+    }
+    if nes.sprite_limit_disabled() != sprites_unlimited {
+        nes.set_sprite_limit_disabled(sprites_unlimited);
+    }
+    if nes.coherent_midline_copy() != corrections {
+        nes.set_coherent_midline_copy(corrections);
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::suboptimal_flops)] // readability over FMA in assertions.
 mod tests {
@@ -3558,6 +3594,35 @@ mod tests {
         v.extend_from_slice(&prg);
         v.extend(core::iter::repeat_n(0u8, 0x2000));
         v
+    }
+
+    /// v3.6.2, `CodeRabbit` on #640 (round 5): a setting changed while paused
+    /// reaches the console only at the top of the next frame produced, so a
+    /// power-on recording started before that frame captured the previous
+    /// one. `prepare_power_on_recording` applies the configured options
+    /// first; the recording then captures them.
+    #[test]
+    fn a_power_on_recording_captures_the_options_configured_now() {
+        let mut core = EmuCore::new();
+        core.set_nes(Nes::from_rom(&battery_rom()).unwrap());
+        // As for a dump the correction is on by default for.
+        core.game_correction_default = true;
+        core.nes.as_mut().unwrap().set_coherent_midline_copy(true);
+        // Changed in Settings while paused: no frame has run since.
+        core.disable_game_corrections = true;
+        core.disable_sprite_limit = true;
+        core.cpu_overclock = 2;
+        core.prepare_power_on_recording();
+        let nes = core.nes.as_mut().unwrap();
+        assert!(!nes.coherent_midline_copy(), "the corrections turned off");
+        assert!(nes.sprite_limit_disabled(), "the sprite limit removed");
+        assert_eq!(nes.cpu_overclock(), 2, "the overclock applied");
+        core.movie.start_recording_power_on(nes, false);
+        let movie = core.movie.finish_recording().unwrap();
+        assert!(
+            !movie.options.coherent_midline_copy,
+            "the movie records it off"
+        );
     }
 
     /// Copilot on #561: starting a power-on movie cleared the live save RAM,

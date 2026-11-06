@@ -1154,7 +1154,11 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   outside a movie session holds the console at that value unless the setting
   is ticked, so ticking and unticking it mid-game works. Movies record it
   (`HardwareOptions`, `.rnm` format 8) and netplay peers must match (the
-  configuration digest). A Vs. DualSystem cabinet never gets a correction. The **Accuracy** group above it carries OAM decay and,
+  configuration digest). A power-on recording does not wait for that
+  frame-top step: `EmuCore::prepare_power_on_recording` (v3.6.2) ends any
+  playback and applies the configured overclock, sprite limit and
+  corrections before `MovieUi::start_recording_power_on` captures the
+  options, so a setting changed while paused is the one recorded. A Vs. DualSystem cabinet never gets a correction. The **Accuracy** group above it carries OAM decay and,
   from v2.9.8, **Famicom console (PPU leaves reset early)** —
   `[emulation] famicom_console` (default `false`, the NES model, byte-identical).
   `console_model_for` maps it to `rustynes_core::ConsoleModel`;

@@ -57,6 +57,13 @@ cycle-accurate core later replaced.
   `rustynes_game_corrections`. Measured over two scripted races (frames
   700-1499): the line-139 dash on 73 and 68 frames without it, 0 with it.
   Movies and netplay record it.
+- **A power-on movie recorded the previous setting of an option changed while
+  paused.** The CPU overclock, the sprite limit (both since v3.1.0) and the
+  per-game corrections reached the console only at the top of the next frame
+  produced, so a recording started before that frame captured, and replayed,
+  the old value. The desktop and browser builds now apply the configured
+  options before the recording captures them (CodeRabbit on #640). A branch
+  recording still continues the machine as it is.
 
 ### Withdrawn
 

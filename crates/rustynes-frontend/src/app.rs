@@ -3308,6 +3308,9 @@ impl App {
             // v2.9.0 — the recording starts from cleared save RAM, which must
             // not reach the `.sav` (`EmuCore::start_sandboxed_session`).
             guard.start_sandboxed_session(|emu| {
+                // v3.6.2 — the options configured now, not the ones the last
+                // produced frame applied (`EmuCore::prepare_power_on_recording`).
+                emu.prepare_power_on_recording();
                 let Some(nes) = emu.nes.as_mut() else {
                     return false;
                 };
@@ -4491,6 +4494,9 @@ impl App {
                 crate::wasm_io::log("leave netplay before recording a movie");
                 return;
             }
+            // v3.6.2 — the options configured now, not the ones the last
+            // produced frame applied (`EmuCore::prepare_power_on_recording`).
+            emu.prepare_power_on_recording();
             let Some(nes) = emu.nes.as_mut() else {
                 crate::wasm_io::log("movie record: no ROM loaded");
                 return;

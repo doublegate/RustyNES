@@ -141,8 +141,9 @@ AUD-17; `no_serialize_reallocates_the_buffer_sized_at_load`).
 **The options record (v3.6.0, `T-LIBRETRO-EMU-OPTIONS`).** The last 16 bytes
 of every state the core writes record the options that change what the
 console does: `RNLROPTS`, a layout version (1), a flags byte (bit 0 Four
-Score, bit 1 sprite limit removed), the CPU overclock (1-4), the Vs. DIP
-switches forced and their positions, three zero bytes
+Score, bit 1 sprite limit removed, bit 2 per-game corrections off), the CPU
+overclock (1-4), the Vs. DIP switches forced and their positions, three zero
+bytes
 (`options::OptionValues::trailer`). `retro_serialize_size` includes them. The
 desktop records the same options in a movie's header and a netplay
 handshake (`HardwareOptions`, `config_digest`); a libretro frontend replays a

@@ -288,16 +288,16 @@ pub mod octal_trace {
 /// bus trace so the countdown lands on that read after exactly one `inc_hori_v`
 /// and one phase-0 NT ALE (which loads the one-tile-ahead `$19` low byte). See
 /// the v2.0.3 campaign plan.
-const COPY_V_DELAY: u8 = 4;
+pub const COPY_V_DELAY: u8 = 4;
 
 /// v3.6.2 (`T-RADRACER-COHERENT-COPY`) — the `copy_v_delay` value of a copy
 /// that the per-game coherent mid-line copy correction is HOLDING: its
 /// countdown ended inside an 8-dot background fetch group, and it lands at the
-/// next group boundary instead (see [`Ppu::coherent_midline_copy`]). A value
+/// end of that group instead (see [`Ppu::coherent_midline_copy`]). A value
 /// the countdown never takes (it starts at [`COPY_V_DELAY`] and counts down),
 /// so no snapshot field is added: a held copy is saved and restored as this
 /// byte.
-const COPY_V_HELD: u8 = 0xFF;
+pub const COPY_V_HELD: u8 = 0xFF;
 
 /// v2.1.4 F2.3 — optional OAM decay threshold, in **CPU cycles**.
 ///
@@ -610,7 +610,7 @@ pub struct Ppu {
     /// reconstruction. 0 = inactive. With the per-game coherent mid-line copy
     /// correction on (`coherent_midline_copy`), [`COPY_V_HELD`] marks a copy
     /// that reached its landing dot inside a fetch group and is held to the
-    /// next group boundary.
+    /// end of that group.
     pub(crate) copy_v_delay: u8,
 
     // === Internal scroll/address registers (loopy v/t/x/w) ===
@@ -1160,10 +1160,12 @@ pub struct Ppu {
     /// noticable glitch" on the right at that line on a console.
     ///
     /// With this on, a copy whose countdown ends inside a fetch group on a
-    /// rendered line is held ([`COPY_V_HELD`]) to the next group boundary and
-    /// lands there with the one coarse-X increment the group made, so every
-    /// tile is fetched from one address and everything after the boundary is
-    /// exactly what the unheld copy produces. Configuration, carried across a
+    /// rendered line is held ([`COPY_V_HELD`]) to the end of that group: it
+    /// lands at the group's coarse-X increment (its last dot, after its last
+    /// fetch), and the increment applies to it, so every tile is fetched from
+    /// one address and everything after the group is exactly what the unheld
+    /// copy produces. If the group stops fetching first, it lands plain on the
+    /// first dot outside it. Configuration, carried across a
     /// power cycle by [`Self::adopt_settings_from`] and in movies / netplay by
     /// the core's `HardwareOptions`; not a snapshot field.
     pub(crate) coherent_midline_copy: bool,
@@ -1853,9 +1855,9 @@ impl Ppu {
     /// Whether a background fetch group is in progress on this dot: a
     /// rendered line, rendering on, and a dot inside a group of dots 1-248
     /// other than its first (phase 0). The coherent copy correction holds a
-    /// copy only here, so the group boundary it waits for (dot 9-249) is
-    /// always in the same fetch run and crosses exactly one coarse-X
-    /// increment, never the dot-256 vertical one or the dot-257 copy.
+    /// copy only here, so the increment it waits for (dots 8-248) is always
+    /// in the same fetch run and is a coarse-X one, never the dot-256
+    /// vertical increment or the dot-257 copy.
     fn inside_fetch_group(&self) -> bool {
         let render_line = (self.scanline >= 0 && self.scanline <= self.region.last_visible_line())
             || self.scanline == self.region.prerender_line();
@@ -1863,6 +1865,22 @@ impl Ppu {
             && self.mask.rendering_enabled()
             && (2..=248).contains(&self.dot)
             && (self.dot.wrapping_sub(1) & 7) != 0
+    }
+
+    /// v3.6.2 — land a copy the coherent mid-line copy correction held
+    /// (`copy_v_delay == COPY_V_HELD`), at the fetch group's phase-7 step,
+    /// just before its coarse-X increment: `v = t`, and the increment that
+    /// follows applies to it, exactly as it applies to a copy that landed
+    /// unheld earlier in the group. Called from the background fetch
+    /// pipeline only, so it runs under the same gate as the increment (the
+    /// rendering bit as the fetch sees it, one dot late) and never on a dot
+    /// that fetches nothing. The fast render path needs no call: its guard
+    /// requires `copy_v_delay == 0`.
+    const fn land_held_copy(&mut self) {
+        if self.copy_v_delay == COPY_V_HELD {
+            self.copy_v_delay = 0;
+            self.v = self.t;
+        }
     }
 
     /// v3.1.0 — how many sprites beyond the eighth are fetched for the next
@@ -3884,19 +3902,21 @@ impl Ppu {
         // read below yields `(v & 0x3F00) | octal_latch = $2F19` naturally.
         if self.copy_v_delay == COPY_V_HELD {
             // v3.6.2 coherent mid-line copy (per-game correction, see the
-            // field): a held copy lands on the next group's first dot, before
-            // that group's nametable ALE, with the coarse-X increment the
-            // group it waited through applied to `t`, which is what `v` holds
-            // at this dot when the copy lands unheld. If rendering went off or
-            // the run ended while it waited, it lands plain.
-            let phase = self.dot.wrapping_sub(1) & 7;
-            let phase0 = phase == 0;
-            if phase0 || !self.inside_fetch_group() {
+            // field): a held copy normally lands at its group's coarse-X
+            // increment, in the fetch pipeline's phase-7 step (see
+            // `land_held_copy`), after that group's last fetch and before the
+            // increment, so `v` then holds what the unheld copy gives. If the
+            // group's fetching stopped before that step (rendering went off,
+            // or the run ended), it lands here, plain, on the first dot
+            // outside a group: the increment it skipped did not run for the
+            // unheld copy either, because the increment shares the fetch's
+            // gate. (Until review round 5 on #640 it landed at the next
+            // phase 0 and applied the increment itself under the LIVE
+            // rendering bit, which the fetch's one-dot-delayed gate can
+            // disagree with at a `$2001` toggle.)
+            if !self.inside_fetch_group() {
                 self.copy_v_delay = 0;
                 self.v = self.t;
-                if phase0 && (9..=249).contains(&self.dot) && self.mask.rendering_enabled() {
-                    self.inc_hori_v();
-                }
                 self.address_bus = self.v;
                 self.observe_a12(bus);
             }
@@ -4390,6 +4410,7 @@ impl Ppu {
                 }
                 self.observe_bg_a12_lead(bus, phase);
                 if phase == 7 {
+                    self.land_held_copy();
                     self.inc_hori_v();
                     // Pre-fetch region only (dots 328 and 336): explicit
                     // `<<= 8` to substitute for the missing per-cycle
@@ -7296,9 +7317,9 @@ mod tests {
     /// v3.6.2 (`T-RADRACER-COHERENT-COPY`) — with the per-game correction on,
     /// a copy due inside a fetch group (dot 194, the group's nametable READ:
     /// *Rad Racer*'s line-139 case) is held, so that group's whole tile is
-    /// fetched from the old `v`, and it lands on the next group's first dot
-    /// with the group's coarse-X increment applied: from there on `v` is what
-    /// the unheld copy gives.
+    /// fetched from the old `v`, and it lands at the group's coarse-X
+    /// increment (dot 200, after the group's last fetch) with the increment
+    /// applied to it: from there on `v` is what the unheld copy gives.
     #[test]
     fn the_coherent_copy_holds_a_mid_group_copy_to_the_boundary() {
         let (mut on, mut bo) = ppu_with_copy_due_at(194, 0x2EF9, 0x2300, true);
@@ -7309,19 +7330,58 @@ mod tests {
         assert_eq!(on.v, 0x2EF9, "the held copy left v alone");
         assert_eq!(off.copy_v_delay, 0, "the hardware lands it at once");
         assert_eq!(off.v, 0x2300, "the hardware copied t into v mid-group");
-        // Through the rest of the group (dots 195-200; the coarse-X
-        // increment runs at 200), still held.
-        while on.dot != 200 {
+        // Through the group's remaining fetch dots (195-199), still held.
+        while on.dot != 199 {
             on.tick(&mut bo);
             off.tick(&mut bf);
             assert_eq!(on.copy_v_delay, COPY_V_HELD, "still held at dot {}", on.dot);
         }
-        // The tick into dot 201, the next group's first dot, lands it.
+        // The tick into dot 200 runs the group's last fetch and then its
+        // coarse-X increment, and the held copy lands between the two.
         on.tick(&mut bo);
         off.tick(&mut bf);
-        assert_eq!(on.copy_v_delay, 0, "landed on the group boundary");
+        assert_eq!(on.copy_v_delay, 0, "landed at the group's increment");
         assert_eq!(on.v, 0x2301, "t plus the group's coarse-X increment");
-        assert_eq!(on.v, off.v, "after the boundary both agree");
+        assert_eq!(on.v, off.v, "after the group both agree");
+    }
+
+    /// v3.6.2, review round 5 on #640 — a `$2001` toggle near the end of a
+    /// group with a held copy. The fetch pipeline (and its coarse-X
+    /// increment) sees the rendering bit one dot late, while the hold looks
+    /// at the live bit, so a landing that applied the increment itself could
+    /// disagree with the hardware path at the toggle. For every dot from the
+    /// copy's landing to past the next group, rendering is switched off (and,
+    /// separately, off and straight back on) at that dot on two PPUs, one with
+    /// the correction and one without, and from the end of the group on both
+    /// must hold the same `v` on every dot to the end of the fetch run.
+    #[test]
+    fn a_held_copy_and_an_unheld_one_agree_across_a_rendering_toggle() {
+        for toggle_dot in 194..=210u16 {
+            for re_enable in [false, true] {
+                let (mut on, mut bo) = ppu_with_copy_due_at(194, 0x2EF9, 0x2300, true);
+                let (mut off, mut bf) = ppu_with_copy_due_at(194, 0x2EF9, 0x2300, false);
+                while on.dot != 256 {
+                    if on.dot == toggle_dot {
+                        on.cpu_write_register(1, 0x00, &mut bo);
+                        off.cpu_write_register(1, 0x00, &mut bf);
+                    }
+                    if re_enable && on.dot == toggle_dot + 1 {
+                        on.cpu_write_register(1, 0x0A, &mut bo);
+                        off.cpu_write_register(1, 0x0A, &mut bf);
+                    }
+                    on.tick(&mut bo);
+                    off.tick(&mut bf);
+                    if on.dot > 200 {
+                        assert_eq!(
+                            on.v, off.v,
+                            "toggle at dot {toggle_dot} (re-enable {re_enable}): v differs at dot {}",
+                            on.dot
+                        );
+                    }
+                }
+                assert_ne!(on.copy_v_delay, COPY_V_HELD, "never left held");
+            }
+        }
     }
 
     /// The correction holds nothing at a group's first dot (the copy lands

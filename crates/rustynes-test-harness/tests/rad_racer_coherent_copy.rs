@@ -46,10 +46,12 @@ const fn buttons_at(f: u64) -> Buttons {
 /// exactly 8 pixels wide starting on an 8-pixel boundary, with sand on both
 /// sides. The shape matters: roadside post sprites cross line 139 too (2-3
 /// pixels of black and white, moving a few pixels a frame), and a looser
-/// "any isolated run" counter flagged ten such frames in this race. The sand's index is the mode of a strip right of the
-/// road below the horizon, which is sand on every driving frame.
+/// "any isolated run" counter flagged ten such frames in this race. The sand's
+/// index is the mode of a strip right of the road below the horizon, which is
+/// sand on every driving frame (a `BTreeMap`, so a tie breaks the same way on
+/// every run).
 fn line_139_has_a_dash(idx: &[u16]) -> bool {
-    let mut counts = std::collections::HashMap::<u16, usize>::new();
+    let mut counts = std::collections::BTreeMap::<u16, usize>::new();
     for y in 125..150 {
         for x in 236..256 {
             *counts.entry(idx[y * 256 + x]).or_default() += 1;
