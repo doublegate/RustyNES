@@ -26,26 +26,47 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
-## [3.6.2] - 2026-11-06 - "Latchkey" (the latest AccuracyCoin, 147 of 147, and Rad Racer's ground flicker fixed)
+## [3.6.2] - 2026-11-06 - "Latchkey" (the latest AccuracyCoin, 147 of 147, and Rad Racer's stray tiles corrected)
 
 ### Breaking
 
 - **Emulation epoch 10**: movies recorded on v3.6.1 (epoch 9) and v3.6.1
   netplay peers are refused, each with a message naming both epochs, because
-  the *Rad Racer* fix below changes frames from the same inputs.
+  the *Rad Racer* correction below changes that game's frames from the same
+  inputs.
+- **Movie format 8**: the `HardwareOptions` record gains the per-game
+  correction flag. Format-7 movies are refused as too old; every one was
+  recorded under epoch 9 or earlier, which epoch 10 refuses anyway.
 
 ### Fixed
 
-- **Rad Racer's flicker in the sand right of the road.** On about one race
-  frame in eleven, an 8-pixel dash of sky colour appeared in the ground to the
-  right of the road, just below the middle of the screen. The game splits its
-  road with a mid-scanline `$2006` write; on those frames its sprite-0 wait
-  ended one loop early, so the PPU's address update landed in the middle of
-  an attribute fetch, which then read a mixed address and the sky's palette.
-  An attribute fetch now reads the address it started with; the nametable
-  fetch keeps the mixed address AccuracyCoin tests (ADR 0030 amendment). 0 of
-  2,000 race frames show the dash (69 of 800 before); Mesen, run on the same
-  inputs, shows none either. Not hardware-verified.
+- **Rad Racer's stray tiles at the right of the road and the horizon.** The
+  game writes `$2006` in the middle of scanlines from sprite-0-timed loops
+  whose timing varies by a few dots. When the PPU's delayed address copy
+  lands inside an 8-dot tile fetch, that tile is fetched from two addresses.
+  On about one race frame in eleven that draws a wrong 8-pixel tile in the
+  sand right of the road (line 139), and on most frames a wrong tile at the
+  right of the horizon band where the ground meets it (lines 107-139). A real
+  NES draws these too: a 2012 nesdev report describes "a very noticable
+  glitch" on the right at that line on a console. A **per-game correction**
+  (ADR 0051), on by default for Rad Racer's three dumps only, holds such a
+  copy to the next tile boundary so every tile comes from one address. It is
+  a deliberate departure from hardware. Turn it off with Settings >
+  Enhancements > "Turn off per-game picture corrections" (`[enhancements]
+  disable_game_corrections`), or the libretro core option
+  `rustynes_game_corrections`. Measured over two scripted races (frames
+  700-1499): the line-139 dash on 73 and 68 frames without it, 0 with it.
+  Movies and netplay record it.
+
+### Withdrawn
+
+- **The attribute-read rule this release first carried.** It gave an
+  attribute fetch the address its own first half drove, to remove the same
+  dash. The diagnosis was wrong: the dash comes from the NAMETABLE read's
+  mixed address. With the rule the dash was still drawn on 68 to 73 of 800
+  frames, only grey instead of sky-coloured, because the first measurement
+  counted sky-coloured pixels only. The rule is withdrawn in both cores (ADR
+  0030, "Withdrawal — 2026-11-06"); every game's PPU behaves as in v3.6.1.
 
 ### Changed
 
