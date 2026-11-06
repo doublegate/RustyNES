@@ -2248,6 +2248,7 @@ impl App {
             emu.overclock_scanlines = self.config.enhancements.overclock_scanlines;
             emu.cpu_overclock = self.config.enhancements.cpu_overclock;
             emu.disable_sprite_limit = self.config.enhancements.disable_sprite_limit;
+            emu.disable_game_corrections = self.config.enhancements.disable_game_corrections;
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(raw) = raw_cheats {
                 emu.raw_cheats = raw;
@@ -7214,12 +7215,14 @@ impl App {
         let lines = self.config.enhancements.overclock_scanlines;
         let cpu = self.config.enhancements.cpu_overclock;
         let sprites = self.config.enhancements.disable_sprite_limit;
+        let corrections_off = self.config.enhancements.disable_game_corrections;
         let mut emu = self.emu.lock();
         emu.overclock_scanlines = lines;
         // v3.1.0 — the CPU-multiplier overclock and the sprite-limit option
         // ride the same push.
         emu.cpu_overclock = cpu;
         emu.disable_sprite_limit = sprites;
+        emu.disable_game_corrections = corrections_off;
     }
 
     /// v2.1.7 P5 — push the opt-in PPU hardware-revision + power-on knobs from
@@ -10191,6 +10194,7 @@ impl App {
             emu.overclock_scanlines = self.config.enhancements.overclock_scanlines;
             emu.cpu_overclock = self.config.enhancements.cpu_overclock;
             emu.disable_sprite_limit = self.config.enhancements.disable_sprite_limit;
+            emu.disable_game_corrections = self.config.enhancements.disable_game_corrections;
             // Capture the cartridge's nominal frame duration — consults the
             // cartridge region (NTSC: ~16.64 ms, PAL/Dendy: ~20 ms).
             emu.frame_duration = nes.frame_duration();

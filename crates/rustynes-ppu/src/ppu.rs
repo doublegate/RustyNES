@@ -290,6 +290,15 @@ pub mod octal_trace {
 /// the v2.0.3 campaign plan.
 const COPY_V_DELAY: u8 = 4;
 
+/// v3.6.2 (`T-RADRACER-COHERENT-COPY`) — the `copy_v_delay` value of a copy
+/// that the per-game coherent mid-line copy correction is HOLDING: its
+/// countdown ended inside an 8-dot background fetch group, and it lands at the
+/// next group boundary instead (see [`Ppu::coherent_midline_copy`]). A value
+/// the countdown never takes (it starts at [`COPY_V_DELAY`] and counts down),
+/// so no snapshot field is added: a held copy is saved and restored as this
+/// byte.
+const COPY_V_HELD: u8 = 0xFF;
+
 /// v2.1.4 F2.3 — optional OAM decay threshold, in **CPU cycles**.
 ///
 /// Provenance: the OAM-decay model (this constant, the per-row timestamps, the
@@ -598,9 +607,10 @@ pub struct Ppu {
     /// the latch NATURALLY holds the one-tile-ahead low byte (`$19`), and the
     /// nametable read's splice of the live `v`'s high bits with that latch
     /// (`ale_splice`) yields the hybrid address (`$2F19`) with no `+1 coarse-X`
-    /// reconstruction. The landing sets `v = t` only; since v3.6.2 it no longer
-    /// writes `address_bus`, which keeps the address the current fetch's ALE
-    /// drove for the attribute read (`fetch_at`). 0 = inactive.
+    /// reconstruction. 0 = inactive. With the per-game coherent mid-line copy
+    /// correction on (`coherent_midline_copy`), [`COPY_V_HELD`] marks a copy
+    /// that reached its landing dot inside a fetch group and is held to the
+    /// next group boundary.
     pub(crate) copy_v_delay: u8,
 
     // === Internal scroll/address registers (loopy v/t/x/w) ===
@@ -1132,6 +1142,31 @@ pub struct Ppu {
     /// [`Self::adopt_settings_from`] and in movies / netplay by the core's
     /// `HardwareOptions`.
     pub(crate) sprite_limit_disabled: bool,
+    /// v3.6.2 (`T-RADRACER-COHERENT-COPY`) — the per-game coherent mid-line
+    /// copy correction. **A deliberate departure from hardware**, off by
+    /// default and turned on by the core for *Rad Racer* only (by ROM CRC).
+    ///
+    /// On a real 2C02 a `$2006` second write during rendering copies `t` into
+    /// `v` a few dots later ([`COPY_V_DELAY`]), wherever that falls. When it
+    /// falls INSIDE an 8-dot background fetch group, that group's tile is
+    /// fetched from two addresses: a nametable read between its two halves
+    /// takes the "Hybrid Addresses" splice `AccuracyCoin` tests, and a pattern
+    /// read after the copy takes the new fine Y under the old tile number.
+    /// *Rad Racer* writes `$2006` mid-scanline on several lines, and its
+    /// sprite-0-timed loops land those copies a few dots apart from frame to
+    /// frame, so on about one frame in eleven an 8-pixel tile right of the
+    /// road (line 139) and one at the horizon (line 114) is drawn wrong. A
+    /// real NES draws them too: a 2012 nesdev report describes a "very
+    /// noticable glitch" on the right at that line on a console.
+    ///
+    /// With this on, a copy whose countdown ends inside a fetch group on a
+    /// rendered line is held ([`COPY_V_HELD`]) to the next group boundary and
+    /// lands there with the one coarse-X increment the group made, so every
+    /// tile is fetched from one address and everything after the boundary is
+    /// exactly what the unheld copy produces. Configuration, carried across a
+    /// power cycle by [`Self::adopt_settings_from`] and in movies / netplay by
+    /// the core's `HardwareOptions`; not a snapshot field.
+    pub(crate) coherent_midline_copy: bool,
     /// v3.1.0 — the extra sprites fetched for the next scanline (snapshot v13):
     /// how many, and for each the h-flip-applied pattern bytes, attributes and
     /// X. Always 0 while `sprite_limit_disabled` is off.
@@ -1668,6 +1703,7 @@ impl Ppu {
             frame_ntsc_phase: 0,
             extra_scanlines: 0,
             sprite_limit_disabled: false,
+            coherent_midline_copy: false,
             spr_extra_count: 0,
             spr_extra_lo: [0; MAX_EXTRA_SPRITES],
             spr_extra_hi: [0; MAX_EXTRA_SPRITES],
@@ -1797,6 +1833,38 @@ impl Ppu {
         self.sprite_limit_disabled
     }
 
+    /// v3.6.2 — turn the per-game coherent mid-line copy correction on or
+    /// off (see the field; off is the hardware). Turning it off while a copy
+    /// is held lands that copy on the next dot, as an unheld copy would have
+    /// a few dots earlier.
+    pub const fn set_coherent_midline_copy(&mut self, on: bool) {
+        self.coherent_midline_copy = on;
+        if !on && self.copy_v_delay == COPY_V_HELD {
+            self.copy_v_delay = 1;
+        }
+    }
+
+    /// v3.6.2 — whether the coherent mid-line copy correction is on.
+    #[must_use]
+    pub const fn coherent_midline_copy(&self) -> bool {
+        self.coherent_midline_copy
+    }
+
+    /// Whether a background fetch group is in progress on this dot: a
+    /// rendered line, rendering on, and a dot inside a group of dots 1-248
+    /// other than its first (phase 0). The coherent copy correction holds a
+    /// copy only here, so the group boundary it waits for (dot 9-249) is
+    /// always in the same fetch run and crosses exactly one coarse-X
+    /// increment, never the dot-256 vertical one or the dot-257 copy.
+    fn inside_fetch_group(&self) -> bool {
+        let render_line = (self.scanline >= 0 && self.scanline <= self.region.last_visible_line())
+            || self.scanline == self.region.prerender_line();
+        render_line
+            && self.mask.rendering_enabled()
+            && (2..=248).contains(&self.dot)
+            && (self.dot.wrapping_sub(1) & 7) != 0
+    }
+
     /// v3.1.0 — how many sprites beyond the eighth are fetched for the next
     /// scanline (`0` unless [`Self::sprite_limit_disabled`]).
     #[must_use]
@@ -1872,7 +1940,7 @@ impl Ppu {
     ///
     /// Carried: [`Self::custom_palette`] (the lookup table is rebuilt to
     /// honour it), [`Self::extra_scanlines`], [`Self::sprite_limit_disabled`],
-    /// [`Self::fast_dotloop`] and
+    /// [`Self::coherent_midline_copy`], [`Self::fast_dotloop`] and
     /// [`Self::oam_decay_enabled`]. The decay switch goes through
     /// [`Self::set_oam_decay`], exactly as a host enabling it on a fresh
     /// console would, so the result is what a fresh boot with the setting
@@ -1895,6 +1963,7 @@ impl Ppu {
         self.rebuild_rgba_lut();
         self.set_extra_scanlines(prev.extra_scanlines);
         self.sprite_limit_disabled = prev.sprite_limit_disabled;
+        self.coherent_midline_copy = prev.coherent_midline_copy;
         self.fast_dotloop = prev.fast_dotloop;
         self.set_oam_decay(prev.oam_decay_enabled);
     }
@@ -3264,8 +3333,7 @@ impl Ppu {
                     // way. During rendering, a `$2006` second write does NOT copy
                     // `t -> v` immediately; it stages the delayed-`CopyV` countdown
                     // (`TriCNES` `PPU_Update2006Delay`). The `v = t` happens when
-                    // the countdown lands (`Self::tick`; since v3.6.2 the landing
-                    // no longer writes `address_bus`), by which point the fetch cadence has advanced
+                    // the countdown lands (`Self::tick`), by which point the fetch cadence has advanced
                     // coarse-X and the per-group phase-0 nametable ALE has NATURALLY
                     // loaded `octal_latch` with the one-tile-ahead NT-low (`$19`),
                     // so the landing read splices `$2F00 | $19 = $2F19` with no
@@ -3810,26 +3878,49 @@ impl Ppu {
         // `Emulator.cs:1684-1704`). Ticked at the TOP of the dot, BEFORE the fetch
         // dispatch, so the new `v` is in place for THIS dot's nametable read
         // (the corrupted "Hybrid Addresses" fetch, whose splice takes the live
-        // `v`'s high bits; see the v3.6.2 note below). The phase-0 NT
+        // `v`'s high bits). The phase-0 NT
         // ALE of the corrupt group ran on the PREVIOUS dot and already loaded
         // `octal_latch` with the one-tile-ahead NT-low, so the armed splice at the
         // read below yields `(v & 0x3F00) | octal_latch = $2F19` naturally.
-        if self.copy_v_delay > 0 {
+        if self.copy_v_delay == COPY_V_HELD {
+            // v3.6.2 coherent mid-line copy (per-game correction, see the
+            // field): a held copy lands on the next group's first dot, before
+            // that group's nametable ALE, with the coarse-X increment the
+            // group it waited through applied to `t`, which is what `v` holds
+            // at this dot when the copy lands unheld. If rendering went off or
+            // the run ended while it waited, it lands plain.
+            let phase = self.dot.wrapping_sub(1) & 7;
+            let phase0 = phase == 0;
+            if phase0 || !self.inside_fetch_group() {
+                self.copy_v_delay = 0;
+                self.v = self.t;
+                if phase0 && (9..=249).contains(&self.dot) && self.mask.rendering_enabled() {
+                    self.inc_hori_v();
+                }
+                self.address_bus = self.v;
+                self.observe_a12(bus);
+            }
+        } else if self.copy_v_delay > 0 {
             self.copy_v_delay -= 1;
             if self.copy_v_delay == 0 {
-                self.v = self.t;
-                // v3.6.2: `address_bus` is NOT overwritten with the new `v`
-                // here. It holds the address the current fetch's ALE half
-                // drove, which the attribute read now uses (`fetch_at`); the
-                // nametable splice takes its high bits from the live `v`
-                // directly (`ale_splice`, since v2.3.6), so it never needed
-                // this assignment. Until v3.6.2 it was here and read by nothing.
-                // Preserve the `$2006`-write A12 edge (MMC3 timing). It is delayed
-                // by the countdown vs the flag-off immediate copy, but `$2006`
-                // writes during active render are rare and A12 during render is
-                // dominated by the dot-260 sprite fetch, so this stays inside the
-                // fetch-address-derived-timing budget (verified by the battery).
-                self.observe_a12(bus);
+                if self.coherent_midline_copy && self.inside_fetch_group() {
+                    self.copy_v_delay = COPY_V_HELD;
+                } else {
+                    self.v = self.t;
+                    // Read by nothing since v2.3.6 (the splice takes its high
+                    // bits from the live `v`); kept so the bus mirrors the
+                    // address the copy drives. v3.6.2 removed it for the
+                    // withdrawn attribute rule and restored it with the
+                    // withdrawal.
+                    self.address_bus = self.v;
+                    // Preserve the `$2006`-write A12 edge (MMC3 timing). It is
+                    // delayed by the countdown vs the flag-off immediate copy,
+                    // but `$2006` writes during active render are rare and A12
+                    // during render is dominated by the dot-260 sprite fetch,
+                    // so this stays inside the fetch-address-derived-timing
+                    // budget (verified by the battery).
+                    self.observe_a12(bus);
+                }
             }
         }
 
@@ -4733,49 +4824,24 @@ impl Ppu {
             return;
         }
         let v = self.v;
-        // v3.6.2 (ADR 0030 amendment, maintainer decision 2026-11-05) — the
-        // attribute read takes the address its own ALE half drove (phase 2,
-        // `ale_drive_at`), not one recomputed from the live `v`. The live-`v`
-        // "Hybrid Addresses" splice is kept for the NAMETABLE read, the case
-        // AccuracyCoin documents and tests; it no longer reaches the attribute
-        // read. Why: *Rad Racer* writes `$2006` mid-scanline on its road's
-        // mirroring split (line 139), and on the frames its sprite-0 poll ends
-        // one iteration early the delayed copy lands between an attribute
-        // fetch's two halves. The live-`v` splice then read `$23EE` (the old
-        // low byte under the new `v`'s high bits), palette 0, and drew an
-        // 8-pixel dash of sky colour in the sand on 69 of 800 race frames.
-        // Mesen, run as a black box on the same inputs, draws none. Whether a
-        // real 2C02 does is not settled by any source we have (a 2012 nesdev
-        // report describes a right-side glitch on that line on hardware); the
-        // narrower reading is the maintainer's call, recorded in the ADR.
-        // Coherent fetches are unchanged: with `v` steady across the group,
-        // the ALE address IS the address the read would compute. The 2-bit
-        // quadrant select below still reads the live `v`, as before.
+        // The attribute address from the live `v`, through the same
+        // live-bus splice as every other read (`ale_splice`): when a delayed
+        // `$2006` copy lands between this fetch's ALE and read halves, the
+        // read takes the new `v`'s high bits with the low byte the ALE
+        // latched, exactly as the nametable read does ("Hybrid Addresses").
         //
-        // The ALE address is used only when it IS an attribute address
-        // (`$23C0 | NT | $3F` under the `$33C0` mask): `ale_armed` is set by
-        // every ALE and cleared only by a read half, so with rendering
-        // disabled right after a pattern ALE (phase 4 / 6) and re-enabled
-        // on an attribute read dot, the armed `address_bus` is that pattern
-        // address, not this read's own ALE. Then this read had no ALE of its
-        // own and takes the pre-v3.6.2 path below (Antigravity on #640).
-        // A leftover NAMETABLE ALE on coarse rows 30-31 also passes the mask
-        // (those rows alias the attribute table). While `v`'s nametable bits
-        // are unchanged since that ALE it is harmless: its address
-        // `$2000 | (v & $0FFF)` has the same high byte as this read's
-        // `$23C0 | (v & $0C00)`, and the splice below would take the same
-        // ALE's low byte. If a `$2006` moved the nametable bits while
-        // rendering was off, this read takes the old nametable's byte where
-        // the fallback would take the new one's. Telling the two apart needs
-        // a record of which fetch armed the ALE, which is new snapshot state;
-        // not worth a save-state change for a case that needs rendering off
-        // at phase 1, a `$2006` while off, a re-enable exactly at phase 3 and
-        // coarse rows 30-31 at once (Antigravity on #640, round 4).
-        let at_addr = if self.ale_armed && (self.address_bus & 0x33C0) == 0x23C0 {
-            self.address_bus
-        } else {
-            0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07)
-        };
+        // v3.6.2 briefly gave this read the address its own ALE drove (an
+        // ADR 0030 amendment of 2026-11-05) to remove *Rad Racer*'s dash in
+        // the sand on line 139. That diagnosis was wrong: the dash comes
+        // from the NAMETABLE read's hybrid (`$23FA`, an attribute-table
+        // byte used as a tile number, drawn as backdrop), and with the rule
+        // it was still drawn on 68-73 of 800 race frames, only grey instead
+        // of sky-coloured. The maintainer withdrew the rule the same day
+        // (2026-11-06, ADR 0030's withdrawal note). *Rad Racer* is handled
+        // instead by the per-game coherent mid-line copy correction
+        // (`coherent_midline_copy`), which departs from hardware on purpose
+        // and only for that game.
+        let at_addr = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
         // v2.0.3 (ADR 0030, Option 1) — 2-cycle-ALE read half (normal AT path).
         let at_addr = self.ale_splice(at_addr);
         let byte = self.read_vram(bus, at_addr);
@@ -7158,15 +7224,17 @@ mod tests {
         (ppu, TestBus::new())
     }
 
-    /// v3.6.2 (ADR 0030 amendment) — when `v` moves between an attribute
-    /// fetch's ALE half and its read half, the read takes the address the ALE
-    /// drove, not the live-`v` hybrid. The *Rad Racer* case: the ALE drives
-    /// `$2FEE` (old `v` `$2EF8`, nametable 3), then a `$2006` copy lands
-    /// `v = $2300` (nametable 0); the hybrid would read `$23EE`. The two
-    /// bytes differ (`$AA`, palette 2 in every quadrant, against `$00`), so
-    /// the attribute latch says which address was read.
+    /// An attribute read takes the live-bus splice when `v` moves between its
+    /// ALE and read halves, exactly as the nametable read does ("Hybrid
+    /// Addresses"): the new `v`'s high bits with the low byte the ALE latched.
+    /// The *Rad Racer* case: the ALE drives `$2FEE` (old `v` `$2EF8`,
+    /// nametable 3), then a `$2006` copy lands `v = $2300` (nametable 0), and
+    /// the read takes `$23EE`. The two bytes differ (`$AA`, palette 2 in every
+    /// quadrant, against `$00`), so the attribute latch says which address was
+    /// read. v3.6.2 briefly read the ALE's own `$2FEE` here; that rule was
+    /// withdrawn (ADR 0030's note of 2026-11-06), and this test fails with it.
     #[test]
-    fn an_attribute_read_takes_the_address_its_ale_drove() {
+    fn an_attribute_read_takes_the_live_bus_hybrid() {
         let (mut p, mut b) = fresh_ppu();
         // Horizontal mirroring (TestBus): nametable 3 is CIRAM bank 1,
         // nametable 0 is bank 0.
@@ -7189,10 +7257,8 @@ mod tests {
         p.tick(&mut b);
         assert!(p.ale_armed, "the tick at dot 178 armed an ALE");
         assert_eq!(p.address_bus, 0x2FEE, "the ALE drove the old v's attribute");
-        // The delayed copy lands at the top of the read half's dot: stage it
-        // the way a `$2006` second write does, one dot from landing, so the
-        // countdown's landing is exercised too (Copilot on #640: restoring an
-        // `address_bus = v` there must fail this test).
+        // The delayed copy lands at the top of the read half's dot: staged the
+        // way a `$2006` second write stages it, one dot from landing.
         p.t = 0x2300;
         p.copy_v_delay = 1;
         p.tick(&mut b);
@@ -7200,25 +7266,85 @@ mod tests {
         assert_eq!(p.v, 0x2300, "the landing copied t into v");
         assert!(!p.ale_armed, "the tick at dot 179 was the attribute read");
         assert_eq!(
-            p.at_latch, 0x02,
-            "the attribute read took $23EE (the hybrid), not the ALE's $2FEE"
+            p.at_latch, 0x00,
+            "the attribute read took the ALE's $2FEE, not the live-bus hybrid $23EE"
         );
     }
 
-    /// v3.6.2 (Antigravity on #640) — an attribute read whose own ALE did not
-    /// run must not take a leftover ALE's address. `ale_armed` is cleared only
-    /// by a read half, so rendering disabled right after a pattern ALE and
+    /// Run a fresh PPU to scanline 10, rendering on, with `v` at `v0` and a
+    /// copy of `t` staged so that the next `tick` (which advances to `dot`
+    /// and runs the landing check there) is the one it is due on.
+    fn ppu_with_copy_due_at(dot: u16, v0: u16, t: u16, coherent: bool) -> (Ppu, TestBus) {
+        let (mut p, mut b) = fresh_ppu();
+        p.set_coherent_midline_copy(coherent);
+        let mut ticks = 0u32;
+        while !(p.scanline == 10 && p.dot == 0) {
+            p.tick(&mut b);
+            ticks += 1;
+            assert!(ticks < 2 * VBL_SWEEP_MAX_TICKS, "never reached line 10");
+        }
+        p.cpu_write_register(1, 0x0A, &mut b);
+        while p.dot != dot - 1 {
+            p.tick(&mut b);
+        }
+        p.v = v0;
+        p.t = t;
+        p.copy_v_delay = 1;
+        (p, b)
+    }
+
+    /// v3.6.2 (`T-RADRACER-COHERENT-COPY`) — with the per-game correction on,
+    /// a copy due inside a fetch group (dot 194, the group's nametable READ:
+    /// *Rad Racer*'s line-139 case) is held, so that group's whole tile is
+    /// fetched from the old `v`, and it lands on the next group's first dot
+    /// with the group's coarse-X increment applied: from there on `v` is what
+    /// the unheld copy gives.
+    #[test]
+    fn the_coherent_copy_holds_a_mid_group_copy_to_the_boundary() {
+        let (mut on, mut bo) = ppu_with_copy_due_at(194, 0x2EF9, 0x2300, true);
+        let (mut off, mut bf) = ppu_with_copy_due_at(194, 0x2EF9, 0x2300, false);
+        on.tick(&mut bo);
+        off.tick(&mut bf);
+        assert_eq!(on.copy_v_delay, COPY_V_HELD, "held inside the group");
+        assert_eq!(on.v, 0x2EF9, "the held copy left v alone");
+        assert_eq!(off.copy_v_delay, 0, "the hardware lands it at once");
+        assert_eq!(off.v, 0x2300, "the hardware copied t into v mid-group");
+        // Through the rest of the group (dots 195-200; the coarse-X
+        // increment runs at 200), still held.
+        while on.dot != 200 {
+            on.tick(&mut bo);
+            off.tick(&mut bf);
+            assert_eq!(on.copy_v_delay, COPY_V_HELD, "still held at dot {}", on.dot);
+        }
+        // The tick into dot 201, the next group's first dot, lands it.
+        on.tick(&mut bo);
+        off.tick(&mut bf);
+        assert_eq!(on.copy_v_delay, 0, "landed on the group boundary");
+        assert_eq!(on.v, 0x2301, "t plus the group's coarse-X increment");
+        assert_eq!(on.v, off.v, "after the boundary both agree");
+    }
+
+    /// The correction holds nothing at a group's first dot (the copy lands
+    /// before that group's nametable ALE, so the tile is already coherent)
+    /// and nothing at all while it is off.
+    #[test]
+    fn the_coherent_copy_lands_at_once_on_a_group_boundary() {
+        let (mut p, mut b) = ppu_with_copy_due_at(193, 0x2EF9, 0x2300, true);
+        p.tick(&mut b);
+        assert_eq!(p.copy_v_delay, 0, "landed at phase 0");
+        assert_eq!(p.v, 0x2300);
+    }
+
+    /// An attribute read never takes a leftover ALE's whole address (a
+    /// question from the review of #640). `ale_armed` is cleared only by a
+    /// read half, so rendering disabled right after a pattern ALE and
     /// re-enabled on an attribute read dot leaves the pattern address armed.
     /// Injected here at the read dot: the armed `address_bus` is a pattern
     /// address (`$0FF8`, its CHR byte `$FF`, palette 3 in every quadrant);
-    /// the read must take the pre-v3.6.2 path instead. That path still
-    /// splices: the high bits from the attribute address computed from the
-    /// live `v`, the low byte from the octal latch (`$F8`), so it reads a
-    /// nametable byte, `$23F8` here (CIRAM all zero, palette 0). That is
-    /// deliberate: it is the same live-bus model as the nametable read's
-    /// "Hybrid Addresses" splice (the latch holds whatever the last ALE
-    /// latched), and it keeps every case outside the v3.6.2 rule exactly as
-    /// it was. Only a read whose OWN attribute ALE ran takes the ALE address.
+    /// the read takes the attribute address computed from the live `v` for
+    /// its high bits and the octal latch (`$F8`) for its low byte, the same
+    /// live-bus splice as every read, so it reads `$23F8` (CIRAM all zero,
+    /// palette 0) and never the pattern table.
     #[test]
     fn an_attribute_read_ignores_an_armed_pattern_address() {
         let (mut p, mut b) = fresh_ppu();

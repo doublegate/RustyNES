@@ -35,6 +35,12 @@ test, the test is named; the tests are the spec.
   desktop applies them (`apply_console_options`), and recorded in every save
   state (see "Save States"). At their defaults nothing is written, and the
   frames equal a bare console's (`the_default_options_leave_the_output_byte_identical`).
+  v3.6.2 adds `rustynes_game_corrections` (`enabled|disabled`, default
+  `enabled`): the per-game corrections of ADR 0051, today *Rad Racer*'s
+  coherent mid-line copy, which the core turns on at load for that game's
+  dumps. `disabled` turns it off and shows the hardware's picture; back to
+  `enabled` restores what the load chose (`correction_base`). The save-state
+  options record carries it as bit 2 of its flags byte.
 * **Core options:** one table (`crates/rustynes-libretro/src/options.rs`),
   declared with `SET_CORE_OPTIONS_V2` (categories, sublabels, value labels)
   when `GET_CORE_OPTIONS_VERSION` reports 2 or more, else with

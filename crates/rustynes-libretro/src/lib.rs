@@ -487,6 +487,12 @@ pub struct RustyNesLibretro {
     /// switch (LR-03, [`apply_console_options`]).
     vs_dip_base: [u8; 2],
 
+    /// Whether the loaded single console gets the coherent mid-line copy
+    /// correction by default (what `Nes::from_rom` chose from the ROM, v3.6.2;
+    /// `false` for a cabinet), which `rustynes_game_corrections` can turn off
+    /// and back on ([`apply_console_options`]).
+    correction_base: bool,
+
     /// Whether the input descriptors currently name the Vs. panel, so
     /// unloading (or loading a non-Vs. game) sends the standard table back.
     vs_descriptors: bool,
@@ -528,6 +534,7 @@ impl Default for RustyNesLibretro {
             fds_flush_countdown: 0,
             vs_panel: VsPanel::new(),
             vs_dip_base: [0; 2],
+            correction_base: false,
             vs_descriptors: false,
             genie_cheats: BTreeMap::new(),
         }
@@ -1027,12 +1034,25 @@ fn sample_to_i16(sample: f32) -> i16 {
 /// at load ([`apply_vs_database`]; 0 for a Vs. game it does not list); the
 /// `rustynes_vs_dip_*` options replace the switches they force. The bank is
 /// written only on a Vs. System console, the only kind that reads it.
-fn apply_console_options(nes: &mut Nes, options: options::OptionValues, dip_base: u8) {
+///
+/// `correction_base` is whether the console got the per-game coherent
+/// mid-line copy correction at load (v3.6.2); `rustynes_game_corrections =
+/// disabled` turns it off, and back to `enabled` restores it.
+fn apply_console_options(
+    nes: &mut Nes,
+    options: options::OptionValues,
+    dip_base: u8,
+    correction_base: bool,
+) {
     if nes.cpu_overclock() != options.cpu_overclock {
         nes.set_cpu_overclock(options.cpu_overclock);
     }
     if nes.sprite_limit_disabled() != options.sprite_limit_disabled {
         nes.set_sprite_limit_disabled(options.sprite_limit_disabled);
+    }
+    let correction = correction_base && !options.game_corrections_off;
+    if nes.coherent_midline_copy() != correction {
+        nes.set_coherent_midline_copy(correction);
     }
     if nes.is_vs_system() {
         let dip = options.dip_for(dip_base);
@@ -1050,8 +1070,8 @@ fn apply_cabinet_options(
     options: options::OptionValues,
     dip_base: [u8; 2],
 ) {
-    apply_console_options(dual.main_mut(), options, dip_base[0]);
-    apply_console_options(dual.sub_mut(), options, dip_base[1]);
+    apply_console_options(dual.main_mut(), options, dip_base[0], false);
+    apply_console_options(dual.sub_mut(), options, dip_base[1], false);
 }
 
 /// Restore `state` into `nes` under the CPU overclock `overclock` (the
@@ -1429,6 +1449,7 @@ impl RustyNesLibretro {
                 // The options themselves are applied at the top of every
                 // frame (`run_single`), before the console runs at all.
                 self.vs_dip_base = [nes.vs_dip(), 0];
+                self.correction_base = nes.coherent_midline_copy();
                 self.nes = Some(nes);
                 self.dual = None;
                 self.log(
@@ -1442,6 +1463,7 @@ impl RustyNesLibretro {
                 apply_vs_database(dual.main_mut());
                 apply_vs_database(dual.sub_mut());
                 self.vs_dip_base = [dual.main().vs_dip(), dual.sub().vs_dip()];
+                self.correction_base = false;
                 self.dual = Some(dual);
                 self.nes = None;
                 self.log(
@@ -1945,6 +1967,7 @@ impl RustyNesLibretro {
         let four_score = self.options.four_score;
         let options = self.options;
         let dip_base = self.vs_dip_base[0];
+        let correction_base = self.correction_base;
         let b34 = four_score.then(|| (joypad_to_buttons(ctx, 2), joypad_to_buttons(ctx, 3)));
         // Which ports the frontend has set to a lightgun, captured before the
         // mutable borrow of `self.nes` below.
@@ -1962,7 +1985,7 @@ impl RustyNesLibretro {
             let Some(nes) = self.nes.as_mut() else {
                 return;
             };
-            apply_console_options(nes, options, dip_base);
+            apply_console_options(nes, options, dip_base, correction_base);
             if let Some(frame) = vs {
                 VsPanel::apply_single(frame, nes);
             }
@@ -3178,6 +3201,7 @@ retro_core!(RustyNesLibretro {
     fds_flush_countdown: 0,
     vs_panel: VsPanel::new(),
     vs_dip_base: [0; 2],
+    correction_base: false,
     vs_descriptors: false,
     genie_cheats: BTreeMap::new(),
 });

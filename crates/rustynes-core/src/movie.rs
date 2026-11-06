@@ -118,15 +118,22 @@ pub const MOVIE_MAGIC: &[u8; 8] = b"RNESMOV1";
 ///   stays as it was), so a v6 movie of a controller-only game would still
 ///   replay -- but its file cannot say it was one, so it is refused as too
 ///   old, with the reason, like every earlier format.
-pub const MOVIE_FORMAT_VERSION: u16 = 7;
+/// - **v8 (v3.6.2, `T-RADRACER-COHERENT-COPY`)**: the
+///   [`crate::HardwareOptions`] record gains the per-game coherent mid-line
+///   copy correction, one byte after the sprite-limit option. A v7 options
+///   record is one byte shorter and would decode as garbage, so v7 is
+///   refused. No replayable movie is lost: every v7 movie was recorded under
+///   epoch 9 or earlier, which v3.6.2 (epoch 10) refuses anyway.
+pub const MOVIE_FORMAT_VERSION: u16 = 8;
 
-/// The oldest container version this build replays: v7.
+/// The oldest container version this build replays: v8.
 ///
-/// v7 is the first that records the non-controller inputs (v6 first
+/// v8 is the first that records the coherent mid-line copy correction (v7
+/// first recorded the non-controller inputs, v6 first
 /// recorded the CPU overclock and the sprite-limit option, v5 the emulation
 /// epoch, v4 the board, v3 the options). Older movies fail with
 /// [`MovieError::FormatTooOld`].
-pub const MIN_MOVIE_FORMAT_VERSION: u16 = 7;
+pub const MIN_MOVIE_FORMAT_VERSION: u16 = 8;
 
 /// Peek a `.rnm` blob's header to learn its recording epoch.
 ///
@@ -2653,33 +2660,38 @@ mod tests {
 
     /// v3.5.0 (`T-MOVIE-INPUT-STREAM`): a format-6 movie (v3.1.0 to v3.4.x)
     /// records the controllers only, so a Zapper, Vs. or FDS run in one
-    /// would replay without its trigger, coins or disk swaps. It is refused
-    /// as too old, with the reason the message gives, rather than replayed.
+    /// would replay without its trigger, coins or disk swaps; and v3.6.2
+    /// (`T-RADRACER-COHERENT-COPY`): a format-7 movie (v3.5.0 to v3.6.1) has
+    /// no coherent mid-line copy byte in its options record. Both are
+    /// refused as too old, with the reason the message gives, rather than
+    /// replayed.
     #[test]
-    fn a_format_6_movie_is_refused_as_too_old_with_its_reason() {
-        assert_eq!(MIN_MOVIE_FORMAT_VERSION, 7);
-        let mut bytes = Movie::new(
-            Region::Ntsc,
-            [0; 32],
-            crate::HardwareOptions::default(),
-            None,
-            StartPoint::PowerOn,
-            vec![FrameInput::default(); 3],
-        )
-        .serialize();
-        bytes[8..10].copy_from_slice(&6u16.to_le_bytes());
-        let err = Movie::deserialize(&bytes).expect_err("format 6 is refused");
-        assert!(
-            matches!(err, MovieError::FormatTooOld { got: 6, min: 7 }),
-            "{err:?}"
-        );
-        let text = alloc::string::ToString::to_string(&err);
-        assert!(
-            text.contains("format version 6")
-                && text.contains("does not record everything a faithful replay needs")
-                && text.contains("re-record it"),
-            "the refusal says why and what to do: {text}"
-        );
+    fn a_format_6_or_7_movie_is_refused_as_too_old_with_its_reason() {
+        assert_eq!(MIN_MOVIE_FORMAT_VERSION, 8);
+        for old in [6u16, 7] {
+            let mut bytes = Movie::new(
+                Region::Ntsc,
+                [0; 32],
+                crate::HardwareOptions::default(),
+                None,
+                StartPoint::PowerOn,
+                vec![FrameInput::default(); 3],
+            )
+            .serialize();
+            bytes[8..10].copy_from_slice(&old.to_le_bytes());
+            let err = Movie::deserialize(&bytes).expect_err("an old format is refused");
+            assert!(
+                matches!(err, MovieError::FormatTooOld { got, min: 8 } if got == old),
+                "{err:?}"
+            );
+            let text = alloc::string::ToString::to_string(&err);
+            assert!(
+                text.contains(&alloc::format!("format version {old}"))
+                    && text.contains("does not record everything a faithful replay needs")
+                    && text.contains("re-record it"),
+                "the refusal says why and what to do: {text}"
+            );
+        }
     }
 
     #[test]

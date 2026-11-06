@@ -1144,7 +1144,17 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   (ADR 0032 scopes enhancements out of dual mode). The test harness builds its
   own `Nes` and never sets it. **Disable sprite limit** reaches the core since
   v3.1.0 (`Nes::set_sprite_limit_disabled`, applied beside the v3.1.0 CPU
-  overclock outside a movie session; until then the setting was inert). The **Accuracy** group above it carries OAM decay and,
+  overclock outside a movie session; until then the setting was inert).
+  **Turn off per-game picture corrections** (v3.6.2, `[enhancements]
+  disable_game_corrections`, default `false`) switches off the corrections
+  in `rustynes_core::game_corrections` (ADR 0051): today *Rad Racer*'s
+  coherent mid-line copy, which `Nes::from_rom` turns on for that game's dumps
+  and which hides a glitch the hardware draws. `EmuCore::set_nes` captures what
+  the freshly loaded console chose (`game_correction_default`), and every frame
+  outside a movie session holds the console at that value unless the setting
+  is ticked, so ticking and unticking it mid-game works. Movies record it
+  (`HardwareOptions`, `.rnm` format 8) and netplay peers must match (the
+  configuration digest). A Vs. DualSystem cabinet never gets a correction. The **Accuracy** group above it carries OAM decay and,
   from v2.9.8, **Famicom console (PPU leaves reset early)** —
   `[emulation] famicom_console` (default `false`, the NES model, byte-identical).
   `console_model_for` maps it to `rustynes_core::ConsoleModel`;

@@ -57,6 +57,11 @@ pub const CPU_OVERCLOCK_KEY: &CStr = c"rustynes_cpu_overclock";
 /// Draw the sprites beyond the eighth on a line
 /// (`Nes::set_sprite_limit_disabled`), v3.6.0.
 pub const SPRITE_LIMIT_KEY: &CStr = c"rustynes_remove_sprite_limit";
+/// The per-game picture corrections (`rustynes_core::game_corrections`;
+/// `Nes::set_coherent_midline_copy` for *Rad Racer*), v3.6.2. `enabled` (the
+/// default) leaves each game at what the core chose at load; `disabled` turns
+/// every correction off.
+pub const GAME_CORRECTIONS_KEY: &CStr = c"rustynes_game_corrections";
 /// The eight Vs. System DIP switches (LR-03), switch `n` =
 /// `rustynes_vs_dip_<n>` = bit `n - 1` of `Nes::set_vs_dip`.
 pub const VS_DIP_KEYS: [&CStr; 8] = [
@@ -155,7 +160,7 @@ const fn dip(
 }
 
 /// Every option the core declares, in menu order.
-pub const OPTIONS: [OptionSpec; 11] = [
+pub const OPTIONS: [OptionSpec; 12] = [
     OptionSpec {
         key: FOUR_SCORE_KEY,
         // The v0 description, unchanged from v3.5.0 so that frontend's
@@ -182,6 +187,14 @@ pub const OPTIONS: [OptionSpec; 11] = [
         category: c"emulation",
         values: &[(c"disabled", c"Off (8 per line)"), (c"enabled", c"On")],
     },
+    OptionSpec {
+        key: GAME_CORRECTIONS_KEY,
+        desc: c"Per-Game Picture Corrections",
+        desc_categorized: c"Per-Game Picture Corrections",
+        info: c"A few games get a correction that hides a glitch the real console draws: Rad Racer's stray tiles at the right of the road and the horizon. Turn it off to see the console's own picture. A save state records it.",
+        category: c"emulation",
+        values: &[(c"enabled", c"On"), (c"disabled", c"Off (as the console)")],
+    },
     dip(VS_DIP_KEYS[0], c"Vs. DIP Switch 1", c"DIP Switch 1"),
     dip(VS_DIP_KEYS[1], c"Vs. DIP Switch 2", c"DIP Switch 2"),
     dip(VS_DIP_KEYS[2], c"Vs. DIP Switch 3", c"DIP Switch 3"),
@@ -202,6 +215,8 @@ pub struct OptionValues {
     pub cpu_overclock: u8,
     /// `rustynes_remove_sprite_limit`.
     pub sprite_limit_disabled: bool,
+    /// `rustynes_game_corrections` set to `disabled`.
+    pub game_corrections_off: bool,
     /// The switches forced by `rustynes_vs_dip_*`; bit `n` = switch `n + 1`.
     pub dip_mask: u8,
     /// The forced switches' positions, under `dip_mask` (bits outside it are
@@ -222,6 +237,7 @@ impl OptionValues {
         four_score: false,
         cpu_overclock: 1,
         sprite_limit_disabled: false,
+        game_corrections_off: false,
         dip_mask: 0,
         dip_value: 0,
     };
@@ -237,6 +253,7 @@ impl OptionValues {
             .filter(|k| (1..=rustynes_core::MAX_CPU_OVERCLOCK).contains(k))
             .unwrap_or(1);
         out.sprite_limit_disabled = get(SPRITE_LIMIT_KEY).as_deref() == Some("enabled");
+        out.game_corrections_off = get(GAME_CORRECTIONS_KEY).as_deref() == Some("disabled");
         for (bit, key) in VS_DIP_KEYS.iter().enumerate() {
             match get(key).as_deref() {
                 Some("off") => out.dip_mask |= 1 << bit,
@@ -259,6 +276,9 @@ impl OptionValues {
         }
         if self.sprite_limit_disabled {
             parts.push("sprite limit removed".to_owned());
+        }
+        if self.game_corrections_off {
+            parts.push("per-game corrections off".to_owned());
         }
         if self.four_score {
             parts.push("Four Score".to_owned());
@@ -302,7 +322,7 @@ impl OptionValues {
     /// | --- | --- |
     /// | 0-7 | `RNLROPTS` |
     /// | 8 | layout version, 1 |
-    /// | 9 | bit 0: Four Score, bit 1: sprite limit removed; others 0 |
+    /// | 9 | bit 0: Four Score, bit 1: sprite limit removed, bit 2: per-game corrections off (v3.6.2); others 0 |
     /// | 10 | CPU overclock, 1-4 |
     /// | 11 | Vs. DIP switches forced (mask) |
     /// | 12 | their positions (within the mask) |
@@ -315,7 +335,9 @@ impl OptionValues {
         let mut out = [0u8; STATE_TRAILER_LEN];
         out[..8].copy_from_slice(TRAILER_MAGIC);
         out[8] = TRAILER_VERSION;
-        out[9] = u8::from(self.four_score) | (u8::from(self.sprite_limit_disabled) << 1);
+        out[9] = u8::from(self.four_score)
+            | (u8::from(self.sprite_limit_disabled) << 1)
+            | (u8::from(self.game_corrections_off) << 2);
         out[10] = self.cpu_overclock;
         out[11] = self.dip_mask;
         out[12] = self.dip_value;
@@ -329,7 +351,7 @@ impl OptionValues {
         if t[8] != TRAILER_VERSION {
             return Err("an unknown options-record version");
         }
-        if t[9] & !0b11 != 0 {
+        if t[9] & !0b111 != 0 {
             return Err("an unknown options flag");
         }
         if !(1..=rustynes_core::MAX_CPU_OVERCLOCK).contains(&t[10]) {
@@ -344,6 +366,7 @@ impl OptionValues {
         Ok(Self {
             four_score: t[9] & 1 != 0,
             sprite_limit_disabled: t[9] & 2 != 0,
+            game_corrections_off: t[9] & 4 != 0,
             cpu_overclock: t[10],
             dip_mask: t[11],
             dip_value: t[12],
@@ -636,12 +659,25 @@ mod tests {
         assert!(v.sprite_limit_disabled);
     }
 
+    /// v3.6.2: per-game corrections are on unless the option says
+    /// `disabled`; any other value reads as the default.
+    #[test]
+    fn game_corrections_turn_off_only_on_disabled() {
+        const { assert!(!OptionValues::STOCK.game_corrections_off) };
+        for (text, off) in [("disabled", true), ("enabled", false), ("bogus", false)] {
+            let v =
+                OptionValues::read(|key| (key == GAME_CORRECTIONS_KEY).then(|| text.to_owned()));
+            assert_eq!(v.game_corrections_off, off, "{text:?}");
+        }
+    }
+
     #[test]
     fn the_state_record_round_trips_and_refuses_what_no_menu_offers() {
         let options = OptionValues {
             four_score: true,
             cpu_overclock: 3,
             sprite_limit_disabled: true,
+            game_corrections_off: true,
             dip_mask: 0x81,
             dip_value: 0x01,
         };
@@ -662,7 +698,7 @@ mod tests {
 
         for (byte, value, why) in [
             (8, 2, "version"),
-            (9, 4, "flag"),
+            (9, 8, "flag"), // bit 2 is the v3.6.2 corrections flag; bit 3 is unused
             (10, 0, "overclock"),
             (10, 5, "overclock"),
             (12, 0x02, "DIP position"),

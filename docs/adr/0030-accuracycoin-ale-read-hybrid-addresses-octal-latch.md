@@ -519,3 +519,20 @@ quadrant still comes from the live `v`. Pinned by the PPU unit test
 `an_attribute_read_takes_the_address_its_ale_drove`, whose mutant (the live-`v` attribute address)
 fails it. **Not hardware-verified**: if a capture from a real NES shows the dash, this amendment is
 the one to revisit.
+
+## Withdrawal — 2026-11-06 (the 2026-11-05 amendment rested on a wrong diagnosis)
+
+The maintainer withdrew the amendment above on 2026-11-06. Every read, the attribute read included, takes the live-bus splice again, exactly as before v3.6.2.
+
+**What was wrong.** The amendment assumed that *Rad Racer*'s dash in the sand right of the road (line 139) came from the ATTRIBUTE read's hybrid. The maintainer reported the glitches still there on the v3.6.2 build, and a broader measurement showed why:
+
+- The dash was still drawn on 68 to 73 of 800 race frames, against 69 before the amendment. It had only turned from sky colour to road grey.
+- `rad_racer_prov --rect` on such a frame shows the cause: the tile at dots 193-200 read its NAMETABLE byte from `$23FA`. That is the new `v`'s high byte with the old low byte, the "Hybrid Addresses" splice this ADR promoted and AccuracyCoin tests. `$23FA` is an attribute-table byte, so it was used as a tile number and drew backdrop.
+- On those frames the game's second `$2006` write lands at dot 190. On clean frames it lands at dots 194-196, so the copy falls after that tile's nametable read. The amendment's "20 dots sooner" was also wrong: the difference is four to six dots.
+- The amendment's metric counted sky-coloured pixels only, so it read the recoloured dash as gone.
+
+**What the evidence now says.** In a 2012 nesdev thread ("Rad Racer scrolling", <https://forums.nesdev.org/viewtopic.php?t=8588>), a poster running the game on a real NES reports "a very noticable glitch at the switch to vertical mirroring", "which shows up very prominently on the right hand side for me on the NES". The split tile is the hardware's, and the hybrid model stays as promoted.
+
+**What replaces the amendment for *Rad Racer*.** A per-game correction that departs from hardware on purpose: [ADR 0051](0051-a-per-game-correction-may-depart-from-hardware.md).
+
+The tools the amendment added (`rad_racer_movie`, `rad_racer_prov --rect` / `--events`) are kept. The test `an_attribute_read_takes_the_live_bus_hybrid` now pins the restored rule; the full withdrawn change, the ALE-address read together with the landing that left `address_bus` alone, fails it. The MiSTer core withdraws its mirror of the rule in the same release, and keeps the separate quadrant-select fix it found.

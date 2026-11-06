@@ -35,6 +35,7 @@ mod controller;
 #[cfg(feature = "cpu-boot-trace")]
 pub mod cpu_boot_trace;
 pub mod debug;
+pub mod game_corrections;
 pub mod genie;
 // v3.5.0 (`FE-06`) — the host-facing warning codes every frontend shares
 // (moved from the mobile bridge, which re-exports them to Kotlin / Swift).

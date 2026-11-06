@@ -1947,6 +1947,15 @@ pub struct EnhancementsConfig {
     /// v3.1.0 it was persisted and shown but nothing read it.
     #[serde(default)]
     pub disable_sprite_limit: bool,
+    /// Turn off the per-game picture corrections (`rustynes_core::
+    /// game_corrections`). v3.6.2: *Rad Racer*'s coherent mid-line copy, which
+    /// the core turns on for that game's dumps at load and which hides a
+    /// glitch the real console draws. Off (corrections active) by default;
+    /// ticking it shows the hardware's picture. Applied like
+    /// `disable_sprite_limit`: from the next frame, never while a movie runs,
+    /// and recorded by movies (netplay peers must match).
+    #[serde(default)]
+    pub disable_game_corrections: bool,
     /// Optional overclock: extra emulated PPU scanlines inserted in the
     /// vblank, reducing per-scanline slowdown in some games (Mesen2's
     /// "additional scanlines" enhancement). `0` (default) = stock timing.

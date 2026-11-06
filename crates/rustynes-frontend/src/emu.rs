@@ -634,6 +634,14 @@ pub struct EmuCore {
     /// v3.1.0 — the configured sprite-limit option (`[enhancements]
     /// disable_sprite_limit`), applied like `cpu_overclock`.
     pub disable_sprite_limit: bool,
+    /// v3.6.2 — the configured `[enhancements] disable_game_corrections`,
+    /// applied like `disable_sprite_limit`.
+    pub disable_game_corrections: bool,
+    /// v3.6.2 — whether the installed game gets the coherent mid-line copy
+    /// correction by default: what a freshly-loaded console chose from its
+    /// ROM (`rustynes_core::game_corrections`), captured by [`Self::set_nes`]
+    /// so the setting can be turned back on mid-game.
+    game_correction_default: bool,
     /// Vs. System coin-hold countdown (frames until `clear_coin`).
     pub vs_coin_frames: u8,
     /// Per-region frame duration (NTSC ~16.639 ms, PAL/Dendy ~19.997 ms).
@@ -957,6 +965,7 @@ impl EmuCore {
     pub fn set_nes(&mut self, nes: Nes) {
         self.end_movie_session();
         self.mapper_name = nes.mapper_info().name;
+        self.game_correction_default = nes.coherent_midline_copy();
         self.dual = None;
         self.nes = Some(nes);
     }
@@ -1181,6 +1190,8 @@ impl EmuCore {
             overclock_scanlines: 0,
             cpu_overclock: 0,
             disable_sprite_limit: false,
+            disable_game_corrections: false,
+            game_correction_default: false,
             vs_coin_frames: 0,
             frame_duration: rustynes_core::FRAME_DURATION_NTSC,
             speed: 1.0,
@@ -1767,6 +1778,10 @@ impl EmuCore {
             }
             if nes.sprite_limit_disabled() != self.disable_sprite_limit {
                 nes.set_sprite_limit_disabled(self.disable_sprite_limit);
+            }
+            let want = self.game_correction_default && !self.disable_game_corrections;
+            if nes.coherent_midline_copy() != want {
+                nes.set_coherent_midline_copy(want);
             }
         }
         // v2.7.0 — RetroAchievements hardcore mode disables rewind. `App`
