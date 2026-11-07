@@ -566,17 +566,23 @@ artifact:
   feature set, the host-tuned twin of `cargo full-build`; it writes
   `target/release-native/rustynes`. It sets the flag through `--config`
   overrides of `build.rustflags` AND of the per-triple `rustflags` for every
-  x86-64 host the project builds on (`x86_64-unknown-linux-gnu`,
-  `x86_64-apple-darwin`, `x86_64-pc-windows-msvc`, `x86_64-pc-windows-gnu`),
-  because Cargo prefers a matching per-triple `rustflags` over
-  `build.rustflags`: with only the first, a user-level `~/.cargo/config.toml`
-  that sets per-triple flags silently wins (measured 2026-11-06, when a
-  `full-v3` build compiled every crate with `native`). A key for a triple you
-  are not building is inert. Command-line arrays are appended after the user
-  file's, and rustc takes the last `-C target-cpu`, so the alias's flag wins;
-  an exported `RUSTFLAGS` still replaces everything. Check the last
-  `-C target-cpu` on the final rustc line of a `-v` build. The three aliases
-  are for x86-64 hosts; `x86-64` and `x86-64-v3` are not CPUs an Apple
+  host the project builds on (`x86_64-unknown-linux-gnu`,
+  `x86_64-apple-darwin`, `x86_64-pc-windows-msvc`, `x86_64-pc-windows-gnu`,
+  and for `full-native` also `aarch64-apple-darwin` and
+  `aarch64-unknown-linux-gnu`), because Cargo prefers a matching per-triple
+  `rustflags` over `build.rustflags`: with only the first, a user-level
+  `~/.cargo/config.toml` that sets per-triple flags silently wins (measured
+  2026-11-06, when a `full-v3` build compiled every crate with `native`). A
+  key for a triple you are not building is inert. Command-line arrays are
+  appended after the user file's, and rustc takes the last `-C target-cpu`,
+  so the alias's flag wins; a `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` variable does
+  not change that, and only an exported `RUSTFLAGS` replaces everything. The
+  merge needs the user's `rustflags` to be an array: a string-form
+  `rustflags = "-C ..."` makes Cargo refuse the configuration ("could not load
+  Cargo configuration") under any of the aliases, so convert it to
+  `["-C", "..."]`. Check the last `-C target-cpu` on the final rustc line of a
+  `-v` build. `full-native` works on any host; `full-baseline` and `full-v3`
+  are x86-64 only, because `x86-64` and `x86-64-v3` are not CPUs an Apple
   Silicon or other ARM host can target.
 
   No speed-up over `full-build` is measured yet, and no harness in this
