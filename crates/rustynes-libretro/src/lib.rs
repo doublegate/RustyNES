@@ -487,6 +487,12 @@ pub struct RustyNesLibretro {
     /// switch (LR-03, [`apply_console_options`]).
     vs_dip_base: [u8; 2],
 
+    /// Whether the loaded single console gets the coherent mid-line copy
+    /// correction by default (what `Nes::from_rom` chose from the ROM, v3.6.2;
+    /// `false` for a cabinet), which `rustynes_game_corrections` can turn off
+    /// and back on ([`apply_console_options`]).
+    correction_base: bool,
+
     /// Whether the input descriptors currently name the Vs. panel, so
     /// unloading (or loading a non-Vs. game) sends the standard table back.
     vs_descriptors: bool,
@@ -528,6 +534,7 @@ impl Default for RustyNesLibretro {
             fds_flush_countdown: 0,
             vs_panel: VsPanel::new(),
             vs_dip_base: [0; 2],
+            correction_base: false,
             vs_descriptors: false,
             genie_cheats: BTreeMap::new(),
         }
@@ -1027,12 +1034,25 @@ fn sample_to_i16(sample: f32) -> i16 {
 /// at load ([`apply_vs_database`]; 0 for a Vs. game it does not list); the
 /// `rustynes_vs_dip_*` options replace the switches they force. The bank is
 /// written only on a Vs. System console, the only kind that reads it.
-fn apply_console_options(nes: &mut Nes, options: options::OptionValues, dip_base: u8) {
+///
+/// `correction_base` is whether the console got the per-game coherent
+/// mid-line copy correction at load (v3.6.2); `rustynes_game_corrections =
+/// disabled` turns it off, and back to `enabled` restores it.
+fn apply_console_options(
+    nes: &mut Nes,
+    options: options::OptionValues,
+    dip_base: u8,
+    correction_base: bool,
+) {
     if nes.cpu_overclock() != options.cpu_overclock {
         nes.set_cpu_overclock(options.cpu_overclock);
     }
     if nes.sprite_limit_disabled() != options.sprite_limit_disabled {
         nes.set_sprite_limit_disabled(options.sprite_limit_disabled);
+    }
+    let correction = correction_base && !options.game_corrections_off;
+    if nes.coherent_midline_copy() != correction {
+        nes.set_coherent_midline_copy(correction);
     }
     if nes.is_vs_system() {
         let dip = options.dip_for(dip_base);
@@ -1050,34 +1070,50 @@ fn apply_cabinet_options(
     options: options::OptionValues,
     dip_base: [u8; 2],
 ) {
-    apply_console_options(dual.main_mut(), options, dip_base[0]);
-    apply_console_options(dual.sub_mut(), options, dip_base[1]);
+    apply_console_options(dual.main_mut(), options, dip_base[0], false);
+    apply_console_options(dual.sub_mut(), options, dip_base[1], false);
 }
 
-/// Restore `state` into `nes` under the CPU overclock `overclock` (the
-/// state's record), or under the running one when the state has none.
+/// Restore `state` into `nes` under the CPU overclock `overclock` and the
+/// per-game correction setting `correction` (both from the state's record),
+/// or under the running ones when the state has none.
 ///
 /// The multiplier goes in first because the restore keeps the state's
 /// position in the overclocked cycle pattern only under a multiplier that
-/// could have produced it. When the multiplier changes and the restore is
-/// refused, both are put back from a backup of the running machine, taken
-/// only in that case (a different multiplier is a user's load, not run-ahead's
-/// per-frame restore, so the copy is not on a hot path).
+/// could have produced it. The correction goes in first for the same kind of
+/// reason (v3.6.2, review round 8 on #640): the PPU's restore keeps a copy
+/// the coherent mid-line copy correction is holding only while the
+/// correction is on, and lands it at once otherwise, so restoring under the
+/// menu's setting and applying the state's afterwards would replay that
+/// frame differently from the run that saved it. When either changes and the
+/// restore is refused, all are put back from a backup of the running
+/// machine, taken only in that case (a different setting is a user's load,
+/// not run-ahead's per-frame restore, so the copy is not on a hot path).
 fn restore_console(
     nes: &mut Nes,
     state: &[u8],
     overclock: Option<u8>,
+    correction: Option<bool>,
 ) -> Result<(), rustynes_core::save_state::SnapshotError> {
     let running = nes.cpu_overclock();
-    let Some(k) = overclock.filter(|&k| k != running) else {
+    let running_correction = nes.coherent_midline_copy();
+    let k = overclock.filter(|&k| k != running);
+    let c = correction.filter(|&c| c != running_correction);
+    if k.is_none() && c.is_none() {
         return nes.restore_quiet(state);
-    };
+    }
     let mut backup = Vec::new();
     nes.snapshot_core_into(&mut backup);
-    nes.set_cpu_overclock(k);
+    if let Some(k) = k {
+        nes.set_cpu_overclock(k);
+    }
+    if let Some(c) = c {
+        nes.set_coherent_midline_copy(c);
+    }
     let result = nes.restore_quiet(state);
     if result.is_err() {
         nes.set_cpu_overclock(running);
+        nes.set_coherent_midline_copy(running_correction);
         let rolled_back = nes.restore_quiet(&backup);
         debug_assert!(rolled_back.is_ok(), "own snapshot refused: {rolled_back:?}");
     }
@@ -1429,6 +1465,7 @@ impl RustyNesLibretro {
                 // The options themselves are applied at the top of every
                 // frame (`run_single`), before the console runs at all.
                 self.vs_dip_base = [nes.vs_dip(), 0];
+                self.correction_base = nes.coherent_midline_copy();
                 self.nes = Some(nes);
                 self.dual = None;
                 self.log(
@@ -1442,6 +1479,7 @@ impl RustyNesLibretro {
                 apply_vs_database(dual.main_mut());
                 apply_vs_database(dual.sub_mut());
                 self.vs_dip_base = [dual.main().vs_dip(), dual.sub().vs_dip()];
+                self.correction_base = false;
                 self.dual = Some(dual);
                 self.nes = None;
                 self.log(
@@ -1505,7 +1543,9 @@ impl RustyNesLibretro {
     /// either to run the machine it was made on. RetroArch's netplay also
     /// compares state CRCs, which now differ when the peers' options do.
     ///
-    /// The overclock is set BEFORE the restore: the state carries the
+    /// The overclock and the per-game correction are set BEFORE the restore
+    /// (the correction since v3.6.2's review round 8 on #640: the PPU keeps a
+    /// held coherent copy only while the correction is on). The overclock: the state carries the
     /// position inside the overclocked cycle pattern, and the core keeps a
     /// restored position only if the multiplier already running could have
     /// produced it (`SystemBus::restore`), while changing the multiplier
@@ -1524,8 +1564,14 @@ impl RustyNesLibretro {
             }
         };
         let overclock = recorded.map(|r| r.cpu_overclock);
+        // The correction the state's options give this console: on only for
+        // a dump that got it at load (a cabinet never does) and only if the
+        // record does not turn corrections off. Applied before the restore,
+        // like the overclock (see `restore_console`).
+        let correction_base = self.correction_base;
+        let correction = recorded.map(|r| correction_base && !r.game_corrections_off);
         let result = if let Some(nes) = self.nes.as_mut() {
-            restore_console(nes, state, overclock)
+            restore_console(nes, state, overclock, correction)
         } else if let Some(dual) = self.dual.as_mut() {
             restore_cabinet(dual, state, overclock)
         } else {
@@ -1945,6 +1991,7 @@ impl RustyNesLibretro {
         let four_score = self.options.four_score;
         let options = self.options;
         let dip_base = self.vs_dip_base[0];
+        let correction_base = self.correction_base;
         let b34 = four_score.then(|| (joypad_to_buttons(ctx, 2), joypad_to_buttons(ctx, 3)));
         // Which ports the frontend has set to a lightgun, captured before the
         // mutable borrow of `self.nes` below.
@@ -1962,7 +2009,7 @@ impl RustyNesLibretro {
             let Some(nes) = self.nes.as_mut() else {
                 return;
             };
-            apply_console_options(nes, options, dip_base);
+            apply_console_options(nes, options, dip_base, correction_base);
             if let Some(frame) = vs {
                 VsPanel::apply_single(frame, nes);
             }
@@ -3178,6 +3225,7 @@ retro_core!(RustyNesLibretro {
     fds_flush_countdown: 0,
     vs_panel: VsPanel::new(),
     vs_dip_base: [0; 2],
+    correction_base: false,
     vs_descriptors: false,
     genie_cheats: BTreeMap::new(),
 });
@@ -3576,7 +3624,7 @@ mod tests {
             nes.run_frame();
             let mut before = Vec::new();
             nes.snapshot_core_into(&mut before);
-            assert!(restore_console(&mut nes, &damaged, Some(2)).is_err());
+            assert!(restore_console(&mut nes, &damaged, Some(2), None).is_err());
             assert_eq!(
                 nes.cpu_overclock(),
                 3,
@@ -3586,11 +3634,59 @@ mod tests {
             nes.snapshot_core_into(&mut after);
             assert!(after == before, "frame {frame}: the machine is put back");
         }
-        assert!(restore_console(&mut nes, &x2, Some(2)).is_ok());
+        assert!(restore_console(&mut nes, &x2, Some(2), None).is_ok());
         assert_eq!(
             nes.cpu_overclock(),
             2,
             "an accepted restore runs at the state's"
+        );
+    }
+
+    /// v3.6.2, review round 8 on #640 (Antigravity) — the state's per-game
+    /// correction setting is in force during the restore, not only from the
+    /// next frame: the PPU's restore keeps a held coherent copy only while
+    /// the correction is on (`a_held_copy_restores_held_only_with_the_correction_on`
+    /// in `rustynes-ppu` pins that half). An accepted restore runs under the
+    /// state's setting; a refused one puts the running setting and the
+    /// machine back.
+    #[test]
+    fn a_restore_applies_the_state_correction_first_and_puts_it_back_if_refused() {
+        let rom = include_bytes!("../../../tests/roms/nestest/nestest.nes");
+        let mut donor = Nes::from_rom(rom).expect("parses");
+        donor.set_coherent_midline_copy(true);
+        for _ in 0..3 {
+            donor.run_frame();
+        }
+        let mut state = Vec::new();
+        donor.snapshot_core_into_slim(&mut state);
+        let mut damaged = state.clone();
+        damage_cpu_section(&mut damaged);
+
+        let mut nes = Nes::from_rom(rom).expect("parses");
+        assert!(
+            !nes.coherent_midline_copy(),
+            "fixture: nestest gets no correction"
+        );
+        nes.run_frame();
+        let mut before = Vec::new();
+        nes.snapshot_core_into(&mut before);
+        assert!(restore_console(&mut nes, &damaged, None, Some(true)).is_err());
+        assert!(
+            !nes.coherent_midline_copy(),
+            "a refused restore puts the setting back"
+        );
+        let mut after = Vec::new();
+        nes.snapshot_core_into(&mut after);
+        assert!(after == before, "a refused restore puts the machine back");
+        assert!(restore_console(&mut nes, &state, None, Some(true)).is_ok());
+        assert!(
+            nes.coherent_midline_copy(),
+            "an accepted restore runs under the state's setting"
+        );
+        assert!(restore_console(&mut nes, &state, None, Some(false)).is_ok());
+        assert!(
+            !nes.coherent_midline_copy(),
+            "and under the state's setting when it is off"
         );
     }
 

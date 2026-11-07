@@ -3265,6 +3265,29 @@ impl Nes {
         self.bus.sprite_limit_disabled()
     }
 
+    /// v3.6.2 (`T-RADRACER-COHERENT-COPY`) — the per-game coherent mid-line
+    /// copy correction: a delayed `$2006` copy that would land inside a
+    /// background fetch group is held to the next group boundary, so no tile
+    /// is fetched from two addresses.
+    ///
+    /// **A deliberate departure from hardware.** A real NES draws the split
+    /// tile; *Rad Racer* shows it as an 8-pixel wrong tile right of the road
+    /// and at the horizon on about one frame in eleven. On by default for the
+    /// dumps [`crate::game_corrections::COHERENT_MIDLINE_COPY_DUMPS`] lists,
+    /// off for everything else; a host may turn it off to see the hardware's
+    /// picture. Configuration, not save-state; carried across a power cycle,
+    /// and in movies and netplay by [`crate::HardwareOptions`] (the picture
+    /// differs, so frame hashes and desync checks depend on it).
+    pub const fn set_coherent_midline_copy(&mut self, on: bool) {
+        self.bus.set_coherent_midline_copy(on);
+    }
+
+    /// v3.6.2 — whether the coherent mid-line copy correction is on.
+    #[must_use]
+    pub const fn coherent_midline_copy(&self) -> bool {
+        self.bus.coherent_midline_copy()
+    }
+
     /// v3.1.0 (`T-MMC3-NEC-OVERRIDE`, ACC-13) — run an MMC3 (mapper 4) under
     /// a chosen IRQ revision, or `None` for the one its header selects.
     ///

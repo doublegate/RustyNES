@@ -476,3 +476,63 @@ cross-reference. Provenance updated in `NOTICE` and `docs/originality-and-proven
 AccuracyCoin gate was tightened from a coarse 60% floor to an **exact 141/141** (zero failing tests)
 in `crates/rustynes-test-harness/tests/accuracycoin.rs`, so a `COPY_V_DELAY` / octal-latch
 regression now fails CI — closing the gap that let the delay=0 probe (140/141) clear the old floor.
+
+## Amendment — 2026-11-05 (v3.6.2: the hybrid stops at the nametable read)
+
+**Decision (maintainer, 2026-11-05):** when `v` moves between a fetch's ALE half and its read
+half, only the **nametable** read takes the live-`v` hybrid address (`(v & 0x3F00) | octal_latch`,
+since v2.3.6). The **attribute** read takes the address its own ALE half drove. Emulation epoch 10.
+
+**What forced it.** *Rad Racer* draws its road with timed mid-scanline `$2006` / `$2005` writes after
+a sprite-0 hit. On line 139, the road's mirroring split, it writes `$2006` = `$23`, `$00`, then the
+MMC1 mirroring bit. The game's sprite-0 polling loop ends one iteration early on about one race
+frame in eleven, which moves the whole raster chain 20 dots sooner (measured with
+`rad_racer_prov --events`: the second `$2006` write at dot 176 instead of 196). The delayed `CopyV`
+then lands between an attribute fetch's ALE (driving `$2FEE`, from `v` = `$2EF8`) and its read, and
+the live-`v` splice read `$23EE`: palette 0, an 8-pixel dash of sky colour in the sand right of the
+road (`rad_racer_prov --rect`: tile x=192..199, AT `$23EE`, palette `$3F01`). Counted over frames
+700-1499 of a scripted race (`rad_racer_movie`, schedule in the commit): **69 of 800 frames**.
+
+**The evidence, both ways.**
+
+- *For keeping it.* It is the same physics as the documented nametable case: AccuracyCoin's
+  commentary says the address bus is updated every PPU cycle and its upper bits follow `v`, and an
+  attribute address's upper bits are derived from `v` as well. A 2012 nesdev post (rainwarrior,
+  "Rad Racer scrolling") reports a real NES showing "a very noticeable glitch at the switch to
+  vertical mirroring, which shows up very prominently on the right hand side", which is this line.
+- *Against.* Mesen, run as a black box (its libretro core, output frames only) on the same inputs,
+  shows **0 of 801** frames; but Mesen models no hybrid fetch at all, so it cannot rule the
+  mechanism in or out. TriCNES, the one reference that models it, could not be consulted: its
+  harness only logs APU writes for this ROM, and its source is open to this project only for
+  AccuracyCoin work (guardrails section 3a).
+- AccuracyCoin documents and tests the hybrid on the **nametable** read only.
+
+**Measured.** With the attribute read on the ALE-time address: 0 of 800 frames on the same race and
+0 of 1,200 on a second, steering run (Mesen: 0 of 1,200); AccuracyCoin **147/147**, including
+`Hybrid Addresses` and `ALE + Read`. A `COPY_V_DELAY` of 3 instead of 4 did not remove the dash (81
+of 800 frames), so the delay is not the lever.
+
+**Consequences.** The copy's landing no longer writes `address_bus` (since v2.3.6 the nametable splice
+takes its high bits from the live `v`, so nothing read that assignment); `address_bus` now holds the
+ALE-time address the attribute read uses. Coherent fetches are unchanged. The 2-bit attribute
+quadrant still comes from the live `v`. Pinned by the PPU unit test
+`an_attribute_read_takes_the_address_its_ale_drove`, whose mutant (the live-`v` attribute address)
+fails it. **Not hardware-verified**: if a capture from a real NES shows the dash, this amendment is
+the one to revisit.
+
+## Withdrawal — 2026-11-06 (the 2026-11-05 amendment rested on a wrong diagnosis)
+
+The maintainer withdrew the amendment above on 2026-11-06. Every read, the attribute read included, takes the live-bus splice again, exactly as before v3.6.2.
+
+**What was wrong.** The amendment assumed that *Rad Racer*'s dash in the sand right of the road (line 139) came from the ATTRIBUTE read's hybrid. The maintainer reported the glitches still there on the v3.6.2 build, and a broader measurement showed why:
+
+- The dash was still drawn on 68 to 73 of 800 race frames, against 69 before the amendment. It had only turned from sky colour to road grey.
+- `rad_racer_prov --rect` on such a frame shows the cause: the tile at dots 193-200 read its NAMETABLE byte from `$23FA`. That is the new `v`'s high byte with the old low byte, the "Hybrid Addresses" splice this ADR promoted and AccuracyCoin tests. `$23FA` is an attribute-table byte, so it was used as a tile number and drew backdrop.
+- On those frames the game's second `$2006` write lands at dot 190. On clean frames it lands at dots 194-196, so the copy falls after that tile's nametable read. The amendment's "20 dots sooner" was also wrong: the difference is four to six dots.
+- The amendment's metric counted sky-coloured pixels only, so it read the recoloured dash as gone.
+
+**What the evidence now says.** In a 2012 nesdev thread ("Rad Racer scrolling", <https://forums.nesdev.org/viewtopic.php?t=8588>), a poster running the game on a real NES reports "a very noticable glitch at the switch to vertical mirroring", "which shows up very prominently on the right hand side for me on the NES". The split tile is the hardware's, and the hybrid model stays as promoted.
+
+**What replaces the amendment for *Rad Racer*.** A per-game correction that departs from hardware on purpose: [ADR 0051](0051-a-per-game-correction-may-depart-from-hardware.md).
+
+The tools the amendment added (`rad_racer_movie`, `rad_racer_prov --rect` / `--events`) are kept. The test `an_attribute_read_takes_the_live_bus_hybrid` now pins the restored rule; the full withdrawn change, the ALE-address read together with the landing that left `address_bus` alone, fails it. The MiSTer core withdraws its mirror of the rule in the same release, and keeps the separate quadrant-select fix it found.

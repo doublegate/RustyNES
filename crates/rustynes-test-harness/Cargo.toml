@@ -215,6 +215,14 @@ name = "rad_racer_prov"
 path = "src/bin/rad_racer_prov.rs"
 required-features = ["commercial-roms", "debug-hooks"]
 
+# v3.6.2 — scripted `.rnm` recorder for the two Rad Racer probes above, so the
+# run that shows the roadside flicker is reproducible from a command line.
+# Diagnostic only; needs a gitignored commercial dump.
+[[bin]]
+name = "rad_racer_movie"
+path = "src/bin/rad_racer_movie.rs"
+required-features = ["commercial-roms"]
+
 # v1.8.9 "Backlog" — headless batch runner (manifest -> screenshots + fb-hash +
 # blank verdict, JSON out). Writes PNGs, so it needs the optional `png` dep.
 [[bin]]

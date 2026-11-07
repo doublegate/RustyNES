@@ -59,25 +59,86 @@ fn locate_band(idx: &[u16], target: u64) -> (u16, usize, u16) {
     (sky, hz, ground)
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 4 {
-        eprintln!("usage: rad_racer_prov <rom> <movie.rnm> <target-frame>");
-        std::process::exit(2);
-    }
-    // A typo in the frame number is the one wrong thing a user of this tool is
-    // actually likely to type, so report it rather than panicking at them.
-    let target: u64 = args[3].parse().unwrap_or_else(|_| {
-        eprintln!(
-            "rad_racer_prov: <target-frame> expects a non-negative integer, got {:?}",
-            args[3]
-        );
-        std::process::exit(2);
-    });
+/// The output mode, parsed and validated BEFORE the movie is replayed, so a
+/// malformed `--events` / `--rect` is a usage error at once rather than a
+/// silent fall-back to the band after a long replay (Antigravity on #640).
+enum Mode {
+    /// The automatic band below the horizon (`locate_band`).
+    Band,
+    /// v3.6.2: `--events SL0 SL1` prints the target frame's register events
+    /// (scanline, dot, address, value) on scanlines `SL0..=SL1`: which write
+    /// landed where, which is the question once provenance has named the tile.
+    Events(i16, i16),
+    /// v3.6.2: the `--rect X0 X1 Y0 Y1` rectangle: every pixel of it is
+    /// printed instead of the automatic band. The band trusts `locate_band`'s
+    /// horizon, the lowest row holding the sky colour, so a stray dash OF sky
+    /// colour down in the sand (the v3.6.2 report) becomes the "horizon" and
+    /// is never itself inspected. Selected before `locate_band` runs, so a
+    /// frame with no sky/ground boundary can still be inspected (Copilot on
+    /// #640).
+    Rect(usize, usize, usize, usize),
+}
 
-    let rom = std::fs::read(&args[1]).unwrap_or_else(|e| panic!("read rom: {e}"));
+const USAGE: &str = "usage: rad_racer_prov <rom> <movie.rnm> <target-frame> [--events SL0 SL1 | --rect X0 X1 Y0 Y1]";
+
+fn usage_exit(why: &str) -> ! {
+    eprintln!("rad_racer_prov: {why}\n{USAGE}");
+    std::process::exit(2);
+}
+
+/// `--events`: the target frame's register events on scanlines `s0..=s1`.
+fn print_events(nes: &Nes, s0: i16, s1: i16) {
+    for e in nes.events() {
+        if (s0..=s1).contains(&e.scanline) {
+            println!(
+                "sl {:>3} dot {:>3}  {:?} {:#06X} = {:#04X}",
+                e.scanline, e.dot, e.kind, e.addr, e.value
+            );
+        }
+    }
+}
+
+fn parse_mode(args: &[String]) -> Mode {
+    fn num<T: core::str::FromStr>(s: &str, what: &str) -> T {
+        s.parse()
+            .unwrap_or_else(|_| usage_exit(&format!("{what}, got {s:?}")))
+    }
+    match args.get(4).map(String::as_str) {
+        None => Mode::Band,
+        Some("--events") if args.len() == 7 => {
+            let s0 = num(&args[5], "--events expects two scanlines");
+            let s1 = num(&args[6], "--events expects two scanlines");
+            if s0 > s1 {
+                usage_exit(&format!(
+                    "--events SL0 SL1 needs SL0 <= SL1, got {s0} > {s1}"
+                ));
+            }
+            Mode::Events(s0, s1)
+        }
+        Some("--events") => usage_exit("--events expects exactly two scanlines"),
+        Some("--rect") if args.len() == 9 => {
+            let n = |s: &str| num::<usize>(s, "--rect expects four integers");
+            let (x0, x1, y0, y1) = (n(&args[5]), n(&args[6]), n(&args[7]), n(&args[8]));
+            // The order is X0 X1 Y0 Y1, not X0 Y0 X1 Y1: an inverted pair is
+            // almost always that transposition, and would print nothing.
+            if x0 > x1 || y0 > y1 || x0 > 255 || y0 > 239 {
+                usage_exit(&format!(
+                    "--rect X0 X1 Y0 Y1 needs X0 <= X1, Y0 <= Y1, X0 <= 255 and Y0 <= 239 (order X0 X1 Y0 Y1; X1 and Y1 past the screen are clamped), got {x0} {x1} {y0} {y1}"
+                ));
+            }
+            Mode::Rect(x0, x1, y0, y1)
+        }
+        Some("--rect") => usage_exit("--rect expects exactly four integers"),
+        Some(other) => usage_exit(&format!("unknown option {other:?}")),
+    }
+}
+
+/// Replay the movie to `target` with provenance and event logging armed on
+/// that frame. Exits 2 when the movie ends first.
+fn replay_to(rom_path: &str, movie_path: &str, target: u64) -> Nes {
+    let rom = std::fs::read(rom_path).unwrap_or_else(|e| panic!("read rom: {e}"));
     let mut nes = Nes::from_rom(&rom).unwrap_or_else(|e| panic!("load rom: {e}"));
-    let blob = std::fs::read(&args[2]).unwrap_or_else(|e| panic!("read movie: {e}"));
+    let blob = std::fs::read(movie_path).unwrap_or_else(|e| panic!("read movie: {e}"));
     let movie = Movie::deserialize(&blob).unwrap_or_else(|e| panic!("parse movie: {e}"));
     movie
         .seek_to_start(&mut nes)
@@ -93,6 +154,7 @@ fn main() {
         // it never did, and the code below is the correct behaviour.)
         if frame == target {
             nes.set_pixel_provenance(true);
+            nes.set_event_logging(true);
         }
         nes.run_frame();
         if frame == target {
@@ -111,10 +173,34 @@ fn main() {
         eprintln!("rad_racer_prov: the movie ended at frame {frame}; target {target} is past it");
         std::process::exit(2);
     }
+    nes
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 4 {
+        eprintln!("{USAGE}");
+        std::process::exit(2);
+    }
+    // A typo in the frame number is the one wrong thing a user of this tool is
+    // actually likely to type, so report it rather than panicking at them.
+    let target: u64 = args[3].parse().unwrap_or_else(|_| {
+        eprintln!(
+            "rad_racer_prov: <target-frame> expects a non-negative integer, got {:?}",
+            args[3]
+        );
+        std::process::exit(2);
+    });
+    let mode = parse_mode(&args);
+
+    let nes = replay_to(&args[1], &args[2], target);
+
+    if let Mode::Events(s0, s1) = mode {
+        print_events(&nes, s0, s1);
+        return;
+    }
 
     let idx = nes.index_framebuffer().to_vec();
-    let (sky, hz, ground) = locate_band(&idx, target);
-    eprintln!("frame {target}: horizon y={hz}, ground index {ground:#06X}, sky {sky:#06X}");
 
     let Some(prov) = nes.pixel_provenance() else {
         // Unreachable given the arm above, so this really is an invariant
@@ -170,6 +256,14 @@ fn main() {
             ),
         }
     };
+    if let Mode::Rect(x0, x1, y0, y1) = mode {
+        for y in y0..=y1.min(239) {
+            (x0..=x1.min(255)).for_each(|x| row(x, y, "rect"));
+        }
+        return;
+    }
+    let (sky, hz, ground) = locate_band(&idx, target);
+    eprintln!("frame {target}: horizon y={hz}, ground index {ground:#06X}, sky {sky:#06X}");
     for y in (hz + 1)..(hz + 6).min(200) {
         row(210, y, "control");
         for x in 200..256usize {

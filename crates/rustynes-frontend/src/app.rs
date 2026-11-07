@@ -2248,6 +2248,7 @@ impl App {
             emu.overclock_scanlines = self.config.enhancements.overclock_scanlines;
             emu.cpu_overclock = self.config.enhancements.cpu_overclock;
             emu.disable_sprite_limit = self.config.enhancements.disable_sprite_limit;
+            emu.disable_game_corrections = self.config.enhancements.disable_game_corrections;
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(raw) = raw_cheats {
                 emu.raw_cheats = raw;
@@ -3307,6 +3308,9 @@ impl App {
             // v2.9.0 — the recording starts from cleared save RAM, which must
             // not reach the `.sav` (`EmuCore::start_sandboxed_session`).
             guard.start_sandboxed_session(|emu| {
+                // v3.6.2 — the options configured now, not the ones the last
+                // produced frame applied (`EmuCore::prepare_power_on_recording`).
+                emu.prepare_power_on_recording();
                 let Some(nes) = emu.nes.as_mut() else {
                     return false;
                 };
@@ -3388,6 +3392,10 @@ impl App {
         // must not reach the `.sav` (`EmuCore::start_sandboxed_session`).
         let mut seek_error = None;
         let began = guard.start_sandboxed_session(|emu| {
+            // Review round 9 on #640: the player's options are captured
+            // below and put back when playback stops, so take the
+            // configured ones, as every other paused capture does.
+            emu.sync_idle_player_options();
             let Some(nes) = emu.nes.as_mut() else {
                 return false;
             };
@@ -3431,6 +3439,9 @@ impl App {
         }
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
+        // v3.6.2 (Antigravity on #640) — from idle, the options configured
+        // now; under playback the movie's own (`sync_idle_player_options`).
+        emu.sync_idle_player_options();
         let Some(nes) = emu.nes.as_mut() else {
             eprintln!("rustynes: movie branch: no ROM loaded");
             return;
@@ -3578,6 +3589,8 @@ impl App {
             // v2.9.0 — see `EmuCore::start_sandboxed_session`.
             let mut seek_error = None;
             let began = guard.start_sandboxed_session(|emu| {
+                // Review round 9 on #640: see `handle_movie_play_toggle`.
+                emu.sync_idle_player_options();
                 let Some(nes) = emu.nes.as_mut() else {
                     return false;
                 };
@@ -4490,6 +4503,9 @@ impl App {
                 crate::wasm_io::log("leave netplay before recording a movie");
                 return;
             }
+            // v3.6.2 — the options configured now, not the ones the last
+            // produced frame applied (`EmuCore::prepare_power_on_recording`).
+            emu.prepare_power_on_recording();
             let Some(nes) = emu.nes.as_mut() else {
                 crate::wasm_io::log("movie record: no ROM loaded");
                 return;
@@ -4551,6 +4567,9 @@ impl App {
         }
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
+        // v3.6.2 (Antigravity on #640) — from idle, the options configured
+        // now; under playback the movie's own (`sync_idle_player_options`).
+        emu.sync_idle_player_options();
         let Some(nes) = emu.nes.as_mut() else {
             crate::wasm_io::log("movie branch: no ROM loaded");
             return;
@@ -4575,6 +4594,8 @@ impl App {
         };
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
+        // Review round 9 on #640: see `handle_movie_play_toggle`.
+        emu.sync_idle_player_options();
         let Some(nes) = emu.nes.as_mut() else {
             crate::wasm_io::log("movie play: no ROM loaded");
             return;
@@ -7214,12 +7235,14 @@ impl App {
         let lines = self.config.enhancements.overclock_scanlines;
         let cpu = self.config.enhancements.cpu_overclock;
         let sprites = self.config.enhancements.disable_sprite_limit;
+        let corrections_off = self.config.enhancements.disable_game_corrections;
         let mut emu = self.emu.lock();
         emu.overclock_scanlines = lines;
         // v3.1.0 — the CPU-multiplier overclock and the sprite-limit option
         // ride the same push.
         emu.cpu_overclock = cpu;
         emu.disable_sprite_limit = sprites;
+        emu.disable_game_corrections = corrections_off;
     }
 
     /// v2.1.7 P5 — push the opt-in PPU hardware-revision + power-on knobs from
@@ -8007,13 +8030,7 @@ impl App {
                 host: _,
                 num_players,
             } => {
-                let Some(identity) = self
-                    .emu
-                    .lock()
-                    .nes
-                    .as_ref()
-                    .map(rustynes_netplay::SessionIdentity::of)
-                else {
+                let Some(identity) = self.emu.lock().netplay_identity() else {
                     crate::wasm_io::log("rustynes: browser netplay needs a loaded ROM first");
                     return;
                 };
@@ -8083,13 +8100,7 @@ impl App {
                 );
             }
             NetplayRequest::Host { port, num_players } => {
-                let Some(identity) = self
-                    .emu
-                    .lock()
-                    .nes
-                    .as_ref()
-                    .map(rustynes_netplay::SessionIdentity::of)
-                else {
+                let Some(identity) = self.emu.lock().netplay_identity() else {
                     return;
                 };
                 // v2.8.0 Phase 5 increment 3 — pause the emulation thread
@@ -8103,13 +8114,7 @@ impl App {
                 self.netplay.start_host(port, num_players, identity);
             }
             NetplayRequest::Join { remote } => {
-                let Some(identity) = self
-                    .emu
-                    .lock()
-                    .nes
-                    .as_ref()
-                    .map(rustynes_netplay::SessionIdentity::of)
-                else {
+                let Some(identity) = self.emu.lock().netplay_identity() else {
                     return;
                 };
                 match remote.parse::<std::net::SocketAddr>() {
@@ -8124,13 +8129,7 @@ impl App {
             // v1.7.0 H8 — read-only spectator: same ROM + emu-thread plumbing as
             // Join, but the spectator never authors input (see `start_spectate`).
             NetplayRequest::Spectate { remote } => {
-                let Some(identity) = self
-                    .emu
-                    .lock()
-                    .nes
-                    .as_ref()
-                    .map(rustynes_netplay::SessionIdentity::of)
-                else {
+                let Some(identity) = self.emu.lock().netplay_identity() else {
                     return;
                 };
                 match remote.parse::<std::net::SocketAddr>() {
@@ -10191,6 +10190,7 @@ impl App {
             emu.overclock_scanlines = self.config.enhancements.overclock_scanlines;
             emu.cpu_overclock = self.config.enhancements.cpu_overclock;
             emu.disable_sprite_limit = self.config.enhancements.disable_sprite_limit;
+            emu.disable_game_corrections = self.config.enhancements.disable_game_corrections;
             // Capture the cartridge's nominal frame duration — consults the
             // cartridge region (NTSC: ~16.64 ms, PAL/Dendy: ~20 ms).
             emu.frame_duration = nes.frame_duration();

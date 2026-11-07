@@ -102,7 +102,8 @@ const MAX_GENIE_CODES: usize = u8::MAX as usize;
 /// | 7 | v3.5.1 | the MMC5's split-screen and extended-attribute CHR banks apply only to fetches made while the PPU renders (T-MMC5-LATCH-VBLANK): a `$2007` CHR read in vertical blank, or with rendering off, reads the bank registers, not the last tile's latched bank. No golden or snapshot moved and a probe found no affected access in three MMC5 games; raised anyway, by the maintainer's call (2026-10-23), because the bus value changes for software that makes that read |
 /// | 8 | v3.6.0 | NSF playback: a 60 Hz NSF's `play` routine runs every frame again (the driver inhibits the APU frame IRQ and enables the NMI after the PPU's warm-up, T-AUDIO-STEMS), and the driver moved from `$5000` to `$5100`, clear of the MMC5 status port, so an MMC5 NSF plays. No golden or fingerprint covers an NSF, so nothing recorded moved; raised by the maintainer's call (2026-10-24) because NSF audio and bus traffic change from the same inputs. The same epoch carries the noise-channel fix: the LFSR now shifts every table period in CPU cycles, as the NESdev page gives it, instead of every 2 x (N + 1); 112 commercial and test-ROM audio hashes moved, no frame or cycle count |
 /// | 9 | v3.6.1 | the MMC5's background-fetch window closes on the in-frame flag's idle rule while rendering (a few dots into line 240) and at a vertical blank whose flag a `$2002` read suppressed (T-MMC5-WINDOW-END), so a `$2007` CHR access there reads the bank registers; and the MMC5 split's first two tiles of a frame, fetched on the pre-render line, take row `$5201 + 0` instead of `($5201 + 261) % 240` (`+ 311` on PAL and Dendy). No golden, snapshot or fingerprint moved (4,048 tests, *Uchuu Keibitai SDF* included); raised by v3.5.1's precedent, because a frame and a bus value change from the same inputs for software that splits the first two columns with `$5201` set or reads CHR on line 240 |
-pub const EMULATION_EPOCH: u32 = 9;
+/// | 10 | v3.6.2 | *Rad Racer*'s per-game coherent mid-line copy correction (`coherent_midline_copy`, ADR 0051), on by default for the game's three dumps only: a delayed `$2006` copy whose countdown ends inside a background fetch group is held to the end of that group, so no tile is fetched from two addresses. A deliberate departure from hardware; its 8-pixel dash in the sand on line 139, about one race frame in eleven, is gone, and the game's default frames change. Recorded in movies (`.rnm` format 8, minimum 8) and the netplay digest; protocol 9 unchanged, since a v3.6.1 peer is refused on the epoch. The attribute-read rule this release first carried was withdrawn (ADR 0030, 2026-11-06), so no other game's output moves |
+pub const EMULATION_EPOCH: u32 = 10;
 
 /// Every host-settable option that changes what the emulated console does.
 ///
@@ -122,8 +123,9 @@ pub const EMULATION_EPOCH: u32 = 9;
 /// option is then not a break.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
-// Four independent switches (OAM decay, Four Score, the Zapper light model,
-// the sprite limit), each mirroring one `Nes` setter one-to-one; no two are
+// Five independent switches (OAM decay, Four Score, the Zapper light model,
+// the sprite limit, the per-game coherent mid-line copy correction), each
+// mirroring one `Nes` setter one-to-one; no two are
 // states of one thing, so an enum or bitflags would only obscure the mapping.
 #[allow(clippy::struct_excessive_bools)]
 pub struct HardwareOptions {
@@ -150,6 +152,10 @@ pub struct HardwareOptions {
     /// Draw the sprites beyond the eighth on a scanline
     /// ([`Nes::set_sprite_limit_disabled`]); render-only. v3.1.0.
     pub sprite_limit_disabled: bool,
+    /// The per-game coherent mid-line copy correction
+    /// ([`Nes::set_coherent_midline_copy`]); render-only, a deliberate
+    /// departure from hardware, on by default for *Rad Racer*. v3.6.2.
+    pub coherent_midline_copy: bool,
     /// A forced MMC3 IRQ revision ([`Nes::set_mmc3_revision_override`]);
     /// `None` = the header's. v3.1.0.
     pub mmc3_revision: Option<rustynes_mappers::Mmc3Revision>,
@@ -185,6 +191,7 @@ impl Default for HardwareOptions {
             extra_scanlines: 0,
             cpu_overclock: 1,
             sprite_limit_disabled: false,
+            coherent_midline_copy: false,
             mmc3_revision: None,
             four_score: false,
             // The core's own default since v2.2.x (`zapper_temporal_light`
@@ -212,6 +219,7 @@ impl HardwareOptions {
             extra_scanlines: nes.extra_scanlines(),
             cpu_overclock: nes.cpu_overclock(),
             sprite_limit_disabled: nes.sprite_limit_disabled(),
+            coherent_midline_copy: nes.coherent_midline_copy(),
             mmc3_revision: nes.mmc3_revision_override(),
             four_score: nes.four_score(),
             zapper_temporal_light: nes.zapper_temporal_light(),
@@ -273,6 +281,9 @@ impl HardwareOptions {
         }
         if nes.sprite_limit_disabled() != self.sprite_limit_disabled {
             nes.set_sprite_limit_disabled(self.sprite_limit_disabled);
+        }
+        if nes.coherent_midline_copy() != self.coherent_midline_copy {
+            nes.set_coherent_midline_copy(self.coherent_midline_copy);
         }
         if nes.mmc3_revision_override() != self.mmc3_revision {
             nes.set_mmc3_revision_override(self.mmc3_revision);
@@ -347,7 +358,8 @@ impl HardwareOptions {
     /// palette, extra scanlines (`u16`), CPU overclock, the sprite-limit flag
     /// and the MMC3 revision override (`0` = header, `1` = Sharp, `2` = the
     /// alternate; all three since `.rnm` format 6 and netplay protocol 7,
-    /// v3.1.0), Four Score, Zapper light model, Vs.
+    /// v3.1.0; the coherent mid-line copy flag follows the sprite-limit flag
+    /// since `.rnm` format 8, v3.6.2), Four Score, Zapper light model, Vs.
     /// DIP, Vs. PPU type (`0xFF` = the header's), mirroring override (`0` =
     /// none, else variant + 1), then a code count and each Game Genie code as
     /// a length byte plus ASCII. Every enum is an explicit byte, never a
@@ -381,6 +393,7 @@ impl HardwareOptions {
         w.u16(self.extra_scanlines);
         w.u8(self.cpu_overclock);
         w.u8(u8::from(self.sprite_limit_disabled));
+        w.u8(u8::from(self.coherent_midline_copy));
         w.u8(match self.mmc3_revision {
             None => 0,
             Some(rustynes_mappers::Mmc3Revision::Sharp) => 1,
@@ -456,6 +469,7 @@ impl HardwareOptions {
             return Err("CPU overclock is outside 1..=MAX_CPU_OVERCLOCK");
         }
         let sprite_limit_disabled = flag(r, "sprite-limit flag is not 0 or 1")?;
+        let coherent_midline_copy = flag(r, "coherent mid-line copy flag is not 0 or 1")?;
         let mmc3_revision = match byte(r)? {
             0 => None,
             1 => Some(rustynes_mappers::Mmc3Revision::Sharp),
@@ -498,6 +512,7 @@ impl HardwareOptions {
             extra_scanlines,
             cpu_overclock,
             sprite_limit_disabled,
+            coherent_midline_copy,
             mmc3_revision,
             four_score,
             zapper_temporal_light,
@@ -547,6 +562,10 @@ impl HardwareOptions {
         check(
             self.sprite_limit_disabled != other.sprite_limit_disabled,
             "sprite limit",
+        );
+        check(
+            self.coherent_midline_copy != other.coherent_midline_copy,
+            "coherent mid-line copy",
         );
         check(self.mmc3_revision != other.mmc3_revision, "MMC3 revision");
         check(self.four_score != other.four_score, "Four Score");
@@ -845,6 +864,7 @@ mod tests {
             extra_scanlines: 40,
             cpu_overclock: 3,
             sprite_limit_disabled: true,
+            coherent_midline_copy: true,
             mmc3_revision: Some(rustynes_mappers::Mmc3Revision::Nec),
             four_score: true,
             zapper_temporal_light: false,

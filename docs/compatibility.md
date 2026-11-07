@@ -156,7 +156,7 @@ Bros.) boot and render with their correct 2C04 palette.
 **PlayChoice-10's second-screen instruction menu and its Z80 coprocessor are out
 of scope** — only the NES-game half runs (with the 2C03 palette). All of the above
 is gated on `ConsoleType::VsSystem`/`Playchoice10`; a stock `Nes` cart is byte-for-
-byte unchanged (AccuracyCoin 100.00% -- 141/141 at the time, 144/144 from v2.6.18, both overstated by the older ROM's masked `Misaligned OAM behavior` failure, and 146/146 since v3.1.0 -- plus both ROM oracles byte-identical).
+byte unchanged (AccuracyCoin 100.00% -- 141/141 at the time, 144/144 from v2.6.18, both overstated by the older ROM's masked `Misaligned OAM behavior` failure, 146/146 from v3.1.0, and 147/147 from v3.6.2 (upstream `66e87112`) -- plus both ROM oracles byte-identical).
 Region timing (PAL/Dendy)
 is validated by automated gates (`ppu_region_constants_match_hardware` in
 `rustynes-ppu`; `region_timing.rs` in `rustynes-test-harness`). The R1
@@ -214,7 +214,7 @@ unfinished); the fix is a faithful port of TriCNES's eval-pointer model — the
 corrupted index is the live secondary-OAM evaluation pointer (`OAM2Address`),
 captured at the disable edge during dots 1-64 and committed on re-enable. Default
 builds stay byte-identical for games without such a split; AccuracyCoin
-OAM-Corruption (0x047B) + 139/141 at the time (the two newest upstream PPU tests were then known gaps; 146/146 at upstream `f5f41dc2` since v3.1.0, `docs/STATUS.md`), nestest 0-diff, and blargg/kevtris remain
+OAM-Corruption (0x047B) + 139/141 at the time (the two newest upstream PPU tests were then known gaps; 147/147 at upstream `66e87112` since v3.6.2, `docs/STATUS.md`), nestest 0-diff, and blargg/kevtris remain
 green; `repro_smb3 --movie` idle drop count went 63-80/240 → 0. See `ppu-2c02.md`
 edge-case 2 and `crates/rustynes-test-harness/src/bin/{repro_smb3,smb3_dma_trace}.rs`.
 

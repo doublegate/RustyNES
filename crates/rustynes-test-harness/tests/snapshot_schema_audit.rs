@@ -156,6 +156,13 @@ const CHIPS: &[Chip] = &[
                  for the next line (`spr_extra_*`) ARE serialized (v13 tail)",
             ),
             (
+                "coherent_midline_copy",
+                "config: the v3.6.2 per-game coherent mid-line copy correction, set by \
+                 the core from the ROM's CRC, re-applied by the host, carried in \
+                 `HardwareOptions` and across a power cycle; a copy it is HOLDING is \
+                 serialized as the `copy_v_delay` byte (`COPY_V_HELD`)",
+            ),
+            (
                 "fast_dotloop",
                 "config: runtime performance knob (v2.1.8 A1); selects a code path, holds no state",
             ),

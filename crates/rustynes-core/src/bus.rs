@@ -922,6 +922,12 @@ impl SystemBus {
         // power-on state. Cheap relative to the cart it already holds, and never
         // serialized into the save-state.
         bus.rom_bytes = Some(Box::from(rom_bytes));
+        // v3.6.2: the per-game coherent mid-line copy correction, on by
+        // default for the dumps `game_corrections` lists (Rad Racer). A host
+        // can turn it off; a power cycle carries it (`adopt_settings_from`).
+        bus.ppu.set_coherent_midline_copy(
+            crate::game_corrections::coherent_midline_copy_by_default(rom_bytes),
+        );
         Ok(bus)
     }
 
@@ -1487,6 +1493,18 @@ impl SystemBus {
     #[must_use]
     pub const fn sprite_limit_disabled(&self) -> bool {
         self.ppu.sprite_limit_disabled()
+    }
+
+    /// v3.6.2 — the per-game coherent mid-line copy correction (forwarded to
+    /// the PPU).
+    pub const fn set_coherent_midline_copy(&mut self, on: bool) {
+        self.ppu.set_coherent_midline_copy(on);
+    }
+
+    /// v3.6.2 — whether the coherent mid-line copy correction is on.
+    #[must_use]
+    pub const fn coherent_midline_copy(&self) -> bool {
+        self.ppu.coherent_midline_copy()
     }
 
     /// v2.1.8 A1 — enable/disable the specialized visible-scanline fast dot

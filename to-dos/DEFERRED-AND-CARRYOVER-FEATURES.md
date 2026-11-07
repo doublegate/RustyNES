@@ -441,14 +441,14 @@ variant is what would put the first two in front of a user at all.)*
 > `T-MMC3-BG-A12` (§6b's `[x]` below), and **the CPU-multiplier overclock
 > shipped** in v3.1.0 as `T-CPU-OVERCLOCK` (`Nes::set_cpu_overclock`). The
 > sprite-0 stale shifter is the one item left in §6b; the line plan schedules
-> it as ACC-04 in **v3.3.0**, with ACC-03. AccuracyCoin is 146/146 at upstream
-> `f5f41dc2` (v3.1.0; `docs/STATUS.md`).)*
+> it as ACC-04 in **v3.3.0**, with ACC-03. AccuracyCoin was 146/146 at upstream
+> `f5f41dc2` (v3.1.0) and is 147/147 at `66e87112` since v3.6.2; `docs/STATUS.md`.)*
 
 All remaining hard-tier accuracy residuals share **one root cause** and converge
 on the v2.0.0 one-clock + every-cycle-bus-access refactor. They are **outside the
 AccuracyCoin oracle** (zero production-ROM impact; AccuracyCoin was an exact
 **141/141** on the shipping default core at the time, up from 139/139 when this
-paragraph was written, and is 146/146 since v3.1.0, the earlier figures each
+paragraph was written, was 146/146 from v3.1.0 and is 147/147 since v3.6.2, the earlier figures each
 including the masked `Misaligned OAM behavior` failure — the denominator grew in the v2.0.1 re-sync and v2.0.3 closed the two new
 tests). The maintainer's standing decision through v1.7.0
 is "keep deferring" point-fixes (ADR 0002 stop-condition; 15+ documented

@@ -1988,6 +1988,21 @@ fn enhancements_section(ui: &mut egui::Ui, state: &mut SettingsPanelState, confi
                 ui.weak(crate::t!(SetEnhSpriteInert));
             });
 
+            // v3.6.2: the per-game picture corrections (Rad Racer), on unless
+            // turned off here; same apply flag as the sprite limit.
+            if ui
+                .checkbox(
+                    &mut config.enhancements.disable_game_corrections,
+                    crate::t!(SetDisableGameCorrections),
+                )
+                .changed()
+            {
+                state.apply.overclock = true;
+            }
+            ui.indent("enh-corrections-note", |ui| {
+                ui.weak(crate::t!(SetEnhGameCorrectionsNote));
+            });
+
             ui.horizontal(|ui| {
                 ui.label(crate::t!(SetOverclock));
                 let overclock_changed = ui

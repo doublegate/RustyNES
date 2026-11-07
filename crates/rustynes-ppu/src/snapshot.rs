@@ -35,7 +35,7 @@ use alloc::vec::Vec;
 use thiserror::Error;
 
 use crate::bus::{BgSplitState, ExAttribute};
-use crate::ppu::{FRAMEBUFFER_LEN, Ppu, PpuRegion};
+use crate::ppu::{COPY_V_DELAY, COPY_V_HELD, FRAMEBUFFER_LEN, Ppu, PpuRegion};
 use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 
 /// Schema version for the PPU snapshot blob.
@@ -816,7 +816,23 @@ impl Ppu {
         self.address_bus = r.u16()?;
         self.ale_armed = r.u8()? != 0;
         self.pattern_latch_stale = r.u8()? != 0;
-        self.copy_v_delay = r.u8()?;
+        // v3.6.2: the countdown is 0..=COPY_V_DELAY, or COPY_V_HELD for a
+        // copy the per-game coherent mid-line copy correction is holding. The
+        // correction is the HOST's setting, not snapshot state, so a held
+        // copy restored into a PPU with the correction off lands on the next
+        // dot, exactly as `set_coherent_midline_copy(false)` lands one;
+        // otherwise nothing would ever land it (Antigravity, review round 5 on
+        // #640). Any other value is refused.
+        let copy_v_delay = r.u8()?;
+        self.copy_v_delay = if copy_v_delay == COPY_V_HELD {
+            if self.coherent_midline_copy {
+                COPY_V_HELD
+            } else {
+                1
+            }
+        } else {
+            bounded("copy_v_delay", copy_v_delay, COPY_V_DELAY)?
+        };
 
         // v6: per-sprite shifter halt state (see the write side).
         for h in &mut self.spr_halted {
@@ -1628,6 +1644,42 @@ mod tests {
         assert!(q.ale_armed);
         assert!(q.pattern_latch_stale);
         assert_eq!(q.copy_v_delay, 3);
+    }
+
+    /// v3.6.2, Antigravity on #640 (round 5) — a copy the coherent mid-line
+    /// copy correction is holding (`COPY_V_HELD`) is restored as held only
+    /// into a PPU with the correction on; with it off (the host's setting,
+    /// which the snapshot does not carry) it lands on the next dot, as
+    /// `set_coherent_midline_copy(false)` lands one. A countdown above
+    /// `COPY_V_DELAY` that is not the held marker is refused.
+    #[test]
+    fn a_held_copy_restores_held_only_with_the_correction_on() {
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.set_coherent_midline_copy(true);
+        p.copy_v_delay = COPY_V_HELD;
+        let blob = p.snapshot();
+
+        let mut on = Ppu::new(PpuRegion::Ntsc);
+        on.set_coherent_midline_copy(true);
+        on.restore(&blob).unwrap();
+        assert_eq!(on.copy_v_delay, COPY_V_HELD, "still held with it on");
+
+        let mut off = Ppu::new(PpuRegion::Ntsc);
+        off.restore(&blob).unwrap();
+        assert_eq!(off.copy_v_delay, 1, "lands on the next dot with it off");
+
+        p.copy_v_delay = COPY_V_DELAY + 1;
+        let mut bad = Ppu::new(PpuRegion::Ntsc);
+        assert!(
+            matches!(
+                bad.restore(&p.snapshot()),
+                Err(PpuSnapshotError::FieldOutOfRange {
+                    field: "copy_v_delay",
+                    ..
+                })
+            ),
+            "a countdown no PPU can hold is refused"
+        );
     }
 
     /// v2.3.3 — a slim blob must be dramatically smaller, and the size

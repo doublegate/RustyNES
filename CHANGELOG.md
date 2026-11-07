@@ -26,6 +26,72 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.6.2] - 2026-11-06 - "Latchkey" (the latest AccuracyCoin, 147 of 147, and Rad Racer's stray tiles corrected)
+
+### Breaking
+
+- **Emulation epoch 10**: movies recorded on v3.6.1 (epoch 9) and v3.6.1
+  netplay peers are refused, each with a message naming both epochs, because
+  the *Rad Racer* correction below changes that game's frames from the same
+  inputs.
+- **Movie format 8**: the `HardwareOptions` record gains the per-game
+  correction flag. Format-7 movies are refused as too old; every one was
+  recorded under epoch 9 or earlier, which epoch 10 refuses anyway.
+
+### Fixed
+
+- **Rad Racer's stray tiles at the right of the road and the horizon.** The
+  game writes `$2006` in the middle of scanlines from sprite-0-timed loops
+  whose timing varies by a few dots. When the PPU's delayed address copy
+  lands inside an 8-dot tile fetch, that tile is fetched from two addresses.
+  On about one race frame in eleven that draws a wrong 8-pixel tile in the
+  sand right of the road (line 139), and on most frames a wrong tile at the
+  right of the horizon band where the ground meets it (lines 107-139). A real
+  NES draws these too: a 2012 nesdev report describes "a very noticable
+  glitch" on the right at that line on a console. A **per-game correction**
+  (ADR 0051), on by default for Rad Racer's three dumps only, holds such a
+  copy to the next tile boundary so every tile comes from one address. It is
+  a deliberate departure from hardware. Turn it off with Settings >
+  Enhancements > "Turn off per-game picture corrections" (`[enhancements]
+  disable_game_corrections`), or the libretro core option
+  `rustynes_game_corrections`. Measured over two scripted races (frames
+  700-1499): the line-139 dash on 73 and 68 frames without it, 0 with it.
+  Movies and netplay record it.
+- **A movie or netplay session started while paused used the previous setting
+  of an option changed since the last frame.** The CPU overclock, the sprite
+  limit (both since v3.1.0) and the per-game corrections reached the console
+  only at the top of the next frame produced. A recording started before that
+  frame captured, and replayed, the old value; a netplay handshake announced
+  it, and the session ran with it. Power-on and branch recordings (desktop
+  and browser) and every netplay host, join, spectate and browser-lobby
+  connect now apply the configured options first (CodeRabbit and Antigravity
+  on #640). A branch from a playing movie keeps that movie's options. A
+  movie played from pause now gives back the configured setting when it
+  stops, not the last frame's.
+
+### Withdrawn
+
+- **The attribute-read rule this release first carried.** It gave an
+  attribute fetch the address its own first half drove, to remove the same
+  dash. The diagnosis was wrong: the dash comes from the NAMETABLE read's
+  mixed address. With the rule the dash was still drawn on 68 to 73 of 800
+  frames, only grey instead of sky-coloured, because the first measurement
+  counted sky-coloured pixels only. The rule is withdrawn in both cores (ADR
+  0030, "Withdrawal — 2026-11-06"); every game's PPU behaves as in v3.6.1.
+
+### Changed
+
+- **AccuracyCoin re-synced to upstream `66e87112`: 147 of 147.** Twelve
+  upstream commits since `f5f41dc2` (v3.1.0), among them a new test, `DMC
+  Playback Rate`, a revised `DMA Sync Pretest` and `DMA Landing on Write`, a
+  stack fix in `Misaligned OAM Behavior`, and extra checks in the tests that
+  rely on DMC DMAs. The catalog grows to 152 rows (147 scored), and RustyNES
+  passes all 147 with no emulator change. The mirror ROM is rebuilt from the
+  same commit (an unpatched build reproduces upstream's ROM byte for byte).
+- **The epoch fingerprint records each probe ROM's own hash** (a `rom_fnv`
+  column), so replacing a test ROM is a new probe rather than moved
+  emulation, and a ROM re-sync no longer needs an epoch rise.
+
 ## [3.6.1] - 2026-11-05 - "Threshold" (every dependency at its newest, the MMC5's fetch window ended where rendering ends, and MiSTer save states tied to their region)
 
 ### Breaking

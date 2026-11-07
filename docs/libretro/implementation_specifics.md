@@ -35,6 +35,12 @@ test, the test is named; the tests are the spec.
   desktop applies them (`apply_console_options`), and recorded in every save
   state (see "Save States"). At their defaults nothing is written, and the
   frames equal a bare console's (`the_default_options_leave_the_output_byte_identical`).
+  v3.6.2 adds `rustynes_game_corrections` (`enabled|disabled`, default
+  `enabled`): the per-game corrections of ADR 0051, today *Rad Racer*'s
+  coherent mid-line copy, which the core turns on at load for that game's
+  dumps. `disabled` turns it off and shows the hardware's picture; back to
+  `enabled` restores what the load chose (`correction_base`). The save-state
+  options record carries it as bit 2 of its flags byte.
 * **Core options:** one table (`crates/rustynes-libretro/src/options.rs`),
   declared with `SET_CORE_OPTIONS_V2` (categories, sublabels, value labels)
   when `GET_CORE_OPTIONS_VERSION` reports 2 or more, else with
@@ -135,8 +141,9 @@ AUD-17; `no_serialize_reallocates_the_buffer_sized_at_load`).
 **The options record (v3.6.0, `T-LIBRETRO-EMU-OPTIONS`).** The last 16 bytes
 of every state the core writes record the options that change what the
 console does: `RNLROPTS`, a layout version (1), a flags byte (bit 0 Four
-Score, bit 1 sprite limit removed), the CPU overclock (1-4), the Vs. DIP
-switches forced and their positions, three zero bytes
+Score, bit 1 sprite limit removed, bit 2 per-game corrections off), the CPU
+overclock (1-4), the Vs. DIP switches forced and their positions, three zero
+bytes
 (`options::OptionValues::trailer`). `retro_serialize_size` includes them. The
 desktop records the same options in a movie's header and a netplay
 handshake (`HardwareOptions`, `config_digest`); a libretro frontend replays a
@@ -146,15 +153,19 @@ with it, replacing the menu's values until the frontend next reports an
 option change, and says so in the log when they differ. The overclock goes in
 before the restore, because the state holds the position inside the
 overclocked cycle pattern and the core keeps a restored position only under a
-multiplier that could have produced it; a refused restore puts the
-multiplier and the machine back. A state without a record (every state from
+multiplier that could have produced it. Since v3.6.2 the per-game
+correction setting goes in before the restore too: the PPU keeps a copy the
+coherent mid-line copy correction is holding only while the correction is on,
+so restoring under the menu's setting would replay that frame differently. A
+refused restore puts the multiplier, the correction and the machine back. A state without a record (every state from
 before v3.6.0: its last 16 bytes are zero padding, or a cabinet's section
 data) loads as before and leaves the options alone; a record with a value no
 menu offers (an overclock of 9, a DIP position outside its mask, a non-zero
 reserved byte) refuses the state. Tests: `a_state_carries_its_emulation_options`,
 `states_without_a_record_load_and_bad_records_refuse`,
 `tests::a_refused_restore_under_a_new_multiplier_puts_the_console_back`,
-`tests::a_cabinet_restores_under_the_state_multiplier_on_both_consoles`.
+`tests::a_cabinet_restores_under_the_state_multiplier_on_both_consoles`,
+`tests::a_restore_applies_the_state_correction_first_and_puts_it_back_if_refused`.
 
 **Found, not fixed: a cabinet's state under the overclock.** A Vs.
 `DualSystem` state saved and restored at x2, with no option change at all,

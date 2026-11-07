@@ -1144,7 +1144,28 @@ Per-tab content the panel sections render (`debugger/settings_panel.rs`):
   (ADR 0032 scopes enhancements out of dual mode). The test harness builds its
   own `Nes` and never sets it. **Disable sprite limit** reaches the core since
   v3.1.0 (`Nes::set_sprite_limit_disabled`, applied beside the v3.1.0 CPU
-  overclock outside a movie session; until then the setting was inert). The **Accuracy** group above it carries OAM decay and,
+  overclock outside a movie session; until then the setting was inert).
+  **Turn off per-game picture corrections** (v3.6.2, `[enhancements]
+  disable_game_corrections`, default `false`) switches off the corrections
+  in `rustynes_core::game_corrections` (ADR 0051): today *Rad Racer*'s
+  coherent mid-line copy, which `Nes::from_rom` turns on for that game's dumps
+  and which hides a glitch the hardware draws. `EmuCore::set_nes` captures what
+  the freshly loaded console chose (`game_correction_default`), and every frame
+  outside a movie session holds the console at that value unless the setting
+  is ticked, so ticking and unticking it mid-game works. Movies record it
+  (`HardwareOptions`, `.rnm` format 8) and netplay peers must match (the
+  configuration digest). A power-on recording does not wait for that
+  frame-top step: `EmuCore::prepare_power_on_recording` (v3.6.2) ends any
+  playback and applies the configured CPU overclock, sprite limit and
+  corrections before `MovieUi::start_recording_power_on` captures the
+  options, so a setting changed while paused is the one recorded. The other
+  captures taken outside `produce_one_frame` do the same through
+  `EmuCore::sync_idle_player_options`: a branch recording (desktop and the
+  winit browser build; the lightweight canvas build has no player options to
+  sync) and every netplay handshake, whose identity comes from
+  `EmuCore::netplay_identity`. The sync applies only while no movie is
+  recording or playing, as the frame-top step does, so a branch from a playing
+  movie keeps that movie's options. A Vs. DualSystem cabinet never gets a correction. The **Accuracy** group above it carries OAM decay and,
   from v2.9.8, **Famicom console (PPU leaves reset early)** —
   `[emulation] famicom_console` (default `false`, the NES model, byte-identical).
   `console_model_for` maps it to `rustynes_core::ConsoleModel`;
@@ -1361,8 +1382,8 @@ builds stay byte-identical and AccuracyCoin holds 139/141 (the two newest upstre
 Frontend-only, additive, English-by-default — with the default locale every
 label is byte-identical to v1.6.0. (At v1.7.0 AccuracyCoin held 139/141; the two
 PPU gaps closed at v2.0.3, the re-synced catalog read 144/144 from v2.6.18,
-and 146/146 from v3.1.0, whose re-sync showed the 144/144 had hidden a
-masked failure.) See
+146/146 from v3.1.0 (whose re-sync showed the 144/144 had hidden a
+masked failure), and 147/147 from v3.6.2 (upstream `66e87112`).) See
 ADR 0023 for the rationale (why a hand-rolled catalog over Fluent/ICU/`rust-i18n`
 and the wasm size budget).
 

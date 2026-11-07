@@ -120,6 +120,12 @@ const START_FRAMES: u32 = 6;
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Fingerprint {
     rom: String,
+    /// v3.6.2 — FNV-1a 64 of the ROM file's own bytes, or `None` for a row
+    /// written before the column existed. A probe whose ROM was REPLACED (an
+    /// upstream re-sync of a test ROM) is a new probe, not moved emulation:
+    /// the epoch is about the emulator's behaviour on the same input, and a
+    /// different ROM is a different input.
+    rom_fnv: Option<u64>,
     frames: u32,
     framebuffer: u64,
     audio: u64,
@@ -129,24 +135,39 @@ struct Fingerprint {
 
 impl Fingerprint {
     fn row(&self) -> String {
+        let rom_fnv = self
+            .rom_fnv
+            .map_or_else(|| "-".to_string(), |h| format!("{h:016x}"));
         format!(
-            "{}\t{}\t{:016x}\t{:016x}\t{:016x}\t{}",
+            "{}\t{rom_fnv}\t{}\t{:016x}\t{:016x}\t{:016x}\t{}",
             self.rom, self.frames, self.framebuffer, self.audio, self.ram, self.cycles
         )
     }
 
+    /// A row: seven columns since v3.6.2 (`rom_fnv` second, `-` for unknown),
+    /// or the six-column form written before it.
     fn parse(line: &str) -> Option<Self> {
         let c: Vec<&str> = line.split('\t').collect();
-        if c.len() != 6 {
-            return None;
-        }
+        let (rom_fnv, rest) = match c.len() {
+            7 => (
+                if c[1] == "-" {
+                    None
+                } else {
+                    Some(u64::from_str_radix(c[1], 16).ok()?)
+                },
+                &c[2..],
+            ),
+            6 => (None, &c[1..]),
+            _ => return None,
+        };
         Some(Self {
             rom: c[0].to_string(),
-            frames: c[1].parse().ok()?,
-            framebuffer: u64::from_str_radix(c[2], 16).ok()?,
-            audio: u64::from_str_radix(c[3], 16).ok()?,
-            ram: u64::from_str_radix(c[4], 16).ok()?,
-            cycles: c[5].parse().ok()?,
+            rom_fnv,
+            frames: rest[0].parse().ok()?,
+            framebuffer: u64::from_str_radix(rest[1], 16).ok()?,
+            audio: u64::from_str_radix(rest[2], 16).ok()?,
+            ram: u64::from_str_radix(rest[3], 16).ok()?,
+            cycles: rest[4].parse().ok()?,
         })
     }
 }
@@ -185,6 +206,7 @@ fn measure(p: &Probe) -> Fingerprint {
     }
     Fingerprint {
         rom: p.rom.to_string(),
+        rom_fnv: Some(fnv1a64(&bytes)),
         frames: p.frames,
         framebuffer: fnv1a64(&frame_hashes),
         audio: fnv1a64(&audio),
@@ -238,7 +260,7 @@ fn render_table(last_release_epoch: u32, rows: &[Fingerprint]) -> String {
     );
     let _ = writeln!(out, "# epoch\t{EMULATION_EPOCH}");
     let _ = writeln!(out, "# last_release_epoch\t{last_release_epoch}");
-    out.push_str("# rom\tframes\tframebuffer_fnv\taudio_fnv\tram_fnv\tcpu_cycles\n");
+    out.push_str("# rom\trom_fnv\tframes\tframebuffer_fnv\taudio_fnv\tram_fnv\tcpu_cycles\n");
     for r in rows {
         out.push_str(&r.row());
         out.push('\n');
@@ -254,18 +276,34 @@ enum Verdict {
     /// The table holds this ROM at this frame count with different output:
     /// emulation moved, which needs a raised epoch.
     Changed,
-    /// The table has no row for this ROM at this frame count: a probe added
-    /// to the panel, blessable at any epoch.
+    /// The table has no row for this ROM at this frame count, or (v3.6.2)
+    /// has one for different ROM bytes: a probe added to the panel, or a
+    /// probe's ROM replaced, blessable at any epoch.
     New,
 }
 
 fn classify(now: &Fingerprint, rows: &[Fingerprint]) -> Verdict {
-    if rows.contains(now) {
+    // A row is the same probe when it names the same ROM at the same frame
+    // count AND, where both sides record it, the same ROM bytes. A row from
+    // before the `rom_fnv` column matches on the path alone, as it always did.
+    let same_probe = |r: &Fingerprint| {
+        r.rom == now.rom
+            && r.frames == now.frames
+            && match (r.rom_fnv, now.rom_fnv) {
+                (Some(a), Some(b)) => a == b,
+                _ => true,
+            }
+    };
+    let same_output = |r: &Fingerprint| {
+        same_probe(r)
+            && r.framebuffer == now.framebuffer
+            && r.audio == now.audio
+            && r.ram == now.ram
+            && r.cycles == now.cycles
+    };
+    if rows.iter().any(same_output) {
         Verdict::Unchanged
-    } else if rows
-        .iter()
-        .any(|r| r.rom == now.rom && r.frames == now.frames)
-    {
+    } else if rows.iter().any(same_probe) {
         Verdict::Changed
     } else {
         Verdict::New
@@ -276,6 +314,7 @@ fn classify(now: &Fingerprint, rows: &[Fingerprint]) -> Verdict {
 fn a_new_probe_is_not_a_moved_output() {
     let row = |rom: &str, frames: u32, fb: u64| Fingerprint {
         rom: rom.into(),
+        rom_fnv: Some(0xA),
         frames,
         framebuffer: fb,
         audio: 1,
@@ -288,6 +327,16 @@ fn a_new_probe_is_not_a_moved_output() {
     assert_eq!(classify(&row("b.nes", 60, 7), &table), Verdict::New);
     // A new frame count for a known ROM is a new probe, not a moved one.
     assert_eq!(classify(&row("a.nes", 90, 8), &table), Verdict::New);
+    // v3.6.2: the same path holding different ROM bytes (an upstream
+    // re-sync) is a new probe too, whatever its output.
+    let mut resynced = row("a.nes", 60, 8);
+    resynced.rom_fnv = Some(0xB);
+    assert_eq!(classify(&resynced, &table), Verdict::New);
+    // A row written before the column (no hash) matches on the path, so a
+    // moved output under it is still caught.
+    let mut legacy = row("a.nes", 60, 7);
+    legacy.rom_fnv = None;
+    assert_eq!(classify(&row("a.nes", 60, 8), &[legacy]), Verdict::Changed);
 }
 
 #[test]
@@ -303,6 +352,23 @@ fn output_moves_only_with_the_emulation_epoch() {
         "last_release_epoch {} is above EMULATION_EPOCH {EMULATION_EPOCH}",
         table.last_release_epoch
     );
+    // The six-column (pre-`rom_fnv`) form is still READ, so an old table can
+    // be blessed forward, but the committed table must not keep it: a legacy
+    // row matches on its path alone and would pass without ever recording its
+    // ROM's hash (Antigravity on #640). A bless writes every row with one.
+    if !bless {
+        let legacy: Vec<&str> = table
+            .rows
+            .iter()
+            .filter(|r| r.rom_fnv.is_none())
+            .map(|r| r.rom.as_str())
+            .collect();
+        assert!(
+            legacy.is_empty(),
+            "epoch_fingerprint.tsv has rows without rom_fnv; re-bless with \
+             RUSTYNES_BLESS_EPOCH_FINGERPRINT=1: {legacy:?}"
+        );
+    }
 
     let mut moved: Vec<String> = Vec::new();
     let mut added: Vec<String> = Vec::new();
@@ -311,7 +377,23 @@ fn output_moves_only_with_the_emulation_epoch() {
         match classify(f, &table.rows) {
             Verdict::Unchanged => {}
             Verdict::Changed => moved.push(line),
-            Verdict::New => added.push(line),
+            Verdict::New => {
+                // Say WHY it is new when the path is already recorded: a
+                // replaced ROM (its bytes changed) reads very differently
+                // from a probe that is simply missing (Antigravity on #640).
+                let replaced = table
+                    .rows
+                    .iter()
+                    .find(|r| r.rom == f.rom && r.frames == f.frames && r.rom_fnv != f.rom_fnv);
+                added.push(match replaced {
+                    Some(r) => format!(
+                        "{line}  [ROM bytes changed: the table records rom_fnv {}]",
+                        r.rom_fnv
+                            .map_or_else(|| "-".to_owned(), |v| format!("{v:016x}"))
+                    ),
+                    None => line,
+                });
+            }
         }
     }
     // The rule (ADR 0045): output may differ from the LAST RELEASE only under

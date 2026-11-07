@@ -4,13 +4,13 @@
 //! list mirrors `AccuracyCoin.asm`'s 22 `Suite_*` pages: each page
 //! contributes a header string + a sequence of `table "name", $FF,
 //! result_addr, run_addr` macro entries (and, since upstream `f5f41dc2`, the
-//! byte-saving `tblf1` / `tblf2` variants of it). Total: 151 entries across
-//! 22 suites.
+//! byte-saving `tblf1` / `tblf2` variants of it). Total: 152 entries across
+//! 22 suites at upstream `66e87112` (v3.6.2; 151 at `f5f41dc2`).
 //!
 //! ## Source of truth
 //!
 //! The authoritative list lives next to the ROM at
-//! `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv` as a 151-line
+//! `tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv` as a 152-line
 //! `(suite<TAB>name<TAB>result_addr)` file extracted from upstream
 //! `AccuracyCoin.asm` by `scripts/accuracycoin-build/extract_catalog.py`
 //! (walk each `Suite_*` block's row macros, resolving `result_symbol` to its
@@ -76,8 +76,9 @@ pub struct CatalogEntry {
 /// pointer's high byte against `3` and branching past the test when it matches.
 /// Five catalog rows (the whole `Power On State` suite: `PPU Reset Flag`,
 /// `CPU RAM`, `CPU Registers`, `PPU RAM`, `Palette RAM`) point here, so the
-/// catalog's 151 rows carry **146 scored results and one shared scratch byte**
-/// (149 and 144 before the v3.1.0 re-sync to upstream `f5f41dc2`).
+/// catalog's 152 rows carry **147 scored results and one shared scratch byte**
+/// (151 and 146 at the v3.1.0 re-sync to upstream `f5f41dc2`, 149 and 144
+/// before it).
 ///
 /// ## Why this constant had to exist
 ///
@@ -90,8 +91,8 @@ pub struct CatalogEntry {
 /// read as 149 of 149 and the other as 144 of 144 — from one ROM, with nothing
 /// wrong in between.
 ///
-/// Excluding the sentinel made the count **144 in both windows** (146 since
-/// v3.1.0). It changes no
+/// Excluding the sentinel made the count **144 in both windows** (146 from
+/// v3.1.0, 147 since v3.6.2). It changes no
 /// verdict about any real test, and it removes five rows from every "entry for
 /// entry" claim that were never entries.
 pub const RESULT_DRAW_TEST: u16 = 0x03FF;
@@ -443,8 +444,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_exactly_151_entries() {
-        assert_eq!(catalog().len(), 151, "AccuracyCoin catalog size drifted");
+    fn catalog_has_exactly_152_entries() {
+        // 152 at upstream `66e87112` (v3.6.2, `DMC Playback Rate` added);
+        // 151 at `f5f41dc2`.
+        assert_eq!(catalog().len(), 152, "AccuracyCoin catalog size drifted");
     }
 
     #[test]
@@ -484,17 +487,23 @@ mod tests {
         // topics so much as a re-home for the advanced PPU tests that had
         // outgrown `PPU Misc.`, so eleven pre-existing tests changed suite
         // in the same commit without changing address or meaning.
+        //
+        // v3.6.2 (upstream `66e87112`): the eight unofficial-instruction page
+        // headers are spelled as the ROM now prints them, `SLO` where they
+        // read `Unofficial Instructions: SLO` (the `.byte` header strings
+        // were shortened upstream; the `;;` comment above each kept the long
+        // form). Same pages, same tests.
         let expected = [
             "CPU Behavior",
             "Addressing mode wraparound",
-            "Unofficial Instructions: SLO",
-            "Unofficial Instructions: RLA",
-            "Unofficial Instructions: SRE",
-            "Unofficial Instructions: RRA",
-            "Unofficial Instructions: *AX",
-            "Unofficial Instructions: DCP",
-            "Unofficial Instructions: ISC",
-            "Unofficial Instructions: SH*",
+            "SLO",
+            "RLA",
+            "SRE",
+            "RRA",
+            "*AX",
+            "DCP",
+            "ISC",
+            "SH*",
             "Unofficial Immediates",
             "CPU Interrupts",
             "APU Registers and DMA tests",
@@ -530,6 +539,8 @@ mod tests {
         assert_eq!(by_name.get("Frozen OAM2 Increment"), Some(&0x0493));
         assert_eq!(by_name.get("Misaligned OAM DMA"), Some(&0x0494));
         assert_eq!(by_name.get("Misaligned OAM2 Address"), Some(&0x0495));
+        // v3.6.2 (upstream `66e87112`, `f530d12`): the one test added since.
+        assert_eq!(by_name.get("DMC Playback Rate"), Some(&0x0498));
     }
 
     #[test]
@@ -571,7 +582,7 @@ mod tests {
         ram[e0.result_addr as usize] = 0x01;
         ram[e1.result_addr as usize] = (3 << 2) | 0x02; // fail code 3
         let statuses = decode_results(&ram).expect("decode");
-        assert_eq!(statuses.len(), 151);
+        assert_eq!(statuses.len(), catalog().len());
         assert_eq!(statuses[0], TestStatus::Pass);
         assert_eq!(statuses[1], TestStatus::Fail(3));
         // The five Power On State tests share $03FF (left at 0x00).

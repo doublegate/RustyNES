@@ -89,11 +89,11 @@ Primary source clusters:
 | Behavior | Required emulator treatment | Project status |
 |---|---|---|
 | Frame counter write delay | $4017 effects occur after 3 or 4 CPU clocks depending on APU-cycle phase | Implemented for test ROMs; keep in APU docs |
-| 4-step IRQ | Frame IRQ is set only in 4-step mode when IRQ inhibit is clear; $4015 read clears old flag | Implemented; no AccuracyCoin residual (146/146 at upstream `f5f41dc2`, v3.1.0) |
+| 4-step IRQ | Frame IRQ is set only in 4-step mode when IRQ inhibit is clear; $4015 read clears old flag | Implemented; no AccuracyCoin residual (147/147 at upstream `66e87112`, v3.6.2) |
 | 5-step mode | No frame IRQ; mode write can clock quarter/half frame units | Implemented |
 | Nonlinear mixer | Use nonlinear pulse and TND paths before console filtering | Implemented |
-| DMC load vs reload DMA | Model different scheduling phase, dummy cycle, and alignment cycle | Implemented; no AccuracyCoin residual (146/146, v3.1.0) |
-| DMA register-read bugs | Repeated halted reads must affect $2007/$4015/$4016/$4017 side-effect registers | Implemented; blargg's DMA suites pass and AccuracyCoin has no residual (146/146, v3.1.0) |
+| DMC load vs reload DMA | Model different scheduling phase, dummy cycle, and alignment cycle | Implemented; no AccuracyCoin residual (147/147, v3.6.2) |
+| DMA register-read bugs | Repeated halted reads must affect $2007/$4015/$4016/$4017 side-effect registers | Implemented; blargg's DMA suites pass and AccuracyCoin has no residual (147/147, v3.6.2) |
 | Controller strobe/read | $4016 low 3 bits latch OUT lines; $4016/$4017 reads clock device and return D0-D4 plus open bus | Standard pads + **Four Score** + **Arkanoid Vaus paddle + Zapper** via the opt-in per-port `InputDevice` overlay; microphone / other expansion devices remain deferred |
 | DMC controller conflict | Reads can lose or duplicate joypad bits during DMC DMA | **Resolved (v1.4.0).** Modelled in `Bus::dmc_dma_read` (the `$4016`/`$4017` DMC-fetch conflict clocks the controller shift register, ORing open-bus high bits with the controller read; PAL / non-`$4000`-page guarded). Verified by the strict blargg `dmc_dma_during_read4/dma_4016_read`, `sprdma_and_dmc_dma` (+`_512`), and the `read_joy3/count_errors`/`count_errors_fast` conflict-stress smokes (`count_errors` renders "Conflicts: 149/1000", all compensated) — all green |
 
@@ -120,7 +120,7 @@ Primary source clusters:
 | CPU interrupts | `cpu_interrupts_v2`, IRQ trace fixture, mapper IRQ tests | Passing; the C1 residual (`mmc3_test_2/4` #3) closed in v3.0.0 |
 | PPU vblank/open bus | `ppu_vbl_nmi`, `ppu_open_bus`, PPU state traces | Passing; keep traces for future changes |
 | Sprites/OAM | sprite hit/overflow, `oam_read`, `oam_stress`, AccuracyCoin | Passing |
-| APU/DMA | `apu_test`, `apu_mixer`, `dmc_dma_during_read4`, `sprdma_and_dmc_dma`, `read_joy3`, `pal_apu_tests`, `240pee` (240p suite) | Passing; no AccuracyCoin residual (146/146, v3.1.0). v1.4.0 added the `240pee` UxROM+BNROM render gates and confirmed the DMC-controller-conflict coverage |
+| APU/DMA | `apu_test`, `apu_mixer`, `dmc_dma_during_read4`, `sprdma_and_dmc_dma`, `read_joy3`, `pal_apu_tests`, `240pee` (240p suite) | Passing; no AccuracyCoin residual (147/147, v3.6.2). v1.4.0 added the `240pee` UxROM+BNROM render gates and confirmed the DMC-controller-conflict coverage |
 | Mapper timing | `mmc3_test_2`, `mmc3_irq_tests`, Holy Mapperel, mapper-specific ROMs | MMC3: all of `mmc3_test_2` strict (v3.0.0). VRC2/4: AWJ's `vrc24test` is still not in the corpus; coverage is `m22`'s CHR-bank walk (`tests/m22.rs`) and the local dumps in `tests/roms/external/` |
 | Input | Standard pads, DMC conflict, Four Score/Zapper/expansion devices | Standard pads only; expanded devices are v1.x |
 | Commercial canaries | User-supplied external snapshots, never committed ROM bytes | 60-ROM oracle exists |
