@@ -64,10 +64,18 @@ incompatible-rust-versions = "fallback"
 # APPENDED after the user file's (observed order on the rustc line:
 # `target-cpu=native ... fuse-ld=mold ... target-cpu=x86-64-v3`), and rustc takes
 # the LAST `-C target-cpu`, so the alias wins while the user's linker flags
-# survive. A `RUSTFLAGS` environment variable still replaces all of it. Check
+# survive. Two caveats, measured 2026-11-07 (PR #641 review): the merge needs
+# the user's `rustflags` to be an ARRAY -- a string-form `rustflags = "-C ..."`
+# makes Cargo refuse the configuration ("could not load Cargo configuration"),
+# so convert it to `["-C", "..."]`; and a `CARGO_TARGET_<TRIPLE>_RUSTFLAGS`
+# environment variable does NOT outrank the alias (its flags land between the
+# file's and the alias's, which stays last). A `RUSTFLAGS` environment variable
+# still replaces all of it. Check
 # with `-v` that the last `-C target-cpu` on the final rustc line is the one you
-# asked for. These are x86-64 aliases: an Apple Silicon or other ARM host cannot
-# target `x86-64` or `x86-64-v3`.
+# asked for. `full-baseline` and `full-v3` are x86-64 aliases: an Apple Silicon
+# or other ARM host cannot target `x86-64` or `x86-64-v3`. `full-native` is valid
+# everywhere, so it also carries the `aarch64-apple-darwin` and
+# `aarch64-unknown-linux-gnu` keys.
 #
 # The CPU flag changes no emulated output (Rust enables no fast-math / FP
 # contraction under target-cpu), and no speed claim is made: none is measured,
@@ -100,7 +108,7 @@ incompatible-rust-versions = "fallback"
 full-run = "run --release -p rustynes-frontend --features full --"
 full-build = "build --release -p rustynes-frontend --features full"
 full-baseline = "build --profile release-baseline -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-apple-darwin.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-pc-windows-msvc.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-pc-windows-gnu.rustflags=[\"-C\",\"target-cpu=x86-64\"]"
-full-native = "build --profile release-native -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-apple-darwin.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-pc-windows-msvc.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-pc-windows-gnu.rustflags=[\"-C\",\"target-cpu=native\"]"
+full-native = "build --profile release-native -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-apple-darwin.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-pc-windows-msvc.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-pc-windows-gnu.rustflags=[\"-C\",\"target-cpu=native\"] --config target.aarch64-apple-darwin.rustflags=[\"-C\",\"target-cpu=native\"] --config target.aarch64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=native\"]"
 full-v3 = "build --profile release-v3 -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-apple-darwin.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-pc-windows-msvc.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-pc-windows-gnu.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"]"
 
 # Resilient crates.io downloads — the permanent fix for the recurring CI flake.
