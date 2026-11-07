@@ -121,7 +121,7 @@ cargo run --release -p rustynes-frontend                 # opens with no ROM; me
 cargo full-run path/to/rom.nes                           # run the maximal native binary (alias ends in `--`, so flags forward, e.g. `cargo full-run --fullscreen rom.nes`)
 cargo full-build                                         # build it (= --release -p rustynes-frontend --features full)
 cargo full-native                                        # same, tuned for THIS CPU (release-native + target-cpu=native; not portable; target/release-native/rustynes)
-cargo full-v3                                            # same, for any AVX2 x86-64 PC (release-v3 + target-cpu=x86-64-v3; target/release-v3/rustynes)
+cargo full-v3                                            # same, for an x86-64-v3 PC (the whole level, not just AVX2; release-v3; target/release-v3/rustynes)
 cargo full-baseline                                      # same, pinned to target-cpu=x86-64 (what releases ship; the A/B baseline -- a user cargo config can make plain full-build native)
 # WASM-only features (script-wasm, browser-cheevos, wasm-canvas) are excluded by design.
 # Default keys P1: arrows = D-pad, Z = A, X = B, Enter = Start, RShift = Select.

@@ -33,9 +33,11 @@ cycle-accurate core later replaced.
   the `release-native` profile), at `target/release-native/rustynes`. Not
   portable, so release binaries keep the baseline build. No speed-up over
   `full-build` is measured yet.
-- **`cargo full-v3`**: the same binary for any x86-64 PC with AVX2 (Intel
-  Haswell, AMD Zen and later; `-C target-cpu=x86-64-v3`, the `release-v3`
-  profile), at `target/release-v3/rustynes`. It is the one to copy to another
+- **`cargo full-v3`**: the same binary for an x86-64 PC that has the whole
+  x86-64-v3 level (`-C target-cpu=x86-64-v3`: AVX, AVX2, BMI1/2, F16C, FMA,
+  LZCNT, MOVBE; Intel Core from Haswell and AMD from Excavator / Zen, not
+  every Pentium, Celeron or Atom of those years), in the `release-v3`
+  profile, at `target/release-v3/rustynes`. It is the one to copy to another
   modern PC; on the machine that built it, `full-native` enables everything it
   does and more. Not measured yet either.
 - **`cargo full-baseline`**: the same binary with `-C target-cpu=x86-64`
