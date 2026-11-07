@@ -26,6 +26,24 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Added
+
+- **`cargo full-native`**: the `cargo full-build` binary (every native
+  feature) built for the building machine's own CPU (`-C target-cpu=native`,
+  the `release-native` profile), at `target/release-native/rustynes`. Not
+  portable, so release binaries keep the baseline build. No speed-up over
+  `full-build` is measured yet.
+- **`cargo full-v3`**: the same binary for any x86-64 PC with AVX2 (Intel
+  Haswell, AMD Zen and later; `-C target-cpu=x86-64-v3`, the `release-v3`
+  profile), at `target/release-v3/rustynes`. It is the one to copy to another
+  modern PC; on the machine that built it, `full-native` enables everything it
+  does and more. Not measured yet either.
+- **`cargo full-baseline`**: the same binary with `-C target-cpu=x86-64`
+  pinned, the target the release binaries use, at
+  `target/release-baseline/rustynes`. It is the "before" column for comparing
+  the three, and it is needed because a personal cargo configuration that
+  sets `target-cpu=native` makes a plain `cargo full-build` a native build.
+
 ## [3.6.2] - 2026-11-06 - "Latchkey" (the latest AccuracyCoin, 147 of 147, and Rad Racer's stray tiles corrected)
 
 ### Breaking

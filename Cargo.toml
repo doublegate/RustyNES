@@ -328,6 +328,25 @@ panic = "unwind"
 [profile.release-native]
 inherits = "release"
 
+# The portable-but-modern middle ground (`cargo full-v3`):
+#   RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --profile release-v3 -p rustynes-frontend
+# x86-64-v3 = AVX2 + BMI1/2 + FMA + MOVBE + LZCNT, which any Intel Haswell (2013)
+# or AMD Zen (2017) and later runs. It is a SUBSET of what `target-cpu=native`
+# enables on such a host, so it is the binary to hand to another modern PC, not a
+# faster one for this machine. Its own profile keeps its objects apart from
+# both `release` and `release-native`. Like `release-native`, never shipped.
+[profile.release-v3]
+inherits = "release"
+
+# The A/B baseline (`cargo full-baseline`): `-C target-cpu=x86-64` pinned
+# explicitly, which is what the shipped release binaries are built for. It
+# exists because a user-level cargo config can make plain `--release` a native
+# build (the maintainer's does), so `full-build` is not a baseline on such a
+# machine. Its own profile keeps it from fighting `full-build` over
+# `target/release/` (different flags there would rebuild each other).
+[profile.release-baseline]
+inherits = "release"
+
 # v2.8.0 (libretro audit L-1.2): a patched copy of `rust-libretro-sys` 0.3.2,
 # whose generated `retro_game_info` was an opaque one-byte struct, so the core
 # never received the frontend's game. See `vendor/rust-libretro-sys/VENDORED.md`.

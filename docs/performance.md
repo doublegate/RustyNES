@@ -562,6 +562,25 @@ artifact:
   RUSTFLAGS="-C target-cpu=native" cargo build --profile release-native -p rustynes-frontend
   ```
 
+  `cargo full-native` (`.cargo/config.toml`) is this recipe with the `full`
+  feature set, the host-tuned twin of `cargo full-build`; it writes
+  `target/release-native/rustynes`. It sets the flag through two `--config`
+  overrides, `build.rustflags` and `target.x86_64-unknown-linux-gnu.rustflags`,
+  because Cargo prefers a per-triple `rustflags` over `build.rustflags`: with
+  only the first, a user-level `~/.cargo/config.toml` that sets per-triple
+  flags silently wins (measured 2026-11-06, when a `full-v3` build compiled
+  every crate with `native`). Command-line arrays are appended after the user
+  file's, and rustc takes the last `-C target-cpu`, so the alias's flag wins;
+  an exported `RUSTFLAGS` still replaces everything. Check the last
+  `-C target-cpu` on the final rustc line of a `-v` build. No speed-up over
+  `full-build` is measured yet: A/B them with `scripts/perf/ab_check.sh`
+  before claiming one, and if your own cargo config already sets
+  `target-cpu=native`, plain `full-build` is a native build too, so the
+  baseline must pin `target-cpu=x86-64` explicitly. `cargo full-baseline`
+  does that, in its own `release-baseline` profile
+  (`target/release-baseline/rustynes`), so the three-way comparison is
+  `full-baseline` against `full-v3` against `full-native`.
+
 - **`x86-64-v3` (portable-but-modern desktop).** A middle ground that stays
   portable across essentially all 2015-and-later x86-64 desktops (AVX2 + BMI2 +
   FMA) without pinning to one exact CPU:
@@ -572,6 +591,12 @@ artifact:
 
   Useful for a self-built desktop binary; not wired into the release matrix
   (which ships the maximally-portable baseline `x86-64` build).
+  `cargo full-v3` builds it with the `full` features in the `release-v3`
+  profile, at `target/release-v3/rustynes`. On a host that has AVX2,
+  `target-cpu=native` enables a superset of v3's features plus the host's own
+  scheduling model (the maintainer's i9-10850K, reported by rustc as
+  `skylake`: 26 target features under native, 18 under v3), so v3 is the
+  binary for another machine rather than a faster one for this one.
 
 ### v2.1.8 "Performance" A1 — specialized visible-scanline fast dot path
 

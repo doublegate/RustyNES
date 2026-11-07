@@ -41,9 +41,57 @@ incompatible-rust-versions = "fallback"
 # be eaten by `cargo run`) is forwarded to the emulator binary, not to Cargo.
 # `full-build` takes no binary args, so it has no trailing `--`. These names do
 # not collide with any built-in cargo subcommand.
+#
+# `full-native` is the same `full` binary tuned for THIS machine's CPU: the
+# `release-native` profile (inherits `release`, so fat LTO / one codegen unit /
+# panic=abort / opt-level 3 all carry over) plus `-C target-cpu=native`. Cargo
+# profiles cannot carry rustflags on stable, so the flag rides on the alias as
+# `--config` overrides; the separate profile keeps the host-tuned objects in
+# `target/release-native/`, out of the portable release cache, and the binary
+# lands at `target/release-native/rustynes`. NOT portable: never ship it.
+#
+# WHY THE ALIAS SETS THE FLAG TWICE (measured 2026-11-06). Cargo reads
+# `target.<triple>.rustflags` IN PREFERENCE TO `build.rustflags`, so a user-level
+# `~/.cargo/config.toml` with a per-triple `rustflags` (the maintainer's sets
+# `target-cpu=native` plus mold there) made a `build.rustflags`-only alias a
+# silent no-op: the first `full-v3` build compiled every crate (403 rustc calls)
+# with `native` and none with `x86-64-v3`. The alias therefore also sets
+# `target.x86_64-unknown-linux-gnu.rustflags`. Command-line `--config` arrays are
+# APPENDED after the user file's (observed order on the rustc line:
+# `target-cpu=native ... fuse-ld=mold ... target-cpu=x86-64-v3`), and rustc
+# takes the LAST `-C target-cpu`, so the alias wins while the user's linker
+# flags survive. The triple key covers Linux x86-64; `build.rustflags` covers a
+# host with no per-triple rustflags of its own (macOS, Windows). A host that
+# sets per-triple rustflags under ANOTHER triple overrides the alias there, and a
+# `RUSTFLAGS` environment variable replaces all of it. Check with `-v` that the
+# last `-C target-cpu` on the final rustc line is the one you asked for.
+#
+# The CPU flag changes no emulated output (Rust enables no fast-math / FP
+# contraction under target-cpu), but any speed claim still needs the A/B in
+# `scripts/perf/ab_check.sh`; none is measured yet. On a machine whose own
+# config already sets `target-cpu=native`, plain `full-build` is ALREADY a
+# native build, so the A/B baseline must pin `target-cpu=x86-64` explicitly.
+#
+# `full-v3` is the portable-but-modern build: `-C target-cpu=x86-64-v3` (AVX2,
+# BMI1/2, FMA, MOVBE, LZCNT; any Intel Haswell or AMD Zen and later) in the
+# `release-v3` profile, at `target/release-v3/rustynes`. On a host that has
+# those features, `native` enables everything v3 does PLUS the host's remaining
+# features and its scheduling model (measured on the maintainer's i9-10850K,
+# which rustc reports as `skylake`: 26 target features under native, 18 under
+# v3), so v3 is the one to copy to another machine, not a faster one for this
+# machine. Same two-key override and precedence traps; same A/B rule.
+#
+# `full-baseline` pins `-C target-cpu=x86-64`, the target the shipped release
+# binaries use, in the `release-baseline` profile, at
+# `target/release-baseline/rustynes`. It is the honest "before" column for a
+# three-way A/B (`full-baseline` vs `full-v3` vs `full-native`) on any machine,
+# including one whose own cargo config makes plain `full-build` native.
 [alias]
 full-run = "run --release -p rustynes-frontend --features full --"
 full-build = "build --release -p rustynes-frontend --features full"
+full-baseline = "build --profile release-baseline -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=x86-64\"]"
+full-native = "build --profile release-native -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=native\"]"
+full-v3 = "build --profile release-v3 -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"]"
 
 # Resilient crates.io downloads — the permanent fix for the recurring CI flake.
 # Jobs intermittently failed fetching crates with curl errors like
