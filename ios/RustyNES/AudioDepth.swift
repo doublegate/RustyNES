@@ -59,6 +59,16 @@ final class AudioDepthModel: ObservableObject {
         didSet { persistFloat(crossfeed, "audioDepthCrossfeed"); notify() }
     }
 
+    /// v3.7.0 (D24 row 3) — the 20-band graphic EQ's gains in dB (-12..=12), the
+    /// desktop's EQ run by the bridge on the drained audio (`setEqualizerGains`).
+    /// Independent of `enabled` (that switches this sink's own stages): all zero is
+    /// off and leaves the audio bit-identical. Length `graphicBandCount`.
+    @Published var graphicEqDb: [Float] {
+        didSet { persistFloats(graphicEqDb, "graphicEq20"); notify() }
+    }
+    /// Bands in the bridge's EQ.
+    static let graphicBandCount = 20
+
     init() {
         let d = UserDefaults.standard
         enabled = d.bool(forKey: "audioDepthEnabled")
@@ -68,6 +78,8 @@ final class AudioDepthModel: ObservableObject {
         reverbRoom = d.object(forKey: "audioDepthReverbRoom") == nil
             ? 0.5 : d.float(forKey: "audioDepthReverbRoom")
         crossfeed = d.float(forKey: "audioDepthCrossfeed")
+        graphicEqDb = Self.loadFloats("graphicEq20", count: Self.graphicBandCount, fallback: 0)
+            .map { $0.isFinite ? min(max($0, -12), 12) : 0 }
     }
 
     /// The flat config to hand to the core. The single master `pan` fills all
@@ -95,6 +107,7 @@ final class AudioDepthModel: ObservableObject {
     /// Apply the current config to a running core (no-op when nil).
     func apply(to core: EmulatorCore?) {
         core?.setAudioDepth(config)
+        core?.setEqualizerGains(graphicEqDb)
     }
 
     private func notify() { onChange?() }

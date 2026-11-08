@@ -45,6 +45,38 @@ cycle-accurate core later replaced.
   `target/release-baseline/rustynes`. It is the "before" column for comparing
   the three, and it is needed because a personal cargo configuration that
   sets `target-cpu=native` makes a plain `cargo full-build` a native build.
+- **The mobile extras (D24, `T-MOBILE-EXTRAS`).**
+  - **Both apps:** the desktop's 20-band graphic equalizer and its Game Genie
+    code database (about 10,800 codes for some 520 games), through the bridge,
+    which compiles the desktop's own source for both. A flat EQ (the default)
+    leaves the audio bit-identical. On Android the codes are a new Game Genie
+    sheet (the app had no cheat screen), remembered per game; on iOS they are a
+    "Code database" section of Cheats.
+  - **iOS:** box art from libretro-thumbnails on request, the same matching
+    rules as Android; a home-screen widget that reopens the last game; and the
+    game on an external display (iOS 16-26), with the phone as the controller.
+    None of the new Swift has been compiled yet: the iOS CI build is its first
+    compile, and the widget needs an App ID and App Group before a signed build.
+- **The per-game picture corrections can be switched off on Android and iOS**
+  (`T-MOBILE-GAME-CORRECTIONS`, ADR 0051): Settings, "Per-game picture
+  corrections", as on the desktop and in libretro. A movie or netplay session
+  keeps the choice it recorded.
+
+### Changed
+
+- **Android: when RetroAchievements hardcore stops a game from resuming, the app
+  says so** (`T-RA-HARDCORE-RESUME`, kept as a refusal). The game starts from
+  power-on with one line on the status bar, and the saved state is kept for when
+  hardcore is off. Before, the state loaded and switching hardcore on then
+  restarted the game, with no word why.
+- **Android: with the GPU renderer, the picture is no longer converted for the
+  CPU every frame** (`T-ANDROID-GPU-FRAMESKIP`); a screenshot, a clip and the
+  external display still get the current frame. Any speed-up is unmeasured: it
+  needs a device.
+- **Android: the remaining Kotlin TODOs (MOB-08).** Save-state slots get live
+  thumbnails, the library tile menu opens from a TV remote, and a folder import
+  is bounded at eight levels (it had no bound at all). The rest are recorded with
+  their reasons in `docs/android.md`.
 
 ### Fixed
 

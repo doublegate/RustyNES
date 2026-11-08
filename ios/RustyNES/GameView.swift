@@ -52,6 +52,11 @@ struct GameView: View {
                     // the new core was never attached or started: a frozen screen.
                     .id(ObjectIdentifier(emulator))
 
+                // v3.7.0 (D24 row 2): while the picture is on an external display,
+                // cover it here (the view keeps driving the frame loop) and keep the
+                // controls below: the phone is the controller.
+                ExternalDisplayCard(hub: ExternalDisplayHub.shared)
+
                 // On-screen controls: the v1.9.2 true multi-touch NES-001 pad (the
                 // replacement for the v1.9.0 single-DragGesture TouchControlsOverlay).
                 // It feeds the combined touch mask into the model, which ORs it with

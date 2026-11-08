@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  v3.7.0 (D24 row 1): the widget reads the App Group the app writes
+  (ResumeWidgetShared.swift). MAINTAINER CARRYOVER: register the App Group
+  "group.com.doublegate.rustynes" and the extension's App ID
+  (com.doublegate.rustynes.widget) in the Apple Developer account, and add a
+  provisioning profile for it to fastlane match, before a signed build.
+-->
+<dict>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.doublegate.rustynes</string>
+	</array>
+</dict>
+</plist>

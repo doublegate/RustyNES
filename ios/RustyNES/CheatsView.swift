@@ -15,6 +15,9 @@ struct CheatsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var codes: [GenieCodeInfo] = []
+    /// v3.7.0 (D24 row 3): the code database's entries for this game.
+    @State private var listed: [CheatDbEntry] = []
+    @State private var listedGame: String?
     @State private var newCode: String = ""
     @State private var addError: String?
 
@@ -27,6 +30,7 @@ struct CheatsView: View {
         NavigationStack {
             Form {
                 genieSection
+                databaseSection
                 rawRamSection
             }
             .navigationTitle("Cheats")
@@ -112,6 +116,56 @@ struct CheatsView: View {
         }
     }
 
+    // MARK: - Code database (v3.7.0)
+
+    /// The desktop's Game Genie catalog, through the bridge: this game's codes,
+    /// grouped by category, each switched on or off with the existing add / remove
+    /// path (which refuses in RetroAchievements hardcore). The core keeps one code
+    /// per address, so the ticks are re-read after each change. UNCOMPILED at v3.7.0.
+    private var databaseSection: some View {
+        Section {
+            if listed.isEmpty {
+                Text("The code database has no codes for this game.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(listed, id: \.code) { entry in
+                    Toggle(isOn: Binding(
+                        get: { codes.contains { $0.code == entry.code } },
+                        set: { on in setListed(entry.code, on) }
+                    )) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.name)
+                            Text("\(entry.category) \u{2022} \(entry.code)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Code database")
+        } footer: {
+            if let listedGame {
+                Text("Codes listed for \(listedGame).")
+            }
+        }
+    }
+
+    private func setListed(_ code: String, _ on: Bool) {
+        if on {
+            do {
+                try model.emulator?.cheatAddGenie(code)
+                addError = nil
+            } catch {
+                addError = error.localizedDescription
+            }
+        } else {
+            model.emulator?.cheatRemoveGenie(code)
+        }
+        refresh()
+    }
+
     // MARK: - Raw-RAM editor
 
     private var rawRamSection: some View {
@@ -185,5 +239,9 @@ struct CheatsView: View {
 
     private func refresh() {
         codes = model.emulator?.cheatGenieCodes() ?? []
+        if listed.isEmpty {
+            listed = model.emulator?.cheatDatabaseCodes() ?? []
+            listedGame = model.emulator?.cheatDatabaseGame()
+        }
     }
 }

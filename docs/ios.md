@@ -278,6 +278,68 @@ determinism contract is untouched; the two newest upstream PPU tests are known g
   disabled / flat / centered config is a **bit-exact passthrough**, so the audio
   oracle and save portability are preserved.
 
+### The mobile extras (v3.7.0) — UNCOMPILED until the CI Simulator build
+
+- **The bridge (`rustynes-mobile`'s `extras` module).** The desktop's 20-band
+  graphic EQ (`rustynes-frontend/src/eq.rs`) and its Game Genie code database
+  (`genie_db.rs` and its three TSV catalogs) are compiled into the bridge from
+  the desktop's own source files (`#[path]` modules in `lib.rs`), not copied, so
+  one fix reaches the desktop, Android and iOS together. The EQ runs on the
+  drained host-rate samples (`drain_audio` / `drain_audio_bytes`), an output
+  stage like the desktop's: a flat bank (the default) installs no filter and the
+  samples are bit-identical, which the bridge's host tests compare bit for bit.
+  The gains (`set_equalizer_gains`, 20 values, clamped to +/-12 dB, non-finite
+  taken as 0) persist across `load_rom`, re-voiced at its sample rate. The code
+  database matches a ROM on its header-excluded and full-file CRC32s, taken from
+  the bytes the host passed before `correct_rom` rewrites a header;
+  `cheat_database_codes` lists, `cheat_add_genie` (unchanged) enables, so
+  validation and the hardcore refusal are the existing ones. The core keeps one
+  active code per address, so a second code for an address replaces the first.
+- **The per-game picture corrections (ADR 0051, `T-MOBILE-GAME-CORRECTIONS`).**
+  `set_game_corrections_enabled(false)` is the desktop's `[enhancements]
+  disable_game_corrections` and libretro's `rustynes_game_corrections =
+  disabled`: *Rad Racer* is drawn as the hardware draws it. The setting persists
+  across loads and applies at once, except while a movie or a netplay session
+  holds the console's options (`HardwareOptions`, carried in `.rnm` format 8 and
+  the netplay digest); a change then lands on the first single-player frame
+  after the session ends. Gate: `extras::rad_racer` under `--features
+  commercial-roms` drives a real dump (`tests/roms/external/mapper-001-MMC1/Rad
+  Racer.nes`, never committed) through the bridge and matches every frame of
+  1,101 against a bare core with the correction set by hand, both ways.
+- **Box art** (`BoxArt.swift`, D24 row 1): "Find box art" in a library tile's
+  context menu fetches a cover from libretro-thumbnails. The URLs come from the
+  bridge (`box_art_candidate_urls`, host-tested), which applies Android's
+  `BoxArt.kt` rules, so both apps find the same cover for the same file name.
+  Capped at 2 MiB, must decode as an image, cached through `DurableWrite` as
+  `boxart/<sha>.png` in the App Group container (Application Support when the
+  group is not provisioned). Nothing is fetched unless the player asks.
+- **The home-screen widget** (`RustyNESWidget/`, target `RustyNESWidget` in
+  `project.yml`, a WidgetKit app extension embedded in the app): the
+  last-played game's name, when it was played and its cover; a tap opens
+  `rustynes://resume` (`CFBundleURLTypes` in `Info.plist`), which
+  `AppModel.resumeLastPlayed` turns into `openGame`. The app writes the game to
+  the App Group's defaults on every `openGame` and reloads the widget's
+  timeline (`ResumeWidgetStore`). **Signing (maintainer):** the App ID
+  `com.doublegate.rustynes.widget`, the App Group
+  `group.com.doublegate.rustynes` on both App IDs, and a provisioning profile
+  for the extension in fastlane match, before any signed build (run-sheet W1).
+  The unsigned Simulator build needs none of them.
+- **External display** (`ExternalDisplay.swift`, D24 row 2): on iOS 16-26 the
+  system connects a `windowExternalDisplayNonInteractive` scene when a display
+  attaches; `RustyNESAppDelegate` (adopted with `@UIApplicationDelegateAdaptor`)
+  gives that role `ExternalDisplaySceneDelegate`, whose window shows the latest
+  frame (`EmulatorCore.lastFrame`) at the 8:7 pixel aspect. The phone covers its
+  picture with a "Playing on the external display" card and keeps its controls:
+  the phone is the controller. **iOS 27** delivers that scene only to an app
+  that registers a `UISceneAccessory`, an iOS 27 SDK API; CI builds with the
+  iOS 26 SDK, so on iOS 27 the display mirrors the phone until a release built
+  with the iOS 27 SDK adds it (run-sheet E4).
+- **Settings:** "Equalizer" (the 20 bands; independent of "Audio depth", whose
+  5-band EQ runs after it in the sink) and "Picture" (the correction switch,
+  applied to each opened game). **Cheats:** a "Code database" section lists the
+  game's catalogued codes as toggles over the existing add / remove calls.
+- **`ios_source_audit.rs`** pins the wiring of all of the above (three tests).
+
 ## Build pipeline (`scripts/build-ios-xcframework.sh`)
 
 `rustup target add` the iOS targets -> `cargo build --profile release-mobile -p rustynes-ios`

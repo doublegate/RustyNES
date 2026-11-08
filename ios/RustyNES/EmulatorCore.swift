@@ -819,6 +819,25 @@ final class EmulatorCore {
     func cheatClearGenie() { controller.cheatClearGenie() }
     /// The currently-active Game Genie codes.
     func cheatGenieCodes() -> [GenieCodeInfo] { controller.cheatGenieCodes() }
+
+    // MARK: - v3.7.0 (D24 row 3, `T-MOBILE-GAME-CORRECTIONS`)
+    //
+    // The desktop's Game Genie code database, its 20-band EQ and the per-game
+    // picture-correction switch, all through the bridge (`rustynes-mobile`'s extras
+    // module), so iOS and Android share one implementation. UNCOMPILED at v3.7.0.
+
+    /// The database's codes for this game, grouped by category.
+    func cheatDatabaseCodes() -> [CheatDbEntry] { controller.cheatDatabaseCodes() }
+    /// The game title the database lists this ROM under, if any.
+    func cheatDatabaseGame() -> String? { controller.cheatDatabaseGame() }
+    /// Set the 20 EQ gains in dB (all zero = off, bit-identical audio). The bridge
+    /// runs the EQ on the drained samples, before this sink's own 5-band stage.
+    @discardableResult
+    func setEqualizerGains(_ gains: [Float]) -> Bool { controller.setEqualizerGains(gainsDb: gains) }
+    /// Whether the per-game picture corrections may apply (default true).
+    func setGameCorrectionsEnabled(_ on: Bool) { controller.setGameCorrectionsEnabled(enabled: on) }
+    /// Whether this ROM is one the corrections list names.
+    var gameCorrectionListed: Bool { controller.gameCorrectionListed() }
     /// Write one byte into CPU RAM ($0000..=$1FFF) via the core's `poke_ram`.
     func pokeRam(addr: UInt16, value: UInt8) { controller.pokeRam(addr: addr, value: value) }
     /// Read one byte from the CPU bus, side-effect-free.
