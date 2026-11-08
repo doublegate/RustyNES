@@ -56,8 +56,22 @@ cycle-accurate core later replaced.
   name and SHA-256. `rustynes patch-regress <ROM> <PATCH> <MOVIE> [--pins]`
   replays a reference movie on the clean and the patched ROM and reports the
   first frame they differ and why (a RAM address with both values, else a
-  pixel, else the cycle count). The debugger has no ROM-edit panel yet. Spec:
-  `docs/live-patch-recorder.md`.
+  pixel, else the cycle count). Spec: `docs/live-patch-recorder.md`.
+
+- **Live ROM editing in the debugger** (`T-HACK-BPS-RECORDER`): the Memory
+  panel gains PRG-ROM and CHR-ROM views, by offset in the ROM file, whose
+  bytes can be edited while the game runs; the change is visible from the
+  next frame. Every edit is recorded, and **Save patch...** writes them as a
+  BPS patch of the clean ROM, with the enabled raw RAM cheats and freezes in
+  its `.pins.toml` sidecar (desktop). Edits are refused, with the reason
+  shown, in RetroAchievements hardcore, while a movie records or plays, and
+  during netplay. Supported on 204 mapper numbers for PRG and 175 for CHR;
+  CHR-RAM boards, self-flashing boards (GTROM, flashable UNROM 512), the FFE
+  copiers, FDS and NSF are not. Save states carry no ROM, so loading one on
+  the clean ROM runs the clean game. Core: `Nes::debug_poke_rom` /
+  `debug_peek_rom` / `debug_rom_len` (`debug-hooks`) and the `Mapper` methods
+  `debug_prg_rom_mut` / `debug_chr_rom_mut` (default `None`). No emulation
+  change: with no edit, every frame is byte-identical.
 
 - **Edge-relayed spectating** (`T-NETPLAY-EDGE-SPECTATE`): a host
   publishes its match's confirmed inputs to a relay at the network edge (a

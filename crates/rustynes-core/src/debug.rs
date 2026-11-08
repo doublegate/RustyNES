@@ -94,3 +94,67 @@ pub struct ApuDebugView {
 
 /// Snapshot of mapper state — alias for [`rustynes_mappers::MapperDebugInfo`].
 pub type MapperDebugView = MapperDebugInfo;
+
+/// v3.7.0 (`T-HACK-BPS-RECORDER`, live ROM writes) — which ROM section of the
+/// cartridge image a debugger ROM read or write addresses.
+///
+/// Offsets within a section are the image's: PRG byte 0 is the first byte
+/// after the iNES header (and any trainer), CHR byte 0 the first byte after
+/// PRG-ROM. They are NOT CPU or PPU addresses, so a byte has one offset
+/// whatever bank currently maps it, which is what a patch file records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RomSpace {
+    /// PRG-ROM, the program (read by the CPU at `$8000-$FFFF` through the
+    /// mapper's PRG banking).
+    Prg,
+    /// CHR-ROM, the pattern tables (read by the PPU at `$0000-$1FFF` through
+    /// the mapper's CHR banking).
+    Chr,
+}
+
+impl RomSpace {
+    /// `"PRG"` or `"CHR"`, for messages.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Prg => "PRG",
+            Self::Chr => "CHR",
+        }
+    }
+}
+
+/// Why a debugger ROM write (`Nes::debug_poke_rom`) changed nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RomWriteError {
+    /// The loaded board does not offer that ROM section as a plain buffer in
+    /// image order: a CHR-RAM board's CHR, a self-flashable board's PRG, a
+    /// copier's DRAM, an FDS disk or an NSF (see
+    /// `Mapper::debug_prg_rom_mut`).
+    Unsupported(RomSpace),
+    /// The offset is past the section's end.
+    OutOfRange {
+        /// The section.
+        space: RomSpace,
+        /// The offset asked for.
+        offset: usize,
+        /// The section's length.
+        len: usize,
+    },
+}
+
+impl core::fmt::Display for RomWriteError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Unsupported(space) => write!(
+                f,
+                "this board's {} is not ROM the debugger can edit",
+                space.label()
+            ),
+            Self::OutOfRange { space, offset, len } => write!(
+                f,
+                "{} offset {offset:#x} is past its {len:#x} bytes",
+                space.label()
+            ),
+        }
+    }
+}

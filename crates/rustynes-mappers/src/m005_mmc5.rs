@@ -1189,6 +1189,14 @@ impl Mmc5 {
 }
 
 impl Mapper for Mmc5 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     // The battery save. "Games with 16K PRG-RAM only battery-save the first
     // 8K" (nesdev MMC5): ETROM's second chip is volatile work RAM, so it is
     // not part of the save.

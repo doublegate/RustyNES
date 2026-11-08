@@ -90,6 +90,10 @@ impl Un1rom94 {
 }
 
 impl Mapper for Un1rom94 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     /// Fixed mirroring (v2.7.2, core audit §5.6): `nesdev_wiki/INES_Mapper_094: "Solder pads select vertical or horizontal mirroring"`, so a
     /// per-game database correction of a wrong header bit is safe here.
     fn has_hardwired_mirroring(&self) -> bool {

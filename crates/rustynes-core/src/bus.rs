@@ -1889,6 +1889,72 @@ impl SystemBus {
         self.ppu.debug_poke_oam(idx, value);
     }
 
+    /// v3.7.0 — the board's buffer for one ROM section, in image order
+    /// (`Mapper::debug_prg_rom_mut` / `debug_chr_rom_mut`), or `None` when the
+    /// board does not offer it.
+    #[cfg(feature = "debug-hooks")]
+    fn debug_rom_buf(&mut self, space: crate::RomSpace) -> Option<&mut [u8]> {
+        match space {
+            crate::RomSpace::Prg => self.mapper.debug_prg_rom_mut(),
+            crate::RomSpace::Chr => self.mapper.debug_chr_rom_mut(),
+        }
+    }
+
+    /// v3.7.0 — the length of one ROM section as the debugger can edit it, or
+    /// `None` when the board does not offer that section. Reads nothing the
+    /// emulation sees.
+    #[cfg(feature = "debug-hooks")]
+    pub fn debug_rom_len(&mut self, space: crate::RomSpace) -> Option<usize> {
+        self.debug_rom_buf(space).map(|b| b.len())
+    }
+
+    /// v3.7.0 — one ROM byte by image offset (see [`crate::RomSpace`]), with no
+    /// side effect. `None` when the board does not offer the section or the
+    /// offset is past its end.
+    #[cfg(feature = "debug-hooks")]
+    pub fn debug_peek_rom(&mut self, space: crate::RomSpace, offset: usize) -> Option<u8> {
+        self.debug_rom_buf(space)?.get(offset).copied()
+    }
+
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`) — write one ROM byte in place, by image
+    /// offset: the debugger's live ROM editor.
+    ///
+    /// The board's own buffer is changed, so the CPU fetches the new byte at
+    /// whatever address its banking maps the offset to, and the PPU draws the
+    /// new pattern byte, from the next access on; there is no decoded copy to
+    /// refresh. Nothing in the run loop calls this. Like `debug_poke_ppu` it
+    /// is reached only through the frontend's gated post-frame poke path, so
+    /// the default build, and a debugger session with no ROM edit, run
+    /// byte-identically.
+    ///
+    /// What it does not do: change [`crate::Nes::rom_sha256`] (the identity
+    /// stays the clean image's, which is what a patch is made against) or
+    /// enter any save state (states carry no ROM; see
+    /// `docs/live-patch-recorder.md`).
+    ///
+    /// # Errors
+    ///
+    /// [`crate::RomWriteError::Unsupported`] when the board does not offer the
+    /// section, [`crate::RomWriteError::OutOfRange`] past its end; in both
+    /// cases nothing changes.
+    #[cfg(feature = "debug-hooks")]
+    pub fn debug_poke_rom(
+        &mut self,
+        space: crate::RomSpace,
+        offset: usize,
+        value: u8,
+    ) -> Result<(), crate::RomWriteError> {
+        let buf = self
+            .debug_rom_buf(space)
+            .ok_or(crate::RomWriteError::Unsupported(space))?;
+        let len = buf.len();
+        let byte = buf
+            .get_mut(offset)
+            .ok_or(crate::RomWriteError::OutOfRange { space, offset, len })?;
+        *byte = value;
+        Ok(())
+    }
+
     /// Borrow the PPU (debugger / tests).
     #[must_use]
     pub const fn ppu(&self) -> &Ppu {

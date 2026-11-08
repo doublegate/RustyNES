@@ -66,6 +66,10 @@ impl Cprom {
 }
 
 impl Mapper for Cprom {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     /// Fixed mirroring (v2.7.2, core audit §5.6): `nesdev_wiki/CPROM: "Nametable mirroring: Vertical"`, so a
     /// per-game database correction of a wrong header bit is safe here.
     fn has_hardwired_mirroring(&self) -> bool {

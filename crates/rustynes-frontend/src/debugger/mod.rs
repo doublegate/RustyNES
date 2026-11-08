@@ -144,6 +144,8 @@ mod input_rebind_panel;
 mod mapper_panel;
 mod memory_compare_panel;
 mod memory_panel;
+// v3.7.0 — the live-patch recorder state the app pushes to the ROM views.
+pub use memory_panel::RomPatchInfo;
 mod netplay_panel;
 mod nsf_panel;
 mod oam_panel;
@@ -1370,7 +1372,22 @@ impl DebuggerOverlay {
         let mut pokes = self.ppu_ui.take_pokes();
         pokes.extend(self.oam_ui.take_pokes());
         pokes.extend(self.cpu_ui.take_pokes());
+        // v3.7.0 — the memory panel's PRG-ROM / CHR-ROM edits.
+        pokes.extend(self.memory_ui.take_pokes());
         pokes
+    }
+
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`) — whether the memory panel's "Save
+    /// patch..." was clicked since the last call. The app answers it after the
+    /// egui pass: it clones the session's recorder under a brief emu lock,
+    /// drops the lock, and writes the files.
+    pub const fn take_save_patch_request(&mut self) -> bool {
+        self.memory_ui.take_save_patch_request()
+    }
+
+    /// v3.7.0 — the session recorder's state, for the ROM views.
+    pub fn set_rom_patch_info(&mut self, info: RomPatchInfo) {
+        self.memory_ui.set_rom_patch_info(info);
     }
 
     /// v1.0.0 (UX3 BUG-3) — re-apply the cheat panel's enabled Game Genie codes

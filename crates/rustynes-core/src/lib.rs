@@ -93,7 +93,9 @@ pub use bus::SystemBus;
 pub use bus::{AccessRec, EventBpKind, EventBreakHit, EventKind, EventRec, InterruptRec};
 pub use bus_snapshot::{EXPANSION_DEVICE_MAX_LEN, SAVE_STATE_DEVICE_HEADROOM};
 pub use controller::{Buttons, Controller};
-pub use debug::{ApuDebugView, CpuDebugView, MapperDebugView, PpuDebugView};
+pub use debug::{
+    ApuDebugView, CpuDebugView, MapperDebugView, PpuDebugView, RomSpace, RomWriteError,
+};
 pub use genie::{GenieCode, GenieError};
 pub use hardware_options::{
     BoardDescription, EMULATION_EPOCH, HardwareOptions, OptionsDecodeError, config_digest,

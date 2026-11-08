@@ -137,6 +137,10 @@ impl Waixing242 {
 }
 
 impl Mapper for Waixing242 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn sram(&self) -> &[u8] {
         &self.prg_ram
     }
@@ -320,6 +324,10 @@ impl WaixingFs304M162 {
 }
 
 impl Mapper for WaixingFs304M162 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn sram(&self) -> &[u8] {
         &self.prg_ram
     }
@@ -507,6 +515,10 @@ impl Waixing178 {
 }
 
 impl Mapper for Waixing178 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn sram(&self) -> &[u8] {
         &self.prg_ram
     }
@@ -727,6 +739,14 @@ impl Waixing253 {
 }
 
 impl Mapper for Waixing253 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::CYCLE_IRQ
     }

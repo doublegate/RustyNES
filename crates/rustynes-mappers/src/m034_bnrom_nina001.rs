@@ -122,6 +122,14 @@ impl M34 {
 }
 
 impl Mapper for M34 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     /// Fixed mirroring (v2.7.2, core audit §5.6): `nesdev_wiki/INES_Mapper_034: "Fixed V" (BNROM and NINA-001 alike)`, so a
     /// per-game database correction of a wrong header bit is safe here.
     fn has_hardwired_mirroring(&self) -> bool {
