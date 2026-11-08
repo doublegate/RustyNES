@@ -194,6 +194,10 @@ pub mod movie_ui;
 // to the in-memory ROM at the load chokepoint, before format detection, so the
 // patched image flows through the deterministic parse unchanged.
 pub mod patch;
+// v3.7.0 (`T-HACK-BPS-RECORDER`) — the live-patch recorder: debugger PRG/CHR
+// edits as a BPS patch, RAM pins in a raw-cheat sidecar, and regression replay
+// of a reference movie against the patched ROM.
+pub mod patch_recorder;
 // v1.7.0 "Forge" Workstream H4 — per-game `<rom>.json` config overlay (region /
 // mapper / mirroring corrections + Vs. DIP switches), layered on the v1.2.0
 // game-DB. Frontend-only; an absent file is a no-op, so the default load path

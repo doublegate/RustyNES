@@ -49,6 +49,16 @@ cycle-accurate core later replaced.
   to 10 seconds after a fatal desync. A peer that has not opted in sends no
   state. Spec: `docs/netplay-session.md` section 4.
 
+- **The live-patch recorder** (`T-HACK-BPS-RECORDER`): PRG and CHR edits
+  recorded against a clean ROM are written as a BPS patch (implemented from
+  the format's public specification), and RAM pins go to a `.pins.toml`
+  sidecar in the raw RAM cheat format that the patch's metadata names by file
+  name and SHA-256. `rustynes patch-regress <ROM> <PATCH> <MOVIE> [--pins]`
+  replays a reference movie on the clean and the patched ROM and reports the
+  first frame they differ and why (a RAM address with both values, else a
+  pixel, else the cycle count). The debugger has no ROM-edit panel yet. Spec:
+  `docs/live-patch-recorder.md`.
+
 - **`cargo full-native`**: the `cargo full-build` binary (every native
   feature) built for the building machine's own CPU (`-C target-cpu=native`,
   the `release-native` profile), at `target/release-native/rustynes`. Not

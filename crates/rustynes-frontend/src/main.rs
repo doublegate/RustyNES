@@ -84,6 +84,12 @@ fn main() -> ExitCode {
             nes20db,
             frames,
         }) => run_dump_check(&rom, dat.as_deref(), nes20db.as_deref(), frames),
+        Some(CliCommand::PatchRegress {
+            rom,
+            patch,
+            movie,
+            pins,
+        }) => run_patch_regress(&rom, &patch, &movie, pins.as_deref()),
         Some(CliCommand::Stems {
             rom,
             out,
@@ -146,6 +152,64 @@ fn main() -> ExitCode {
 /// Exit codes are distinct on purpose: 0 verified, 1 mismatch or I/O error, 3
 /// "no attestation recorded". A movie that makes no claim has not failed, and
 /// collapsing the two would make a script unable to tell them apart.
+/// `rustynes patch-regress <ROM> <PATCH> <MOVIE> [--pins TOML]` (v3.7.0,
+/// `T-HACK-BPS-RECORDER`): apply the BPS, check the sidecar against its
+/// metadata, replay the movie on both images
+/// ([`rustynes_frontend::patch_recorder::replay_regression`]).
+///
+/// Exit codes: 0 no divergence, 4 a divergence, 1 an error.
+#[cfg(not(target_arch = "wasm32"))]
+fn run_patch_regress(
+    rom_path: &std::path::Path,
+    patch_path: &std::path::Path,
+    movie_path: &std::path::Path,
+    pins_path: Option<&std::path::Path>,
+) -> ExitCode {
+    use rustynes_frontend::{dump_check::read_capped, patch, patch_recorder};
+
+    let run = || -> Result<patch_recorder::RegressionReport, String> {
+        let clean = read_capped(rom_path)?;
+        let bps = read_capped(patch_path)?;
+        let patched = patch::apply_bps(&clean, &bps).map_err(|e| e.to_string())?;
+        let movie = rustynes_core::Movie::deserialize(&read_capped(movie_path)?)
+            .map_err(|e| format!("{}: {e}", movie_path.display()))?;
+        let pins = pins_path.map_or_else(
+            || Ok(Vec::new()),
+            |p| -> Result<_, String> {
+                let text = String::from_utf8(read_capped(p)?)
+                    .map_err(|e| format!("{} is not UTF-8 text: {e}", p.display()))?;
+                let meta = patch::bps_metadata(&bps)
+                    .ok_or("the patch carries no metadata naming a sidecar")?;
+                let name = p.file_name().map(|n| n.to_string_lossy().into_owned());
+                patch_recorder::verify_sidecar(
+                    &String::from_utf8_lossy(meta),
+                    name.as_deref().unwrap_or_default(),
+                    &text,
+                )
+                .map_err(|e| e.to_string())
+            },
+        )?;
+        patch_recorder::replay_regression(&clean, &patched, &movie, &pins)
+            .map_err(|e| e.to_string())
+    };
+    match run() {
+        Ok(report) => report.regression.map_or_else(
+            || {
+                println!("no divergence in {} frames", report.frames);
+                ExitCode::SUCCESS
+            },
+            |r| {
+                println!("{r}");
+                ExitCode::from(4)
+            },
+        ),
+        Err(e) => {
+            eprintln!("rustynes: {e}");
+            ExitCode::from(1)
+        }
+    }
+}
+
 /// `rustynes dump-check <ROM> [--dat FILE] [--nes20db FILE] [--frames N]`
 /// (v3.5.0, `T-PRESERVE-DUMP-VERIFY`): read the files, run
 /// [`rustynes_frontend::dump_check::check`], print its report.
