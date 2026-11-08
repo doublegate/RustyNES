@@ -182,13 +182,25 @@ fn no_tracked_file_names_a_home_directory_or_agent_scratch_tree() {
 
 #[test]
 fn the_matcher_flags_real_paths_and_passes_placeholders() {
-    // Flagged.
-    assert_eq!(findings("cd /home/alice/Code/x"), ["/home/alice"]);
-    assert_eq!(findings("open /Users/bob/Library"), ["/Users/bob"]);
-    assert_eq!(findings("/tmp/claude-1000/x"), ["/tmp/claude-1000"]);
-    assert_eq!(findings("scratch -home-carol-Code-Foo"), ["-home-carol-"]);
+    // Flagged. The paths are assembled at run time: written out literally,
+    // they would be findings in this very file, which the audit above reads
+    // (it did fail on them the first time this file was committed).
+    let home = |name: &str| format!("/home/{name}");
+    assert_eq!(
+        findings(&format!("cd {}/Code/x", home("alice"))),
+        [home("alice")]
+    );
+    let users = format!("/{}/bob", "Users");
+    assert_eq!(findings(&format!("open {users}/Library")), [users]);
+    let scratch = format!("/tmp/claude-{}", 1000);
+    assert_eq!(findings(&format!("{scratch}/x")), [scratch]);
+    let slug = format!("-{}-carol-", "home");
+    assert_eq!(findings(&format!("scratch {slug}Code-Foo")), [slug]);
     // Two on one line are both reported.
-    assert_eq!(findings("/home/a1/x and /home/b2/y").len(), 2);
+    assert_eq!(
+        findings(&format!("{}/x and {}/y", home("a1"), home("b2"))).len(),
+        2
+    );
     // Passed: placeholders, the CI home, and the scrubbed forms.
     for ok in [
         "/home/runner/work/RustyNES",
