@@ -2500,11 +2500,10 @@ fn recorded(state: &[u8]) -> crate::options::OptionValues {
 /// state ends with the options it was made under and a restore applies
 /// them. Restored into a core running stock, a state taken at x2 must go on
 /// exactly as the x2 run did, cycle pattern included: ten frames later the
-/// cartridge's state matches the straight run's byte for byte. A cabinet's
-/// must match in what the game computed (the counter in WRAM): its state
-/// does not round-trip byte for byte under the overclock even with no option
-/// change at all, which is a core finding of its own
-/// (`a_cabinet_state_round_trips_byte_for_byte_under_the_overclock`).
+/// cartridge's state matches the straight run's byte for byte, and since
+/// v3.7.0 so does a cabinet's (until then its decay ages were one cycle out
+/// after the round trip, a core finding of its own:
+/// `a_cabinet_state_round_trips_byte_for_byte_under_the_overclock`).
 #[test]
 fn a_state_carries_its_emulation_options() {
     let _frontend = frontend();
@@ -2561,9 +2560,12 @@ fn a_state_carries_its_emulation_options() {
             replayed_count, straight_count,
             "dual {dual}: the restored x2 timeline computed something else"
         );
+        // Both machines byte for byte since v3.7.0: the cabinet was exempt
+        // here until its decay ages round-tripped
+        // (`a_cabinet_state_round_trips_byte_for_byte_under_the_overclock`).
         assert!(
-            dual || replayed == straight,
-            "the restored x2 timeline differs from the straight x2 run"
+            replayed == straight,
+            "dual {dual}: the restored x2 timeline differs from the straight x2 run"
         );
     }
 }
@@ -2578,10 +2580,13 @@ fn a_state_carries_its_emulation_options() {
 /// exact at x2. The decay model is off, so the ages are inert and the game
 /// computes the same thing (`a_state_carries_its_emulation_options`), but a
 /// frontend comparing state CRCs (RetroArch netplay) would see a desync.
-/// Ignored: an expected-fail probe for the core, outside the libretro
-/// wrapper; run with `--ignored`.
+///
+/// FIXED in v3.7.0 (`T-CABINET-OVERCLOCK-DECAY-STATE`, `PPU_SNAPSHOT_VERSION`
+/// 14): the age was exact only when the restored counter shared the saved
+/// one's phase modulo 3, and at x2 a frame is not a whole number of 3-dot
+/// cycles. The snapshot now carries the decay clock's phase and a restore
+/// aligns to it. No longer ignored.
 #[test]
-#[ignore = "expected-fail probe: cabinet state round trip under the overclock (core finding)"]
 fn a_cabinet_state_round_trips_byte_for_byte_under_the_overclock() {
     let _frontend = frontend();
     set_option("rustynes_cpu_overclock", "2");

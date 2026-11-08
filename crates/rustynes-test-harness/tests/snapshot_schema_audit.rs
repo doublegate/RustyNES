@@ -110,6 +110,15 @@ const CHIPS: &[Chip] = &[
                  (like `region`); the v7 tail serializes the per-row ages, not the switch",
             ),
             (
+                "dot_counter",
+                "deliberately not serialized since v7 (see `PPU_SNAPSHOT_VERSION`): the \
+                 free-running dot count, which a restore rebases. Everything timed against \
+                 it is stored relative to it instead: the decay ages, and since v3.7.0 the \
+                 decay clock's phase (top bits of the first age). Listed here in v3.7.0 \
+                 because the writer stopped reading `self.dot_counter / 3` on one line, \
+                 which is what this audit used to count as serialized",
+            ),
+            (
                 "active_palette",
                 "config: the loaded `.pal` override, re-applied by the frontend on load",
             ),

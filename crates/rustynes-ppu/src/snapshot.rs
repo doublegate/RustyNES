@@ -171,7 +171,32 @@ use crate::registers::{PpuCtrl, PpuMask, PpuStatus};
 ///   257-320) and that line, so it is carried rather than dropped, the rule
 ///   `snapshot_schema_audit.rs` exists for. All zero while the option is off.
 ///   No upconvert: v3.1.0 states are refused by BUS section 3 regardless.
+///
+///   **v3.7.0, without a version change** (`T-CABINET-OVERCLOCK-DECAY-STATE`):
+///   - **What changed:** the top two bits of the FIRST v7 age now carry the
+///     OAM-decay clock's phase (`0..=2`, which dot of a CPU cycle the clock
+///     stood on), and every age is masked to 62 bits. A restore sets
+///     `oam_decay_phase_shift` so the live clock has that phase.
+///   - **Why:** without it, a restore whose counter rebase was not a multiple of
+///     3 dots left every age one cycle out. A frame at CPU overclock x2 is not a
+///     whole number of 3-dot cycles, so a Vs. `DualSystem` state differed from
+///     the straight run in 64 bytes after a round trip at x2.
+///   - **Why not a version bump:** a v3.6.x state has those bits clear, so it
+///     still loads. Its unrecorded phase is taken as 0, which is out by at most
+///     the one cycle that v3.6.x's own restore could always be. A bump would
+///     have refused every older state, for every game; the maintainer chose
+///     compatibility (2026-11-08).
+///   - **What does not change:** decay behaviour in an unrestored run (the shift
+///     stays 0), and no frame or sample.
 pub const PPU_SNAPSHOT_VERSION: u8 = 13;
+
+/// v3.7.0: where the OAM-decay clock's phase rides in the first v7 age (see
+/// [`PPU_SNAPSHOT_VERSION`]): bits 62-63.
+const DECAY_PHASE_SHIFT_BITS: u32 = 62;
+/// v3.7.0: an age keeps its low 62 bits; the top two are the phase's (first
+/// age) or zero. An age is CPU cycles since a row was touched, so 2^62 is
+/// unreachable in practice.
+const DECAY_AGE_MASK: u64 = (1 << DECAY_PHASE_SHIFT_BITS) - 1;
 
 /// v2.3.3 — high bit of the version byte, marking a **slim** snapshot: every
 /// field except the 245,760-byte framebuffer.
@@ -566,9 +591,39 @@ impl Ppu {
         // NTSC/Dendy divisor). `wrapping_sub` keeps the encode total even across the
         // (astronomically unlikely) u64 wrap. When decay is off these ages are inert
         // (never read on restore's decay path), but they still round-trip exactly.
-        let now = self.dot_counter / 3;
-        for ts in self.oam_decay_cycles {
-            w.u64(now.wrapping_sub(ts));
+        //
+        // v3.7.0 (`T-CABINET-OVERCLOCK-DECAY-STATE`): the ages are measured on the
+        // decay clock (`oam_decay_now()`), and the clock's PHASE -- which of the
+        // three dots of a CPU cycle it stands on, 0..=2 -- rides in the top two
+        // bits of the FIRST age, so a restore can put the live clock in the same
+        // phase (see the field's rustdoc). Without it a restore whose counter
+        // rebase was not a multiple of 3 dots left every age one cycle out.
+        //
+        // In those bits, NOT in a new byte, so the snapshot stays version 13 and
+        // every v3.6.x state still loads (maintainer, 2026-11-08: a version bump
+        // would have refused every older save state, for every game, to fix a
+        // cabinet-at-overclock checksum). An age is a count of CPU cycles since a
+        // row was touched and never comes near 2^62 (about 85,000 years at
+        // 1.79 MHz), so the bits are free; ages are masked to 62 bits to keep
+        // them so. That relies on a timestamp never being AHEAD of the clock,
+        // which holds: a timestamp is only ever set to the clock's current value,
+        // the clock never runs backwards, and a restore rebuilds every timestamp
+        // from it. (A future timestamp would wrap its age past 2^62 and not
+        // survive the mask.) A v3.6.x writer left them zero, which reads back as phase 0:
+        // that state never recorded its phase, so any choice is an assumption,
+        // and this one is out by at most the one cycle v3.6.x could always be.
+        let clock_dot = self
+            .dot_counter
+            .wrapping_sub(u64::from(self.oam_decay_phase_shift));
+        let phase = clock_dot % 3;
+        let now = self.oam_decay_now();
+        for (i, ts) in self.oam_decay_cycles.into_iter().enumerate() {
+            let age = now.wrapping_sub(ts) & DECAY_AGE_MASK;
+            w.u64(if i == 0 {
+                age | (phase << DECAY_PHASE_SHIFT_BITS)
+            } else {
+                age
+            });
         }
 
         // v8: the per-dot sprite-evaluation FSM + the parallel OAM-data-bus
@@ -850,10 +905,26 @@ impl Ppu {
         // (`now = dot_counter / 3`, unchanged by restore) as `now - age`, so the
         // decay clock is preserved regardless of how the counter was rebased between
         // snapshot and restore (the rollback-determinism property).
-        let now = self.dot_counter / 3;
-        for ts in &mut self.oam_decay_cycles {
-            let age = r.u64()?;
-            *ts = now.wrapping_sub(age);
+        //
+        // v3.7.0: the saved clock's phase, from the top two bits of the first age
+        // (zero in a v3.6.x state, which never recorded it). The shift is
+        // chosen so that `(dot_counter - shift) % 3` equals it; the live clock is
+        // then a whole number of CPU cycles from the saved one, and `now - age` is
+        // exact for every later cycle, not only this one. All 32 ages are read
+        // before any timestamp is rebuilt, because the shift must be set first.
+        let mut ages = [0_u64; 32];
+        for age in &mut ages {
+            *age = r.u64()?;
+        }
+        let saved_phase = bounded(
+            "oam_decay_phase",
+            u8::try_from(ages[0] >> DECAY_PHASE_SHIFT_BITS).unwrap_or(u8::MAX),
+            2,
+        )?;
+        self.oam_decay_phase_shift = ((self.dot_counter % 3) as u8 + 3 - saved_phase) % 3;
+        let now = self.oam_decay_now();
+        for (ts, age) in self.oam_decay_cycles.iter_mut().zip(ages) {
+            *ts = now.wrapping_sub(age & DECAY_AGE_MASK);
         }
 
         // v8: the per-dot sprite-evaluation FSM + parallel OAM-data-bus model +
@@ -1013,6 +1084,86 @@ mod tests {
         + V10_TAIL
         + V11_TAIL
         + V12_TAIL;
+
+    /// v3.7.0 (`T-CABINET-OVERCLOCK-DECAY-STATE`): the decay ages round-trip
+    /// whatever the live counter's phase is at the restore. A PPU is saved at
+    /// a counter in each phase, restored into PPUs whose counters stand in
+    /// each phase, and both are advanced by the same number of dots; every
+    /// later snapshot must agree byte for byte. Before v3.7.0 the ages were
+    /// rebuilt against `dot_counter / 3` with no phase, and a rebase that was
+    /// not a multiple of 3 dots left them one cycle out. With the restore's
+    /// shift forced to 0 this test fails.
+    #[test]
+    fn decay_ages_round_trip_across_a_counter_rebase_of_any_phase() {
+        for saved_at in [3_000_u64, 3_001, 3_002] {
+            for live_at in [9_000_u64, 9_001, 9_002] {
+                let mut p = Ppu::new(PpuRegion::Ntsc);
+                p.dot_counter = saved_at;
+                for (i, ts) in p.oam_decay_cycles.iter_mut().enumerate() {
+                    *ts = 900 - i as u64 * 7;
+                }
+                let saved = p.snapshot();
+                // `Ppu` is not `Clone`: each side is rebuilt from the snapshot.
+                // Restored at its own counter, the original comes back as it
+                // was (same phase, shift 0); the other is the rebased restore.
+                let at = |counter: u64| {
+                    let mut x = Ppu::new(PpuRegion::Ntsc);
+                    x.dot_counter = counter;
+                    x.restore(&saved).unwrap();
+                    x
+                };
+                assert_eq!(at(saved_at).oam_decay_phase_shift, 0);
+                for step in [0_u64, 1, 2, 5, 299, 341 * 262] {
+                    let mut a = at(saved_at);
+                    let mut b = at(live_at);
+                    a.dot_counter += step;
+                    b.dot_counter += step;
+                    assert_eq!(
+                        a.snapshot(),
+                        b.snapshot(),
+                        "saved at {saved_at}, restored at {live_at}, then {step} dots"
+                    );
+                }
+            }
+        }
+    }
+
+    /// v3.7.0: a v3.6.x state, whose first decay age has no phase bits, still
+    /// loads. The snapshot version did not change (maintainer, 2026-11-08), so
+    /// the only difference a v3.6.x writer made is those two bits being zero.
+    /// The blob is built from a current one by clearing them, then restored
+    /// into a counter of another phase: it loads, the clock takes phase 0, and
+    /// every age is rebuilt from its low 62 bits.
+    #[test]
+    fn a_v3_6_state_without_phase_bits_still_loads() {
+        let mut p = Ppu::new(PpuRegion::Ntsc);
+        p.dot_counter = 3_001; // phase 1
+        for (i, ts) in p.oam_decay_cycles.iter_mut().enumerate() {
+            *ts = 900 - i as u64 * 7;
+        }
+        let mut blob = p.snapshot();
+        assert_eq!(blob[0], PPU_SNAPSHOT_VERSION, "still version 13");
+        // The first age is `3001 / 3 - 900` = 100, phase 1 in its top bits.
+        let age: u64 = 100;
+        let first = (age | (1 << DECAY_PHASE_SHIFT_BITS)).to_le_bytes();
+        let at = blob
+            .windows(8)
+            .position(|w| w == first)
+            .expect("the first age, carrying phase 1, is in the blob");
+        blob[at..at + 8].copy_from_slice(&100_u64.to_le_bytes());
+        let mut q = Ppu::new(PpuRegion::Ntsc);
+        q.dot_counter = 9_002; // phase 2
+        q.restore(&blob).expect("a state without phase bits loads");
+        assert_eq!(
+            (q.dot_counter - u64::from(q.oam_decay_phase_shift)) % 3,
+            0,
+            "an unrecorded phase is taken as 0"
+        );
+        let now = q.oam_decay_now();
+        for (i, ts) in q.oam_decay_cycles.iter().enumerate() {
+            assert_eq!(now - ts, 100 + i as u64 * 7, "row {i}'s age");
+        }
+    }
 
     /// v12: `dot0_replaced` must survive the round trip TRUE (a dropped or
     /// inverted byte would read back as the default `false`), and a v11 blob

@@ -46,6 +46,23 @@ cycle-accurate core later replaced.
   the three, and it is needed because a personal cargo configuration that
   sets `target-cpu=native` makes a plain `cargo full-build` a native build.
 
+### Fixed
+
+- **A Vs. DualSystem cabinet's save state now round-trips exactly under CPU
+  overclock** (`T-CABINET-OVERCLOCK-DECAY-STATE`).
+  - **The bug:** at x2, a state saved and restored with no other change ran
+    on to a state that differed from the uninterrupted run in 64 bytes. The
+    OAM-decay ages were one CPU cycle out, because the decay clock's phase
+    (which of the three dots of a CPU cycle it stood on) was not saved, and an
+    overclocked frame is not a whole number of cycles.
+  - **The impact:** the ages are inert with OAM decay off (the default), so
+    games ran the same. But anything comparing state checksums, such as
+    RetroArch netplay, saw a desync.
+  - **The fix:** the state now carries the phase, in two bits that were always
+    zero. The save-state format version does not change, so states made by
+    v3.6.x still load. No frame or sample changes, so the emulation epoch does
+    not rise.
+
 ## [3.6.2] - 2026-11-06 - "Latchkey" (the latest AccuracyCoin, 147 of 147, and Rad Racer's stray tiles corrected)
 
 ### Breaking
