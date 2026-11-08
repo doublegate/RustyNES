@@ -96,6 +96,9 @@ impl Mapper for Camerica232 {
         crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
     }
 
+    // No `debug_chr_rom_mut` (maintainer, 2026-11-08): `ppu_write` writes CHR
+    // even when the image supplied it, so it is RAM the program owns.
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

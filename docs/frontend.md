@@ -2062,7 +2062,8 @@ workstream rides on.
   stage, through `Nes::debug_poke_rom`, which writes the board's own ROM buffer
   in place (the CPU / PPU see the byte from the next access). Its gate,
   `emu::rom_write_refusal`, refuses it under RA hardcore, while a movie records
-  or plays (read from the movie state, not only from `writes_locked`), and
+  or plays or TAStudio is open (read from the movie state, not only from
+  `writes_locked`), and
   while `writes_locked` (netplay, TAS replay); a refused write is drained, not
   deferred, and its reason shows in the panel. Each write that lands is fed to
   the session's `PatchRecorder` (`EmuCore::rom_patch`, started from the clean
@@ -2792,6 +2793,13 @@ overclock is recorded as set and replayed with it.
 - **Raw RAM cheats are suspended while a movie records or plays.** They are
   frontend pokes after each frame that a `.rnm` cannot carry. Game Genie codes
   are core state and are recorded.
+- **No recording over live ROM edits (v3.7.0).** While the debugger's
+  live-patch recorder holds a PRG / CHR edit, F6 / F8 (and the menu and
+  replay-panel buttons that call them) and opening TAStudio are refused with
+  the reason on the status bar (`EmuCore::recording_refusal`): a movie stamps
+  the clean ROM's identity and would replay as another game on it. Save the
+  patch and load the patched ROM, or use the memory panel's **Reset edits**.
+  RAM pins alone do not refuse it. `docs/live-patch-recorder.md` section 5.
 - **Power-on movies keep the options through their power cycle.**
   `power_on_for_movie` captures the options, power-cycles, and re-applies the
   live ones. Until v2.9.8 `Nes::power_cycle` rebuilt the PPU and dropped OAM
@@ -2933,6 +2941,7 @@ compared.
 | `set_disk_write_protected` | yes: `$4032` bit 2 and dropped writes | not recorded: a property of the medium the host sets at load, never during play |
 | Reset / Power Cycle (`reset`, `power_cycle`) | yes | not recorded; refused while a movie records or plays (`session_policy`) |
 | Raw RAM cheats (frontend) | yes: post-frame pokes | suspended while a movie records or plays |
+| Live ROM edits (`Nes::debug_poke_rom`, debugger) | yes: the program and patterns | not recorded; refused while a movie records or plays or TAStudio is open, and a recording cannot start while one exists (v3.7.0) |
 | `set_fast_dotloop` | no: byte-identical by proof (`fast_dotloop_diff`) | preserved across `power_on_for_movie`, not recorded |
 | `set_custom_palette` | no: presentation (the RGBA LUT) | not recorded |
 | `set_apu_channel_mask` / `set_apu_channel_gain` / `set_apu_filter_model` | no: applied to the mix after synthesis, never fed back | not recorded |

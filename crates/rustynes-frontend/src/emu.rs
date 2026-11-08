@@ -73,7 +73,26 @@ pub enum DebugPoke {
         /// Byte value to write.
         value: u8,
     },
+    /// v3.7.0 — drop every live ROM edit: write the clean image's bytes back
+    /// into the console wherever the session's recorder holds an edit, and
+    /// restart the recorder with none ([`revert_rom_edits`]). Under the
+    /// same gate as [`DebugPoke::Rom`]. The memory panel's "Reset edits", and
+    /// the way out of [`RECORDING_REFUSED_FOR_ROM_EDITS`].
+    RomReset,
 }
+
+/// v3.7.0 — why a recording cannot start over live ROM edits.
+///
+/// Covers a movie recording (F6, F8 branch, the menu and replay-panel buttons
+/// that call them) and a `TAStudio` session (`EmuCore::recording_refusal`).
+///
+/// A movie stamps the clean image's identity (`Nes::rom_sha256` does not
+/// change with an edit) and holds only inputs, so a run recorded on edited
+/// ROM would replay as a different game on the ROM it names. RAM pins do not
+/// count: they are raw cheats, which recordings already exclude.
+pub const RECORDING_REFUSED_FOR_ROM_EDITS: &str = "the ROM has live debugger edits: save the \
+     patch and load the patched ROM, or reset the edits (Memory panel, PRG-ROM / CHR-ROM, \
+     Reset edits), before recording a movie";
 
 /// v3.7.0 — why a queued [`DebugPoke::Rom`] write is refused this frame, or
 /// `None` when it may land.
@@ -85,9 +104,10 @@ pub enum DebugPoke {
 ///
 /// - `RetroAchievements` hardcore (`hardcore_blocked`): a patched game is not
 ///   the game the achievement set was made for;
-/// - a movie recording or playing (`movie_idle == false`): the `.rnm` would
-///   claim the clean ROM's identity and replay differently on it. This is
-///   checked from the movie state itself, not only through `writes_locked`;
+/// - a movie recording or playing, or a `TAStudio` session open
+///   (`movie_idle == false`): the `.rnm` would claim the clean ROM's identity
+///   and replay differently on it. This is checked from the movie state
+///   itself, not only through `writes_locked`;
 /// - `writes_locked`, the app's combined gate (netplay, which would desync
 ///   the peers, and TAS record / replay).
 ///
@@ -103,7 +123,7 @@ pub const fn rom_write_refusal(
     if hardcore_blocked {
         Some("ROM edits are off in RetroAchievements hardcore")
     } else if !movie_idle {
-        Some("ROM edits are off while a movie records or plays")
+        Some("ROM edits are off while a movie records or plays, or TAStudio is open")
     } else if writes_locked {
         Some("ROM edits are off during netplay and TAS replay")
     } else {
@@ -156,6 +176,29 @@ pub fn apply_rom_write(
     // In range for the console means in range for the recorder: the lengths
     // were checked equal above.
     recorded.map_err(|e| e.to_string())
+}
+
+/// v3.7.0 — write the clean image's byte back into `nes` at every offset
+/// `recorder` holds an edit at, and restart the recorder with none. Returns
+/// how many bytes were restored (0 with no recorder).
+///
+/// # Errors
+///
+/// The first write the console refused; none can be, since every edit landed
+/// through the same buffer.
+pub fn revert_rom_edits(
+    nes: &mut Nes,
+    recorder: Option<&mut crate::patch_recorder::PatchRecorder>,
+) -> Result<usize, String> {
+    let Some(rec) = recorder else {
+        return Ok(0);
+    };
+    let reverted = rec.revert();
+    for &(space, offset, clean) in &reverted {
+        nes.debug_poke_rom(space, offset, clean)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(reverted.len())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -724,6 +767,11 @@ pub struct EmuCore {
     /// v3.7.0 — ROM writes that landed (and were recorded) since the recorder
     /// started; shown by the memory panel.
     pub rom_writes: usize,
+    /// v3.7.0 — a `TAStudio` session is open (`App` republishes it each frame
+    /// from `DebuggerOverlay::tas_active`). Its project exports a power-on
+    /// movie of the clean image's identity, so ROM writes are refused while
+    /// it is open, as while a movie records.
+    pub tas_session_active: bool,
     /// v1.7.0 "Forge" Workstream A1 — the combined write gate (`true` under
     /// netplay / TAS replay or record). `App` republishes it each frame from the
     /// EXACT same condition `emu.write` uses (T-110-E2). When `true`, the
@@ -1092,6 +1140,26 @@ impl EmuCore {
         self.nes = Some(nes);
     }
 
+    /// v3.7.0 — whether the session's ROM differs from the clean image
+    /// (any PRG / CHR edit the recorder holds). RAM pins do not count.
+    #[must_use]
+    pub fn has_rom_edits(&self) -> bool {
+        self.rom_patch
+            .as_ref()
+            .is_some_and(crate::patch_recorder::PatchRecorder::has_edits)
+    }
+
+    /// v3.7.0 — why a movie recording or a `TAStudio` session may not start
+    /// now, or `None`. Every production entry point that starts one asks this
+    /// first (F6 / menu / replay panel record, F8 / menu branch, `TAStudio`
+    /// open, on desktop and in the browser); the source-shape test
+    /// `every_recording_entry_point_refuses_live_rom_edits` checks that.
+    #[must_use]
+    pub fn recording_refusal(&self) -> Option<&'static str> {
+        self.has_rom_edits()
+            .then_some(RECORDING_REFUSED_FOR_ROM_EDITS)
+    }
+
     /// v3.7.0 — start a live-patch recorder against `image`, the bytes the
     /// installed single console was built from (`App::rom_bytes`). Called by
     /// every ROM-load path after [`Self::set_nes`]. No recorder when no
@@ -1334,6 +1402,7 @@ impl EmuCore {
             rom_patch: None,
             rom_write_status: None,
             rom_writes: 0,
+            tas_session_active: false,
             writes_locked: false,
             overclock_scanlines: 0,
             cpu_overclock: 0,
@@ -2212,11 +2281,20 @@ impl EmuCore {
             let open = !self.writes_locked && !hardcore_refuses;
             let rom_refusal = rom_write_refusal(
                 self.writes_locked,
-                self.movie.mode() == crate::movie_ui::MovieMode::Idle,
+                self.movie.mode() == crate::movie_ui::MovieMode::Idle && !self.tas_session_active,
                 hardcore_refuses,
             );
             for poke in self.debug_pokes.drain(..) {
                 match poke {
+                    DebugPoke::RomReset => {
+                        self.rom_write_status = Some(match rom_refusal {
+                            Some(why) => Err(why.to_string()),
+                            None => revert_rom_edits(nes, self.rom_patch.as_mut()).map(|n| {
+                                self.rom_writes = 0;
+                                format!("reset: {n} byte(s) back to the clean ROM")
+                            }),
+                        });
+                    }
                     DebugPoke::Rom {
                         space,
                         offset,
@@ -3923,6 +4001,69 @@ mod tests {
         let text = std::fs::read_to_string(&written[1]).unwrap();
         let got = crate::patch_recorder::verify_sidecar(&meta, "hack.pins.toml", &text).unwrap();
         assert_eq!(got, pins);
+    }
+
+    /// v3.7.0 (maintainer decision 2026-11-08) — a movie recording (and a
+    /// `TAStudio` session) is refused while the session's ROM carries a live
+    /// edit, and allowed again after "Reset edits", which also puts the clean
+    /// bytes back into the console. RAM pins alone (raw cheats) do not refuse
+    /// it. The entry points' use of `recording_refusal` is pinned by
+    /// `app::tests::every_recording_entry_point_refuses_live_rom_edits`.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn recording_is_refused_over_live_rom_edits_until_they_are_reset() {
+        let rom = synth_nrom();
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let inputs = quiet_inputs();
+        let mut core = rom_patch_core(&rom);
+        assert_eq!(core.recording_refusal(), None, "a clean session records");
+        // RAM pins only: still allowed.
+        core.raw_cheats = vec![RawCheat {
+            address: 0x0010,
+            value: 1,
+            compare: None,
+            enabled: true,
+        }];
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert_eq!(core.recording_refusal(), None, "pins are not ROM edits");
+        // A ROM edit lands: recording is refused, naming the way out.
+        core.debug_pokes.push(DebugPoke::Rom {
+            space: rustynes_core::RomSpace::Chr,
+            offset: 0x20,
+            value: 0x5A,
+        });
+        core.produce_one_frame(&inputs, &mut sinks);
+        let why = core.recording_refusal().expect("refused with an edit");
+        assert!(
+            why.contains("save the patch") && why.contains("reset the edits"),
+            "{why}"
+        );
+        // A TAStudio session refuses the reset (and any edit) like a movie.
+        core.tas_session_active = true;
+        core.debug_pokes.push(DebugPoke::RomReset);
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert!(matches!(&core.rom_write_status, Some(Err(w)) if w.contains("TAStudio")));
+        assert!(
+            core.recording_refusal().is_some(),
+            "the refused reset changed nothing"
+        );
+        core.tas_session_active = false;
+        // Reset: the clean byte is back in the console and recording is allowed.
+        core.debug_pokes.push(DebugPoke::RomReset);
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert!(matches!(&core.rom_write_status, Some(Ok(m)) if m.contains("1 byte")));
+        assert_eq!(core.recording_refusal(), None, "allowed after reset");
+        assert_eq!(core.rom_writes, 0);
+        let nes = core.nes.as_mut().unwrap();
+        assert_eq!(
+            nes.debug_peek_rom(rustynes_core::RomSpace::Chr, 0x20),
+            Some(rom[16 + 0x4000 + 0x20]),
+            "the clean byte is back"
+        );
     }
 
     /// v3.7.0 — reinstalling the same image (netplay start, movie load)

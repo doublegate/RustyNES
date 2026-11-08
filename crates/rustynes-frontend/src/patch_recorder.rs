@@ -301,6 +301,31 @@ impl PatchRecorder {
         self.edited != self.clean
     }
 
+    /// v3.7.0 — drop every PRG / CHR edit, returning `(section, offset, clean
+    /// byte)` for each byte that differed, so a caller can write the clean
+    /// bytes back into a live console. RAM pins are kept (they are not ROM
+    /// edits). A header or trainer byte is never edited (`set_prg` / `set_chr`
+    /// cannot reach them), so only the two sections are compared.
+    pub fn revert(&mut self) -> Vec<(rustynes_core::RomSpace, usize, u8)> {
+        let RomLayout {
+            prg_start, prg_len, ..
+        } = self.layout;
+        let chr_start = self.layout.chr_start();
+        let mut out = Vec::new();
+        for (i, (e, c)) in self.edited.iter().zip(&self.clean).enumerate() {
+            if e == c {
+                continue;
+            }
+            if (prg_start..prg_start + prg_len).contains(&i) {
+                out.push((rustynes_core::RomSpace::Prg, i - prg_start, *c));
+            } else if i >= chr_start {
+                out.push((rustynes_core::RomSpace::Chr, i - chr_start, *c));
+            }
+        }
+        self.edited.clone_from(&self.clean);
+        out
+    }
+
     /// v3.7.0 — this recorder restarted with no edits, if `image_sha256` (a
     /// console's `Nes::image_sha256`, the whole file's SHA-256) is the clean
     /// image's, else `None`. For a frontend that reinstalls a console: the new
