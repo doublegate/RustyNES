@@ -168,9 +168,9 @@ The memory panel never writes ROM itself. An edit is queued as
 pokes (`EmuCore::produce_one_frame`), under its own gate, `rom_write_refusal`:
 
 1. RetroAchievements hardcore refuses it;
-2. a movie recording or playing refuses it (read from the movie state itself,
-   not only from the app's `writes_locked`): a `.rnm` stamps the clean ROM's
-   identity and would replay differently on it;
+2. a movie recording or playing, or an open TAStudio session, refuses it (read
+   from the movie state itself, not only from the app's `writes_locked`): a
+   `.rnm` stamps the clean ROM's identity and would replay differently on it;
 3. `writes_locked` (netplay, TAS replay) refuses it: the peers would desync.
 
 A refused write is a no-op: it is drained, not deferred; the console, the
@@ -211,9 +211,40 @@ the edit, because the ROM is not restored. `PPU_SNAPSHOT_VERSION` and the
 `.rns` format are unchanged. To carry an edit across sessions, save the patch
 and load the patched image.
 
-Movies and netplay refuse ROM edits while they run, but an edit made before a
-recording starts stays in the console, and the movie is stamped with the clean
-image's identity. Such a movie replays correctly only on the patched image.
+Movies and netplay refuse ROM edits while they run, and the reverse holds too
+(maintainer decision, 2026-11-08): **no recording starts over a live edit.** A
+movie stamps the clean image's identity (an edit does not change
+`Nes::rom_sha256`) and carries only inputs, so a run recorded on edited ROM
+would replay as a different game on the ROM it names. While the recorder holds
+any PRG or CHR edit, `EmuCore::recording_refusal` refuses, with the reason on
+the status bar ("save the patch and load the patched ROM, or reset the edits"):
+
+| Entry point | Where |
+|---|---|
+| F6 / Movie menu / replay-panel Record (power-on recording) | `App::handle_movie_record_toggle`, `handle_movie_record_toggle_wasm` |
+| F8 / Movie menu Branch (recording from the current state) | `App::handle_movie_branch`, `handle_movie_branch_wasm` |
+| Opening TAStudio (its project exports a power-on movie) | `App::ensure_tas_editor` |
+
+Lua's `tastudio:setrecording` only toggles recording inside an open TAStudio
+session, which passed the check when it opened, and ROM writes are refused
+while a TAStudio session is open (the movie arm of the gate). No Lua, IPC or
+CLI command starts a movie recording: the headless commands (`movie-verify`,
+`speedrun`, `patch-regress`) only replay, and the MCP server and mobile bridge
+record their own sessions, which have no ROM editor. The canvas-embed build's
+F6 / F8 (`wasm.rs`) keep their own console with no ROM editor either.
+`app::tests::every_recording_entry_point_refuses_live_rom_edits` finds every
+function in `app.rs` that starts a recording or a TAStudio session and
+requires the check before the start.
+
+RAM pins alone do not refuse a recording: they are raw cheats, which a
+recording already excludes.
+
+**Reset edits** (memory panel, PRG-ROM / CHR-ROM views) queues
+`DebugPoke::RomReset`, applied under the same gate as an edit: the clean
+image's byte goes back into the console at every edited offset
+(`emu::revert_rom_edits`, through `PatchRecorder::revert`), the recorder holds
+no edit, and recording is allowed again. Save the patch first to keep the
+edits.
 
 ### Gates
 
@@ -230,5 +261,11 @@ image's identity. Such a movie replays correctly only on the patched image.
   `queued_rom_edits_save_a_patch_that_rebuilds_the_live_rom` (edits through the
   queue, saved, then applied with `patch::apply_bps` to the clean ROM: equal to
   the live console's ROM byte for byte),
-  `reinstalling_a_console_restarts_or_drops_the_recorder`, and the memory
-  panel's `a_rom_view_edit_is_queued_not_written`.
+  `reinstalling_a_console_restarts_or_drops_the_recorder`,
+  `recording_is_refused_over_live_rom_edits_until_they_are_reset` (refused
+  with an edit, allowed with RAM pins only and after Reset edits, the clean
+  byte back in the console; a reset is refused while TAStudio is open),
+  `app::tests::every_recording_entry_point_refuses_live_rom_edits`, and the
+  memory panel's `a_rom_view_edit_is_queued_not_written`. Mutations caught:
+  the refusal dropped; the check removed from the F8 branch and from opening
+  TAStudio.

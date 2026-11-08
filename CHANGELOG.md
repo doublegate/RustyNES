@@ -64,8 +64,13 @@ cycle-accurate core later replaced.
   next frame. Every edit is recorded, and **Save patch...** writes them as a
   BPS patch of the clean ROM, with the enabled raw RAM cheats and freezes in
   its `.pins.toml` sidecar (desktop). Edits are refused, with the reason
-  shown, in RetroAchievements hardcore, while a movie records or plays, and
-  during netplay. Supported on 204 mapper numbers for PRG and 175 for CHR;
+  shown, in RetroAchievements hardcore, while a movie records or plays or
+  TAStudio is open, and during netplay. In turn, a movie recording (F6, F8
+  branch, the menu and replay-panel buttons) or a TAStudio session cannot
+  start while an edit exists, since the movie would name the clean ROM:
+  save the patch and load the patched ROM, or use **Reset edits**, which puts
+  the clean bytes back. RAM pins alone do not block recording. Supported on
+  204 mapper numbers for PRG and 175 for CHR;
   CHR-RAM boards, self-flashing boards (GTROM, flashable UNROM 512), the FFE
   copiers, FDS and NSF are not. Save states carry no ROM, so loading one on
   the clean ROM runs the clean game. Core: `Nes::debug_poke_rom` /

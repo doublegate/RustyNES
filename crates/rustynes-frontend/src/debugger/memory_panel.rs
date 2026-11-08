@@ -653,6 +653,20 @@ fn rom_patch_bar(ui: &mut egui::Ui, state: &mut MemoryPanelState, offered: bool)
         if save.clicked() {
             state.save_patch_requested = true;
         }
+        // v3.7.0 — back to the clean image. Queued like an edit, under the
+        // same gate; the way out of "recording refused: live ROM edits".
+        let reset = ui
+            .add_enabled(
+                info.recording && info.writes > 0,
+                egui::Button::new("Reset edits"),
+            )
+            .on_hover_text(
+                "Write the clean ROM's bytes back over every edit and start the \
+                 recording of edits again. Movies cannot be recorded while edits exist.",
+            );
+        if reset.clicked() {
+            state.pending.push(DebugPoke::RomReset);
+        }
     });
     match &state.rom_patch.last {
         Some(Ok(done)) => {
