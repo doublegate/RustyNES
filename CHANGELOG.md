@@ -149,6 +149,22 @@ cycle-accurate core later replaced.
   thumbnails, the library tile menu opens from a TV remote, and a folder import
   is bounded at eight levels (it had no bound at all). The rest are recorded with
   their reasons in `docs/android.md`.
+- **No tracked file names a developer's home directory any more.** Fifty-seven
+  files spelled out the maintainer's absolute paths: one-off scripts, plans,
+  audits, ADRs, the `AGENTS.md` imports, agent scratch directories and a private
+  ROM library's location.
+  - **Docs and plans** now use `~/...`, a repository-relative path, or
+    `<user>` / `<uid>`.
+  - **Scripts** now find the repository from their own location, so they also
+    work on another machine. The nine `scripts/release-automation/` one-offs
+    had `cd`-ed into a directory that no longer existed.
+  - **The ROM-library scripts** (`scripts/coverage/`,
+    `scripts/mapper-promotion/`) read their library root from
+    `RUSTYNES_ROM_LIBRARY` (default `~/roms/nes`). Set it to keep using a
+    library elsewhere.
+  - **A new audit** (`personal_path_audit`) fails on the next such path.
+  - **Not covered:** the immutable `ref-docs/`, the frozen archive trees and
+    git history keep theirs.
 
 ### Fixed
 

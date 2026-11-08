@@ -181,6 +181,8 @@ artifacts/
 *.ips
 *.ups
 *.bps
+# v3.7.0 live-patch recorder: the RAM-pin sidecar written beside a .bps.
+*.pins.toml
 
 # --- TAS movie files (may contain copyrighted content) ---
 *.rnm

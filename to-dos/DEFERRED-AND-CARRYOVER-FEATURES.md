@@ -692,7 +692,7 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   ranked by real titles (maintainer decision D26): 8 (FFE), 158, 207, 116,
   114/182/215, 197, 165, 172/173, 230, 235, 252, in **v3.2.0**
   (`T-MAPPER-BREADTH-V3`). The long tail continues in **v3.8.0**. Each family is
-  first checked against the maintainer's library in `~/Dropbox/ROMs/` (D21).
+  first checked against the maintainer's library in `$RUSTYNES_ROM_LIBRARY/` (D21).
   [Line plan](plans/v3.1-to-v4.0-line-plan.md).)*
 - `[~]` **Zero-library mappers (no freely-available ROM)** — families 28, 29, 31,
   39, 81, 174, 179 have no freely-available dump, so they have no committed
@@ -707,7 +707,7 @@ are ROM-availability/coverage and a detection follow-up — none affect the orac
   174, 179** (`tests/roms/external/mapper-029-RET-CUFROM/` exists but is empty).
   Target: **v2.9.6** tier promotions, where a legal homebrew ROM exists.)*
   *(2026-10-07: v3.2.0's dump-corpus sweep (`T-DUMP-CORPUS`, D21) searches
-  `~/Dropbox/ROMs/` for 29, 39, 81, 104, 174, 179, 238, 261, 194, 195 and the 16
+  `$RUSTYNES_ROM_LIBRARY/` for 29, 39, 81, 104, 174, 179, 238, 261, 194, 195 and the 16
   high-id boards. A local dump now counts as evidence for promotion when the
   committed record names the title, the hash, the frames checked and a
   screenshot (D23, `T-CURATED-EVIDENCE`). The dumps themselves are never

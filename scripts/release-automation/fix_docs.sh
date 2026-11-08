@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-cd /home/parobek/Code/Commercial_Private-Projects/RustyNES
+cd "$(dirname "$0")/../.."  # the repository root
 # Convert broken intra-doc links [`X`] -> plain `X` for private/external items
 # (private enum variants, the cross-module MovieUi, a private panel method).
 for f in crates/rustynes-frontend/src/netplay_ui.rs crates/rustynes-frontend/src/debugger/netplay_panel.rs; do

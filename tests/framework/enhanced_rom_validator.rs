@@ -13,7 +13,7 @@ use std::time::Instant;
 
 // We need to add rustynes-core to dependencies
 // For standalone compilation, we'll use dynamic library approach
-#[path = "/home/parobek/Code/RustyNES/crates/rustynes-core/src/lib.rs"]
+#[path = "../../crates/rustynes-core/src/lib.rs"]
 mod rustynes_core;
 
 use rustynes_core::Console;

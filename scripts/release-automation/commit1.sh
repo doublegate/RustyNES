@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-cd /home/parobek/Code/Commercial_Private-Projects/RustyNES
+cd "$(dirname "$0")/../.."  # the repository root
 /usr/bin/git commit -q -F - <<'MSG'
 fix(ci): commit the used nes-test-roms ROMs + finish accuracy-polish wiring
 

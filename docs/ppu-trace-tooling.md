@@ -265,7 +265,7 @@ samples. Documented here as the escape hatch.
 ### Approach C (landed 2026-05-23) — Mesen2 source patch for `EventType::PpuCycle`
 
 For the v1.0.0-final brief
-(`/home/parobek/.claude/plans/generate-a-new-plan-snug-starlight.md`
+(`~/.claude/plans/generate-a-new-plan-snug-starlight.md`
 Phase 0), a small Mesen2 C++ patch lands a new
 `EventType::PpuCycle` event that Lua scripts can register for to
 get TRUE per-PPU-cycle granularity (89342 events per NTSC frame).

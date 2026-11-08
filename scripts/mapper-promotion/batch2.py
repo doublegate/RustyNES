@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Batch 2: copy 30 GoodNES ROMs into external/, verify header mapper, emit tests + tier lists."""
-import os, re, shutil, zipfile
+import os, re, shutil, tempfile, zipfile
 
-BASE = os.path.expanduser("~/Dropbox/ROMs/Nintendo Entertainment System - Famicom (2020)/GoodNES [v3.23b]")
-EXT = "/home/parobek/Code/OSS_Public-Projects/RustyNES/tests/roms/external"
+BASE = os.path.join(os.path.expanduser(os.environ.get("RUSTYNES_ROM_LIBRARY", "~/roms/nes")), "GoodNES [v3.23b]")
+EXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tests", "roms", "external")
 
 # (id, subdir/filename, target_dir_name)
 ITEMS = [
@@ -76,7 +76,7 @@ out=["\n// ============================================================",
 for mid,name,rel in blocks:
     rel_esc=rel.replace('"','\\"')
     out.append(f"#[test]\nfn {name}() {{\n    check(\n        \"{rel_esc}\",\n        DEFAULT_IDLE,\n        \"{name}\",\n    );\n}}\n")
-open("/tmp/claude-1000/-home-parobek-Code-OSS-Public-Projects-RustyNES/6112789e-19c9-4d7b-9638-b241cdbc833d/scratchpad/promo_tests_2.rs","w").write("\n".join(out))
+open(os.path.join(tempfile.gettempdir(), "promo_tests_2.rs"),"w").write("\n".join(out))
 
 new_curated=sorted(BATCH1_CURATED+promoted)
 new_be=sorted(set(BATCH1_BE)-set(promoted))

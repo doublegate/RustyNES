@@ -1835,7 +1835,7 @@ This page replaces the prior practice of scattering pass/fail counts
 across `CLAUDE.md`, `CHANGELOG.md`, and the per-sprint `to-dos/*.md`
 files. When those files cite numbers, they should link here. The
 gap-analysis remediation plan that produced this file lives at
-`/home/parobek/.claude/plans/linked-puzzling-sutherland.md` (Track D5).
+`~/.claude/plans/linked-puzzling-sutherland.md` (Track D5).
 
 ---
 

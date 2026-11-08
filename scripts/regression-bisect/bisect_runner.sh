@@ -16,7 +16,7 @@
 #   git bisect start
 #   git bisect bad   <bad-commit>
 #   git bisect good  <good-commit>
-#   git bisect run /home/parobek/Code/RustyNES/scripts/regression-bisect/bisect_runner.sh
+#   git bisect run "$(git rev-parse --show-toplevel)"/scripts/regression-bisect/bisect_runner.sh
 #
 # Usage (parametric — bisect a different harness):
 #

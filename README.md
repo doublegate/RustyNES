@@ -76,10 +76,10 @@ audience: players, RetroArch, mobile and the Rust crates.
 | **208 mapper families** | NROM through MMC5, the whole VRC line, Sunsoft FME-7, Namco 163, Taito, J.Y. Company, the MMC3 and MMC1 multicarts, Waixing and Nanjing boards, homebrew flash boards with working saves, and a UNIF (`.unf`) loader. Each is classified Core, Curated or BestEffort by the evidence behind it |
 | **Famicom Disk System** | Real-BIOS boot, writable disks, side swapping, a timed disk-head model and 2C33 wavetable audio |
 | **Vs. / PlayChoice-10** | Arcade boards in true 2C03 / 2C04 / 2C05 RGB, per-game DIP presets, and Vs. DualSystem two-screen cabinets |
-| **Rollback netplay** | GGPO-style, up to four players over UDP or browser WebRTC, with room codes, TURN traversal and spectators; peers must match on ROM, emulation options and emulation epoch, so a session cannot silently diverge, and a mismatch is refused with its reason |
+| **Rollback netplay** | GGPO-style, up to four players over UDP or browser WebRTC, with room codes, TURN traversal, spectators who can join mid-match through the hosted relay, and an opt-in report of where a desync began; peers must match on ROM, emulation options and emulation epoch, so a session cannot silently diverge, and a mismatch is refused with its reason |
 | **RetroAchievements** | Achievements, leaderboards, rich presence and hardcore mode through the `rcheevos` library |
 | **TAStudio** | A piano-roll TAS editor with a greenzone, branches and markers, plus `.fm2` / `.bk2` / `.fcm` / `.fmv` / `.vmv` import |
-| **Debugger** | Conditional breakpoints, watchpoints, a hex editor, RAM search, a callstack, `.dbg` source maps, and editable palette, nametable, CHR and OAM |
+| **Debugger** | Conditional breakpoints, watchpoints, a hex editor, RAM search, a callstack, `.dbg` source maps, editable palette, nametable, CHR and OAM, and live PRG/CHR-ROM edits recorded as a BPS patch |
 | **Video and audio** | NTSC composite filtering, a CRT shader stack, HD packs with OGG audio, `.pal` palettes, a generated NTSC palette, and an NSF / NSFe player |
 | **Save states, rewind, run-ahead** | All on the deterministic snapshot path. A movie records the options it was made with (console model, chip revisions, power-on state and more) and the emulation epoch, so a replay is bit-identical whatever the player's settings, and a movie from a version that emulates differently is refused rather than replayed wrong |
 | **Lua scripting** | A sandboxed Lua 5.4 engine with memory access, callbacks, an HUD and a TAStudio API |
@@ -186,6 +186,10 @@ in `crates/rustynes-frontend/web`.
 
 - **Netplay:** GGPO-style rollback for two to four players over UDP or browser
   WebRTC, with a deployable signaling bundle in [`deploy/`](deploy/).
+  Spectators can join a match mid-session through the hosted relay, which
+  carries only the players' confirmed inputs. An opt-in desync report names
+  the frame, part of the console and byte where two peers first differed
+  ([`docs/netplay-session.md`](docs/netplay-session.md)).
 - **RetroAchievements** on desktop, Android, iOS and the libretro core.
 - **Speed and pacing:** 25-300% speed, fast-forward, frame advance, rewind,
   run-ahead, and display-synced, VRR or wall-clock pacing.
@@ -217,7 +221,12 @@ in `crates/rustynes-frontend/web`.
   loopback GDB stub ([`docs/dap-debugger.md`](docs/dap-debugger.md)).
 - **Debugger:** breakpoints on expressions and conditions, R/W/X watchpoints, a
   trace logger, an event viewer, a hex editor, RAM search, a callstack, and
-  `ca65` / `cc65` source maps. The inspectors become editors on request.
+  `ca65` / `cc65` source maps. The inspectors become editors on request,
+  including PRG-ROM and CHR-ROM while the game runs.
+- **ROM hacking:** live ROM edits are recorded as a BPS patch, with RAM pins
+  in a sidecar file, and `rustynes patch-regress` replays a movie on the
+  clean and the patched ROM to find the first frame that differs
+  ([`docs/live-patch-recorder.md`](docs/live-patch-recorder.md)).
 - **Lua 5.4 scripting:** memory and state access, per-frame and per-access
   callbacks, an HUD, and host IPC for automation (HTTP, WebSockets and OS
   shared memory). See
@@ -233,6 +242,8 @@ in `crates/rustynes-frontend/web`.
 - Custom `.pal` palettes, a generated NTSC palette, and a choice of analog filter
   models.
 - An NSF / NSFe player through the real APU and expansion synths.
+- A 5- or 20-band graphic equalizer on the output (a flat setting leaves the
+  audio bit-identical).
 - Every display option is off the core's path, so the emulated framebuffer is
   unchanged by it.
 
@@ -242,8 +253,11 @@ in `crates/rustynes-frontend/web`.
   the shared shader stack, save states, netplay, RetroAchievements and Lua.
   Distributed through GitHub Releases. See [`docs/android.md`](docs/android.md).
 - **iOS / iPadOS:** a SwiftUI app on Metal with GameController support, iCloud
-  save sync and ReplayKit. Distributed through TestFlight. See
+  save sync and ReplayKit, box art, a home-screen widget that reopens the last
+  game, and play on an external display. Distributed through TestFlight. See
   [`docs/ios.md`](docs/ios.md).
+- **On both:** the desktop's 20-band equalizer and its Game Genie code
+  database, and a switch for the per-game picture corrections.
 
 Both apps run the same core as desktop, and both are free: RustyNES is
 permanently non-commercial ([ADR 0035](docs/adr/0035-rustynes-is-permanently-non-commercial.md)).

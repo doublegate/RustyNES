@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-cd /home/parobek/Code/Commercial_Private-Projects/RustyNES
+cd "$(dirname "$0")/../.."  # the repository root
 G=/usr/bin/git
 echo "main=$($G rev-parse --short main) branch=$($G rev-parse --short HEAD)"
 if $G merge-base --is-ancestor main HEAD; then echo "FF-clean"; else echo "NOT FF"; exit 1; fi

@@ -113,7 +113,7 @@ The xdiff additions (Emulator.cs + Program.cs):
 +class Program {
 +    static void Main(string[] args) {
 +        var emu = new Emulator();
-+        var cart = new Cartridge("/home/parobek/Code/Commercial_Private-Projects/RustyNES_v2-from-main/tests/roms/accuracycoin/AccuracyCoin.nes");
++        var cart = new Cartridge("~/Code/Commercial_Private-Projects/RustyNES_v2-from-main/tests/roms/accuracycoin/AccuracyCoin.nes");
 +        emu.Cart = cart;
 +        cart.Emu = emu;
 +        // xdiff cross-diff window (per-cycle bus log). Set XDIFF_LO/XDIFF_HI to
