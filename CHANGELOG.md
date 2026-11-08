@@ -45,6 +45,13 @@ cycle-accurate core later replaced.
   `target/release-baseline/rustynes`. It is the "before" column for comparing
   the three, and it is needed because a personal cargo configuration that
   sets `target-cpu=native` makes a plain `cargo full-build` a native build.
+- **`scripts/perf/cpu_target_ab.sh`**: times the three builds above against
+  each other on the headless `speedrun` frame loop (nestest, flowing_palette,
+  AccuracyCoin), under the same evidence rule as `ab_check.sh`: two
+  independent runs, a balanced run order, and a mixed-sign result rejects. It
+  refuses to run with `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` set and checks
+  each build's final rustc line for the CPU it asked for, because either trap
+  makes all three builds the same build.
 
 ### Fixed
 
