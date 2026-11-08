@@ -105,6 +105,7 @@ import uniffi.rustynes_mobile.MobileException
 import uniffi.rustynes_mobile.NesController
 import uniffi.rustynes_mobile.RaLoginStatus
 import uniffi.rustynes_mobile.RaToast
+import uniffi.rustynes_mobile.equalizerBandFrequencies
 
 /**
  * RustyNES Android — first-boot Compose shell (v1.8.0 "Android", beta.1).
@@ -779,6 +780,8 @@ private class PreparedRom(
     val filter: Int?,
     val battery: BatterySaver?,
     val batteryNotice: String?,
+    /** v3.7.0 (`T-RA-HARDCORE-RESUME`) — what happened to the on-background state. */
+    val resume: AutoResume = AutoResume.NONE,
 )
 
 
@@ -905,7 +908,14 @@ internal object FdsSaves {
  * touches the running emulator; [publishRom] does, on the main thread. May throw
  * if the bytes are not a valid ROM (callers wrap in `runCatching`).
  */
-private fun prepareRom(context: Context, bytes: ByteArray, uri: Uri?, name: String?): PreparedRom {
+private fun prepareRom(
+    context: Context,
+    bytes: ByteArray,
+    uri: Uri?,
+    name: String?,
+    raEnabled: Boolean = false,
+    raHardcore: Boolean = false,
+): PreparedRom {
     // v2.9.7 "Tandem": the stored FDS BIOS (if the user chose one) rides along, so an
     // .fds disk boots; a cartridge or NSF ignores it. Without it a disk throws
     // MobileException.MissingFdsBios, which openRom turns into the BIOS prompt.
@@ -924,8 +934,18 @@ private fun prepareRom(context: Context, bytes: ByteArray, uri: Uri?, name: Stri
     // state below (a save state is newer and restores cartridge RAM too).
     val (battery, batteryNotice) = attachBattery(context, ctrl, sha)
     // Auto-resume the on-background save-state for this ROM if one is present.
-    SaveStateStore.load(context, sha, SaveStateStore.AUTO_SLOT)?.let { blob ->
-        runCatching { ctrl.loadState(blob) }
+    // v3.7.0 (`T-RA-HARDCORE-RESUME`, maintainer 2026-11-08: keep the refusal):
+    // RetroAchievements hardcore forbids loading a state. The RA session is created
+    // after this controller is prepared, so the bridge alone would let the load
+    // through and then power-cycle when hardcore takes effect; the game restarted
+    // with nothing saying why. Decide first, and put the reason on the status line.
+    // The state itself is kept: it resumes once hardcore is off.
+    val slot = SaveStateStore.load(context, sha, SaveStateStore.AUTO_SLOT)
+    var resume = AutoResume.decide(slot != null, raEnabled, raHardcore)
+    if (resume == AutoResume.LOAD && slot != null) {
+        runCatching { ctrl.loadState(slot) }.onFailure {
+            resume = AutoResume.afterRefusal(it is MobileException.HardcoreBlocked)
+        }
     }
     if (uri != null) {
         runCatching {
@@ -953,7 +973,10 @@ private fun prepareRom(context: Context, bytes: ByteArray, uri: Uri?, name: Stri
             lastPlayed = System.currentTimeMillis(),
         ),
     )
-    return PreparedRom(ctrl, sha, bytes, name, GameConfig.filter(context, sha), battery, batteryNotice)
+    // v3.7.0 — the player's Game Genie picks for this game come back with it
+    // (hardcore refuses each, as it refuses a typed one).
+    for (code in CheatStore.picks(context, sha)) runCatching { ctrl.cheatAddGenie(code) }
+    return PreparedRom(ctrl, sha, bytes, name, GameConfig.filter(context, sha), battery, batteryNotice, resume)
 }
 
 /**
@@ -998,8 +1021,21 @@ private fun publishRom(
     prepared.filter?.let { f ->
         settings.filter = VideoFilter.entries.getOrElse(f) { VideoFilter.None }
     }
+    // v3.7.0 — the player's EQ and correction setting reach the new controller.
+    applyAudioVideoPrefs(prepared.ctrl, settings)
     return "Running" + (prepared.name?.let { " · $it" } ?: "") +
-        (prepared.batteryNotice?.let { " — $it" } ?: "")
+        (prepared.batteryNotice?.let { " — $it" } ?: "") +
+        (if (prepared.resume.showsNotice) " — " + context.getString(R.string.notice_hardcore_resume) else "")
+}
+
+/**
+ * v3.7.0 — push the player's 20-band EQ gains and per-game picture-correction
+ * setting into [ctrl]. Both are bridge-side settings the bridge keeps across its own
+ * `loadRom`, but every ROM opened here builds a new controller, so each one is told.
+ */
+internal fun applyAudioVideoPrefs(ctrl: NesController, settings: AppSettings) {
+    runCatching { ctrl.setEqualizerGains(settings.eqGains.toList()) }
+    runCatching { ctrl.setGameCorrectionsEnabled(settings.gameCorrections) }
 }
 
 /**
@@ -1365,6 +1401,7 @@ private fun EmulatorScreen(
     }
     var showSettings by remember { mutableStateOf(false) }
     var showStates by remember { mutableStateOf(false) }
+    var showCheats by remember { mutableStateOf(false) }
     // v1.8.8 "Atlas" (Workstream D): a surfaced cloud-save conflict awaiting the user's
     // keep-local / keep-cloud choice (null = none). Set by a Snapshots open/push that
     // diverged; cleared once resolved or dismissed.
@@ -1559,7 +1596,7 @@ private fun EmulatorScreen(
                     // the same game reads it back with at most the frames run
                     // during this preparation missing, not up to a second's worth.
                     emulator.flushBattery(context)
-                    prepareRom(context, read(), uri, name())
+                    prepareRom(context, read(), uri, name(), settings.raEnabled, settings.raHardcore)
                 }
                 status = publishRom(context, scope, emulator, prepared, settings)
                 emulator.showSubScreen = false
@@ -2041,6 +2078,8 @@ private fun EmulatorScreen(
             status = context.getString(R.string.capture_unsupported)
             return
         }
+        // v3.7.0 (`T-ANDROID-GPU-FRAMESKIP`): pack a deferred GPU-path frame first.
+        capture.refreshLatest?.invoke()
         val src = capture.latestFrame
         if (src == null) {
             status = context.getString(R.string.capture_screenshot_failed)
@@ -2073,7 +2112,7 @@ private fun EmulatorScreen(
     // v1.8.8 "Atlas" (Workstream F): toggle gameplay-clip recording. Start arms a
     // rolling ring buffer (the loop offers frames to it); Stop drains it, encodes the
     // MP4 off-thread to Movies/RustyNES, and offers a share. Video-only for now (the
-    // audio mux is a documented TODO in Capture.kt).
+    // audio mux is recorded as not done in Capture.kt, MOB-08).
     fun toggleRecording() {
         if (!Capture.supported) {
             status = context.getString(R.string.capture_unsupported)
@@ -2251,7 +2290,8 @@ private fun EmulatorScreen(
     // a persistent library rail is shown beside the player so the extra horizontal
     // space is used — tap a recent ROM in the rail to load it without opening a menu.
     // Compact/medium widths keep the single-pane phone layout. This is a solid first
-    // version of the list-detail pane; TODO(v1.8.8 WS C): grow the rail into the full
+    // version of the list-detail pane; not done (v3.7.0 MOB-08: an expanded-window
+    // layout verifiable only on a foldable / tablet, docs/android.md): grow the rail into the full
     // box-art library grid (favorites / folders / search) via NavigableListDetailPaneScaffold.
     // v1.8.8 "Atlas" (Workstream C): the shared box-art library content, used as the
     // expanded-width list pane (below) and the compact idle screen (when no ROM is
@@ -2459,8 +2499,9 @@ private fun EmulatorScreen(
                 // pane, so the player area just shows the status line. Inset-padded so
                 // nothing tucks under the system bars (visible on the idle screen).
                 if (isExpandedWidth) {
-                    // TODO(i18n): `status` is a dynamic, frequently-reassigned string
-                    // (load results, error messages) — a deferred i18n surface.
+                    // i18n (MOB-08, PARTIAL at v3.7.0): `status` is a dynamic,
+                    // frequently-reassigned string (load results, error messages);
+                    // v3.7.0's own lines are resources, the older literals a separate sweep.
                     Text(
                         status,
                         color = Color.White,
@@ -2895,13 +2936,42 @@ private fun EmulatorScreen(
                 }
                 AppCompatDelegate.setApplicationLocales(locales)
             },
+            // v3.7.0 (D24 row 3, `T-MOBILE-GAME-CORRECTIONS`).
+            eqFrequencies = remember { runCatching { equalizerBandFrequencies() }.getOrDefault(emptyList()) },
+            onEqChange = { g -> emulator.controller?.let { c -> runCatching { c.setEqualizerGains(g.toList()) } } },
+            onGameCorrectionsChange = { on ->
+                emulator.controller?.let { c -> runCatching { c.setGameCorrectionsEnabled(on) } }
+            },
+            gameCorrectionListed = runCatching { emulator.controller?.gameCorrectionListed() }.getOrNull() == true,
+            onOpenCheats = {
+                showSettings = false
+                showCheats = true
+            },
             onDismiss = { showSettings = false },
+        )
+    }
+    // v3.7.0 (D24 row 3) — the Game Genie sheet: the database's codes for this game
+    // and a typed code, each persisted per game (CheatStore).
+    if (showCheats) {
+        CheatsSheet(
+            controller = emulator.controller,
+            romSha = emulator.romSha,
+            onStatus = { status = it },
+            onDismiss = { showCheats = false },
         )
     }
     if (showStates) {
         StatesSheet(
             context, emulator.romSha, emulator,
             onStatus = { status = it },
+            // v3.7.0 (MOB-08): the live frame for the slot thumbnail (packing a
+            // deferred GPU-path frame first).
+            currentFrame = {
+                capture.refreshLatest?.invoke()
+                capture.latestFrame?.takeIf { it.width == NES_WIDTH && it.height == NES_HEIGHT }?.let { b ->
+                    IntArray(NES_WIDTH * NES_HEIGHT).also { b.getPixels(it, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT) }
+                }
+            },
             onSlotSaved = { slot ->
                 // v1.8.8 "Atlas" (Workstream E): "first save-state" PGS achievement
                 // (idempotent; no-op behind the default-off gate). DISTINCT from RA.
@@ -2945,7 +3015,7 @@ private fun EmulatorScreen(
     // v1.8.8 "Atlas" (Workstream D): the cloud-save conflict picker. Surfaced when a
     // Snapshot open/push diverged between this device and the cloud; the user picks
     // which copy to keep (last-write-wins is the auto path; this is the manual
-    // fallback). A richer 3-way merge UI is a deliberate TODO.
+    // fallback). A 3-way merge does not apply to a binary save state (MOB-08).
     cloudConflict?.let { conflict ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { cloudConflict = null },
@@ -3040,7 +3110,13 @@ private fun EmulatorScreen(
     // floor so silent ROMs still run at ~60 Hz.
     LaunchedEffect(Unit) {
         val reuse = Bitmap.createBitmap(NES_WIDTH, NES_HEIGHT, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(NES_WIDTH * NES_HEIGHT)
+        // v3.7.0 (`T-ANDROID-GPU-FRAMESKIP`): the CPU copy of the picture, packed only
+        // when something reads it (see CpuFrame). A screenshot asks for it here.
+        val cpuFrame = CpuFrame(NES_WIDTH * NES_HEIGHT)
+        val pixels = cpuFrame.pixels
+        capture.refreshLatest = {
+            if (cpuFrame.materialize()) reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+        }
         val audio = AudioPlayer(
             48_000,
             context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager,
@@ -3180,7 +3256,8 @@ private fun EmulatorScreen(
                             // Index framebuffer -> ARGB via the shared composite LUT (the
                             // GPU SurfaceView is bypassed during netplay — the picture goes
                             // through the Bitmap path, like the HD-pack path).
-                            packIndexToArgb(ctrl.indexFramebufferBytes(), pixels)
+                            val idx = ctrl.indexFramebufferBytes()
+                            cpuFrame.overwrite { packIndexToArgb(idx, it) }
                             val audioBytes = ctrl.drainAudioBytes()
                             if (!emulator.muted) audio.writeBytes(audioBytes)
                             if (scriptLoaded) logLines = ctrl.drainScriptLog()
@@ -3203,7 +3280,7 @@ private fun EmulatorScreen(
                                 packRgbaToArgb(comp, hd.pixels)
                                 usedHd = true
                             } else {
-                                packRgbaToArgb(fb, pixels)
+                                cpuFrame.publish(fb, eager = true)
                             }
                         } else {
                             // Bisqwit needs the palette-index frame + NTSC phase; submit it
@@ -3215,11 +3292,20 @@ private fun EmulatorScreen(
                             // Hand the raw RGBA frame to the GPU SurfaceView (opt-in path);
                             // no-op when the GPU renderer is off.
                             gpuSurface?.submitFrame(fb)
-                            // Always converted, also on the GPU path: screenshots, clips
-                            // and the external display read this frame. (A v3.2.0 draft
-                            // skipped it when the GPU renderer was on, which left all three
-                            // showing a stale frame; not redone without a device to test it.)
-                            packRgbaToArgb(fb, pixels)
+                            // v3.7.0 (`T-ANDROID-GPU-FRAMESKIP`): packed now on the
+                            // Bitmap path and while a clip records or the external
+                            // display mirrors the game (each reads every frame); on the
+                            // GPU path otherwise only remembered, and packed if a
+                            // screenshot asks (capture.refreshLatest). A v3.2.0 draft
+                            // skipped the pack outright and left all three stale.
+                            cpuFrame.publish(
+                                fb,
+                                eager = CpuFrame.eagerEveryFrame(
+                                    gpuPath = gpuSurface != null,
+                                    clipRecording = capture.clip != null,
+                                    externalDisplay = castManager.casting,
+                                ),
+                            )
                         }
                         // Hot path: drain audio as raw bytes (no per-sample Float boxing)
                         // and write straight to the PCM_FLOAT track.
@@ -3237,7 +3323,13 @@ private fun EmulatorScreen(
                             frame = hdBmp.asImageBitmap()
                             presented = hdBmp
                         } else {
-                            reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+                            // A deferred GPU-path frame is not blitted (nothing shows the
+                            // Compose image on that path) unless a clip or the external
+                            // display started since the publish, which then gets it now.
+                            if (!cpuFrame.isDeferred || capture.clip != null || castManager.casting) {
+                                cpuFrame.materialize()
+                                reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+                            }
                             frame = reuse.asImageBitmap()
                             presented = reuse
                         }
@@ -3377,24 +3469,15 @@ private class CaptureState {
     @Volatile
     var latestFrame: Bitmap? = null
 
+    /** v3.7.0 (`T-ANDROID-GPU-FRAMESKIP`) — brings [latestFrame] up to date when the
+     *  GPU path deferred the pack (see CpuFrame). Main thread only, as is the blit. */
+    var refreshLatest: (() -> Unit)? = null
+
     /** Live clip ring buffer while recording (null when not). */
     @Volatile
     var clip: Capture.ClipBuffer? = null
 }
 
-/** Convert the core's RGBA8 framebuffer into packed ARGB_8888 pixels. */
-private fun packRgbaToArgb(rgba: ByteArray, out: IntArray) {
-    var i = 0
-    var p = 0
-    while (p < out.size) {
-        val r = rgba[i].toInt() and 0xFF
-        val g = rgba[i + 1].toInt() and 0xFF
-        val b = rgba[i + 2].toInt() and 0xFF
-        out[p] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-        i += 4
-        p += 1
-    }
-}
 
 
 // The on-screen controls now live in `VirtualController.kt` — a single multi-touch

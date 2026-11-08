@@ -45,6 +45,9 @@ fun StatesSheet(
     // user save, so the host can fire the "first save-state" PGS achievement and push
     // the slot to the cloud (both no-ops behind their default-off gates).
     onSlotSaved: (String) -> Unit = {},
+    // v3.7.0 (MOB-08): the current 256x240 ARGB frame for the slot thumbnail, read
+    // on the main thread when Save is pressed (null with no frame).
+    currentFrame: () -> IntArray? = { null },
     onDismiss: () -> Unit,
 ) {
     // Bump to recompute slot timestamps after a save/delete.
@@ -82,10 +85,9 @@ fun StatesSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // THM thumbnail beside the slot (v1.8.8 WS C), if one was
-                        // captured. TODO(WS C): wire live-framebuffer capture at Save
-                        // time (the emulation loop owns the pixel buffer) via
-                        // SaveStateStore.saveThumb so this populates for new saves.
+                        // THM thumbnail beside the slot (v1.8.8 WS C). v3.7.0
+                        // (MOB-08): Save now captures it from the live frame
+                        // (currentFrame, Thumbs.downscale) beside the .rns.
                         val thumb = slots[slot]?.second
                         if (thumb != null) {
                             coil3.compose.AsyncImage(
@@ -111,10 +113,16 @@ fun StatesSheet(
                         OutlinedButton(onClick = {
                             val ctrl = emulator.controller
                             if (ctrl != null) {
+                                // The frame is read here, on the main thread, where
+                                // the loop's bitmap lives; the encode runs below.
+                                val thumb = currentFrame()?.let { Thumbs.downscale(it, 256, 240) }
                                 scope.launch {
                                     runCatching {
                                         withContext(Dispatchers.IO) {
                                             SaveStateStore.save(context, sha, slot, ctrl.saveState())
+                                            if (thumb != null) {
+                                                SaveStateStore.saveThumb(context, sha, slot, thumb, Thumbs.W, Thumbs.H)
+                                            }
                                         }
                                     }
                                         .onSuccess { onStatus("Saved slot $slot"); refresh++; onSlotSaved(slot) }

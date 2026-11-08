@@ -122,6 +122,9 @@ private struct LibraryScreen: View {
     @EnvironmentObject private var model: AppModel
     @Binding var showingImporter: Bool
     @Binding var showingSettings: Bool
+    /// v3.7.0 (D24 row 1): bumped when a cover is fetched or removed, so the
+    /// tiles re-read the cache.
+    @State private var artVersion = 0
 
     private let columns = [GridItem(.adaptive(minimum: 140), spacing: 16)]
 
@@ -134,7 +137,7 @@ private struct LibraryScreen: View {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 16) {
                             ForEach(model.library.entries) { entry in
-                                LibraryCell(entry: entry)
+                                LibraryCell(entry: entry, artVersion: artVersion)
                                     .onTapGesture { Task { await model.openGame(entry) } }
                                     // One VoiceOver element per tile (the placeholder art
                                     // is decorative), activatable to open the game.
@@ -145,7 +148,19 @@ private struct LibraryScreen: View {
                                         Button(entry.favorite ? "Unfavorite" : "Favorite") {
                                             model.library.toggleFavorite(entry.sha)
                                         }
+                                        // v3.7.0 (D24 row 1): fetched only on request.
+                                        Button("Find box art") {
+                                            Task {
+                                                let found = await BoxArt.fetch(displayName: entry.name, sha: entry.sha)
+                                                if found {
+                                                    artVersion += 1
+                                                } else {
+                                                    model.errorMessage = String(localized: "No box art found for this game.")
+                                                }
+                                            }
+                                        }
                                         Button("Remove", role: .destructive) {
+                                            BoxArt.remove(sha: entry.sha)
                                             model.library.remove(entry.sha)
                                         }
                                     }
@@ -191,9 +206,12 @@ private struct LibraryScreen: View {
     }
 }
 
-/// One library tile (placeholder art + name; box art is a future maintainer task).
+/// One library tile: the cached box art (v3.7.0, BoxArt.swift) or the placeholder,
+/// and the name.
 private struct LibraryCell: View {
     let entry: LibraryEntry
+    /// Read only to re-render after a fetch (see `LibraryScreen.artVersion`).
+    let artVersion: Int
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -201,10 +219,18 @@ private struct LibraryCell: View {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(Color.secondary.opacity(0.18))
                     .aspectRatio(1.0, contentMode: .fit)
-                Image(systemName: "tv")
-                    .font(.system(size: 34))
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
+                if let art = BoxArt.cachedImage(forSha: entry.sha) {
+                    Image(uiImage: art)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .accessibilityHidden(true)
+                } else {
+                    Image(systemName: "tv")
+                        .font(.system(size: 34))
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
                 if entry.favorite {
                     VStack {
                         HStack {

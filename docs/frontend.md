@@ -3201,8 +3201,14 @@ skips the step if hardcore is switched on while the sheet is open
 no debugger. Android's auto-resume of the on-background state goes through
 `load_state`, so in hardcore it is refused and the game starts from power-on.
 RA asks a resumed session to drop to casual instead; refusing the resume keeps
-hardcore honest but differs from the letter, which is left to the maintainer as
-`T-RA-HARDCORE-RESUME`.
+hardcore honest but differs from the letter, which was left to the maintainer as
+`T-RA-HARDCORE-RESUME`. **Decided 2026-11-08: keep the refusal.** v3.7.0 found
+that the refusal was not where this paragraph put it: the RA session is created
+after the controller is prepared, so `load_state` succeeded and the hardcore
+switch then power-cycled the console. The app now refuses the auto-resume itself
+when RA and hardcore are both on (`AutoResume.decide`, under JVM test) and says
+in one line why the game started from power-on (`docs/android.md`, "The mobile
+extras").
 
 Allowed in hardcore: saving a state, recording a movie, fast forward, reset and
 power cycle, run-ahead and netplay (RA lists neither), and pausing, which

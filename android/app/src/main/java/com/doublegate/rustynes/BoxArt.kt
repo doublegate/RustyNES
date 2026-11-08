@@ -23,8 +23,12 @@ import java.net.URLEncoder
  * the entry then references it as a `file://` URI (Coil loads it offline thereafter).
  *
  * Source: https://github.com/libretro-thumbnails/Nintendo_-_Nintendo_Entertainment_System
- * (Named_Boxarts). ScreenScraper / TheGamesDB are richer but need an account/API key,
- * so they are noted as a future fallback (TODO) rather than wired here.
+ * (Named_Boxarts). The richer sources need an account or API key and are tried first
+ * by [ScraperSources] (TheGamesDB with the user's key; ScreenScraper, gated off until
+ * RustyNES registers a devid), with this library as the always-available fallback.
+ * (v3.7.0, MOB-08: this said both were "a future fallback (TODO)"; they shipped with
+ * ScraperSources in v1.8.8. The iOS app reaches the same URL rules through the bridge's
+ * `box_art_candidate_urls`.)
  */
 object BoxArt {
     /** The libretro NES Named_Boxarts raw base (master branch). */

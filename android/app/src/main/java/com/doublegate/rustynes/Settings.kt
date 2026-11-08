@@ -166,6 +166,25 @@ class AppSettings(context: Context) {
         get() = _useGpuRenderer.value
         set(v) { _useGpuRenderer.value = v; prefs.edit().putBoolean("gpuRenderer", v).apply() }
 
+    /** v3.7.0 (`T-MOBILE-GAME-CORRECTIONS`, ADR 0051) — the per-game picture
+     *  corrections (today *Rad Racer*'s coherent mid-line copy). On by default, as on
+     *  the desktop (`[enhancements] disable_game_corrections = false`) and in libretro
+     *  (`rustynes_game_corrections`); off shows the hardware's own picture. Applied to
+     *  the running controller at once; a movie or netplay session keeps its own
+     *  recorded choice until it ends (the bridge holds it). */
+    private val _gameCorrections = mutableStateOf(prefs.getBoolean("gameCorrections", true))
+    var gameCorrections: Boolean
+        get() = _gameCorrections.value
+        set(v) { _gameCorrections.value = v; prefs.edit().putBoolean("gameCorrections", v).apply() }
+
+    /** v3.7.0 (D24 row 3) — the 20-band graphic EQ's gains in dB (the desktop's EQ,
+     *  run by the bridge on the drained audio). All zeros (the default) is off and
+     *  leaves the audio bit-identical. Stored by [EqPrefs]. */
+    private val _eqGains = mutableStateOf(EqPrefs.decode(prefs.getString("eqGains", null)))
+    var eqGains: FloatArray
+        get() = _eqGains.value
+        set(v) { _eqGains.value = v.copyOf(); prefs.edit().putString("eqGains", EqPrefs.encode(v)).apply() }
+
     // RetroAchievements (v1.8.6). The login token (NOT the password) is persisted so
     // a relaunch can token-login silently; the password is never stored. `raHardcore`
     // gates whether save-states/cheats are permitted while a game is identified.
@@ -415,6 +434,13 @@ fun SettingsSheet(
     onCloudSavesChange: (Boolean) -> Unit = {},
     onPgsSignIn: () -> Unit = {},
     onLanguageChange: (LanguageMode) -> Unit = {},
+    // v3.7.0 (D24 row 3, `T-MOBILE-GAME-CORRECTIONS`) — push the EQ / the correction
+    // switch into the running controller (the setting itself is saved here).
+    eqFrequencies: List<Float> = emptyList(),
+    onEqChange: (FloatArray) -> Unit = {},
+    onGameCorrectionsChange: (Boolean) -> Unit = {},
+    gameCorrectionListed: Boolean = false,
+    onOpenCheats: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -544,6 +570,58 @@ fun SettingsSheet(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onLoadPalette) { Text(stringResource(R.string.settings_load_pal)) }
                 TextButton(onClick = onClearPalette) { Text(stringResource(R.string.settings_reset)) }
+            }
+
+            // v3.7.0 (`T-MOBILE-GAME-CORRECTIONS`, ADR 0051) — the per-game picture
+            // corrections: on (the default) hides a listed game's authentic hardware
+            // glitch (Rad Racer's dash right of the road); off draws the hardware's
+            // picture. A movie or netplay session keeps its own recorded choice.
+            ToggleRow(
+                stringResource(R.string.settings_game_corrections),
+                settings.gameCorrections,
+            ) {
+                settings.gameCorrections = it
+                onGameCorrectionsChange(it)
+            }
+            Text(
+                stringResource(
+                    if (gameCorrectionListed) R.string.settings_game_corrections_hint_listed
+                    else R.string.settings_game_corrections_hint,
+                ),
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+            )
+
+            // v3.7.0 (D24 row 3) — the Game Genie code database (the desktop's
+            // catalog, through the bridge) and typed codes.
+            Text(stringResource(R.string.settings_cheats))
+            TextButton(onClick = onOpenCheats) { Text(stringResource(R.string.settings_open_cheats)) }
+
+            // v3.7.0 (D24 row 3) — the 20-band graphic equalizer (the desktop's EQ,
+            // run by the bridge on the drained audio). Flat is off and bit-identical.
+            if (eqFrequencies.size == EqPrefs.BANDS) {
+                var eqOpen by remember { mutableStateOf(!EqPrefs.isFlat(settings.eqGains)) }
+                ToggleRow(stringResource(R.string.settings_equalizer), eqOpen) { eqOpen = it }
+                if (eqOpen) {
+                    var gains by remember { mutableStateOf(settings.eqGains.copyOf()) }
+                    eqFrequencies.forEachIndexed { i, hz ->
+                        ParamSlider(
+                            EqPrefs.bandLabel(hz) + " (dB)",
+                            gains[i],
+                            -EqPrefs.LIMIT_DB..EqPrefs.LIMIT_DB,
+                            "%+.1f",
+                        ) { v ->
+                            val next = gains.copyOf().also { it[i] = v }
+                            gains = next
+                            settings.eqGains = next
+                            onEqChange(next)
+                        }
+                    }
+                    TextButton(onClick = {
+                        gains = EqPrefs.flat()
+                        settings.eqGains = gains
+                        onEqChange(gains)
+                    }) { Text(stringResource(R.string.settings_equalizer_flat)) }
+                }
             }
 
             // TAS movie (v1.8.5) — record/play deterministic .rnm movies. Record

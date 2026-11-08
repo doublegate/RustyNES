@@ -80,6 +80,18 @@ final class AppModel: ObservableObject {
             if !isApplyingCloud { cloud.setInt(Int(filter.rawValue), forKey: "filter") }
         }
     }
+    /// v3.7.0 (`T-MOBILE-GAME-CORRECTIONS`, ADR 0051) — the per-game picture
+    /// corrections (Rad Racer's coherent mid-line copy), on by default as on the
+    /// desktop and in libretro; off draws the hardware's own picture. Applied to the
+    /// running core at once (a movie or netplay session keeps its recorded choice
+    /// until it ends: the bridge holds it). UNCOMPILED at v3.7.0.
+    @Published var gameCorrections: Bool = UserDefaults.standard.object(forKey: "gameCorrections") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(gameCorrections, forKey: "gameCorrections")
+            emulator?.setGameCorrectionsEnabled(gameCorrections)
+        }
+    }
+
     @Published var muted: Bool = false {
         didSet {
             emulator?.isMuted = muted
@@ -381,6 +393,12 @@ final class AppModel: ObservableObject {
             // (filter + shader params + palette + HD-pack).
             applyDisplaySettings()
             applyAudioDepth()
+            // v3.7.0: the player's correction setting on the new core.
+            core.setGameCorrectionsEnabled(gameCorrections)
+            // v3.7.0 (D24 rows 1-2): the widget's last-played game, and the
+            // external display's frame source.
+            ResumeWidgetStore.publish(name: entry.name, sha: entry.sha)
+            ExternalDisplayHub.shared.frameSource = { [weak core] in core?.lastFrame }
             syncMovieState()
             // Wire connectivity & scripting into the fresh core (no-ops when disabled).
             ra.attach(core: core, romData: data, sha: entry.sha)
@@ -455,6 +473,16 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// v3.7.0 (D24 row 1) — reopen the last-played game, for the home-screen
+    /// widget's `rustynes://resume` link. A no-op when the library no longer has it.
+    func resumeLastPlayed() async {
+        guard let last = ResumeWidgetShared.read(),
+              let entry = library.entries.first(where: { $0.sha == last.sha })
+        else { return }
+        if currentEntry?.sha == entry.sha, emulator != nil { return }
+        await openGame(entry)
+    }
+
     /// Close the running game and return to the library.
     func closeGame() {
         // v2.7.4 (MOB-05): the final battery write while the core is still alive.
@@ -471,6 +499,7 @@ final class AppModel: ObservableObject {
         emulator?.shutdown()
         emulator = nil
         currentEntry = nil
+        ExternalDisplayHub.shared.frameSource = nil
         movieRecording = false
         moviePlaying = false
         audioSession.deactivate()

@@ -62,6 +62,23 @@ use rustynes_netplay::{
 
 uniffi::setup_scaffolding!();
 
+// v3.7.0 (D24, `T-MOBILE-EXTRAS` row 3) — the desktop's 20-band equalizer and
+// Game Genie code database, compiled from the desktop's own source files rather
+// than copied, so one fix reaches the desktop, Android and iOS together (see
+// `extras`). Both modules are private here; the bridge reaches them only through
+// `extras`, and uses a subset of each (the 5-band voicing, the "browse all" and
+// filter lists are the desktop's alone), hence the `dead_code` allowance.
+#[allow(dead_code)]
+#[path = "../../rustynes-frontend/src/eq.rs"]
+mod eq;
+mod extras;
+#[allow(dead_code)]
+#[path = "../../rustynes-frontend/src/genie_db.rs"]
+mod genie_db;
+pub use extras::{
+    CheatDbEntry, box_art_candidate_urls, cheat_database_lookup, equalizer_band_frequencies,
+};
+
 /// NES visible framebuffer width in pixels.
 pub const FRAME_WIDTH: u32 = 256;
 /// NES visible framebuffer height in pixels.
@@ -793,6 +810,13 @@ impl core::ops::DerefMut for DualSwap<'_> {
 struct Built {
     nes: Nes,
     dual: Option<DualCabinet>,
+    /// v3.7.0 — the Game Genie database keys of the image as the host passed
+    /// it (decompressed, before `correct_rom` rewrites a header; see
+    /// `extras::database_keys`).
+    rom_crcs: [Option<u32>; 2],
+    /// v3.7.0 — whether `rustynes_core::game_corrections` lists this image
+    /// (the core turned its correction on at build).
+    correction_listed: bool,
 }
 
 /// Build whatever `rom` holds (v2.9.7): a cartridge, an FDS disk (booted with
@@ -823,21 +847,22 @@ fn build_console(
 ) -> Result<Built, MobileError> {
     check_rom_size(&rom)?;
     let mut rom = decompress_rom(rom);
+    let rom_crcs = extras::database_keys(&rom);
     let crc = rustynes_gamedb::correct_rom(&mut rom);
     let load_err = |e: rustynes_core::rustynes_mappers::RomError| MobileError::RomLoad {
         reason: e.to_string(),
     };
-    match ImageKind::of(&rom) {
-        ImageKind::Nsf => Ok(Built {
-            nes: Nes::from_nsf_with_sample_rate(&rom, sample_rate).map_err(load_err)?,
-            dual: None,
-        }),
+    let (nes, dual) = match ImageKind::of(&rom) {
+        ImageKind::Nsf => (
+            Nes::from_nsf_with_sample_rate(&rom, sample_rate).map_err(load_err)?,
+            None,
+        ),
         ImageKind::Disk => {
             let bios = fds_bios.ok_or(MobileError::MissingFdsBios)?;
-            Ok(Built {
-                nes: Nes::from_disk_with_sample_rate(&rom, bios, sample_rate).map_err(load_err)?,
-                dual: None,
-            })
+            (
+                Nes::from_disk_with_sample_rate(&rom, bios, sample_rate).map_err(load_err)?,
+                None,
+            )
         }
         ImageKind::Cartridge => {
             match Emu::from_rom_with_sample_rate(&rom, sample_rate).map_err(load_err)? {
@@ -846,18 +871,24 @@ fn build_console(
                     if let Some(crc) = crc {
                         rustynes_gamedb::correct_console(&mut nes, crc);
                     }
-                    Ok(Built { nes, dual: None })
+                    (nes, None)
                 }
                 Emu::Dual(system) => {
                     let (nes, system) = seat_cabinet(system, &rom, sample_rate)?;
-                    Ok(Built {
-                        nes,
-                        dual: Some(DualCabinet { system, rom }),
-                    })
+                    (nes, Some(DualCabinet { system, rom }))
                 }
             }
         }
-    }
+    };
+    // v3.7.0 — the core switches a listed dump's correction on as it builds the
+    // bus, so the freshly built console says whether this image is listed.
+    let correction_listed = nes.coherent_midline_copy();
+    Ok(Built {
+        nes,
+        dual,
+        rom_crcs,
+        correction_listed,
+    })
 }
 
 /// Finish a freshly built cabinet: apply the Vs. database's PPU palette and
@@ -1121,6 +1152,17 @@ struct Inner {
     /// v2.9.7 — frames left before a Vs. coin insertion clears (see
     /// [`VS_COIN_HOLD_FRAMES`]); 0 when no coin is held.
     coin_frames: u8,
+    /// v3.7.0 — the 20-band output equalizer (`extras`). Kept across
+    /// `load_rom`, re-voiced there for the new sample rate.
+    eq: extras::EqState,
+    /// v3.7.0 — the loaded image's Game Genie database keys (`extras`).
+    rom_crcs: [Option<u32>; 2],
+    /// v3.7.0 (`T-MOBILE-GAME-CORRECTIONS`) — whether the loaded image is one
+    /// `rustynes_core::game_corrections` lists.
+    correction_listed: bool,
+    /// v3.7.0 — the player's "show the hardware's picture" setting (the
+    /// desktop's `disable_game_corrections`). Kept across `load_rom`.
+    corrections_disabled: bool,
 }
 
 /// The handle the mobile shells drive the emulator through.
@@ -1243,6 +1285,9 @@ impl NesController {
     /// hook, the frame, and the Lua and `RetroAchievements` hooks, as before,
     /// and counts down a held Vs. coin.
     fn tick_frame(&self, g: &mut Inner) {
+        // v3.7.0 — the player's correction setting, unless a movie or netplay
+        // holds the options (a setting changed during one lands here after).
+        extras::sync_idle_corrections(g);
         if g.dual.is_some() {
             run_cabinet_frame(&self.masks, g);
             return;
@@ -1324,7 +1369,12 @@ impl NesController {
         if let Some(bios) = fds_bios.as_deref() {
             check_fds_bios(bios)?;
         }
-        let Built { nes, dual } = build_console(rom, fds_bios.as_deref(), sample_rate)?;
+        let Built {
+            nes,
+            dual,
+            rom_crcs,
+            correction_listed,
+        } = build_console(rom, fds_bios.as_deref(), sample_rate)?;
         Ok(Arc::new(Self {
             masks: [const { AtomicU8::new(0) }; 4],
             inner: Mutex::new(Inner {
@@ -1347,6 +1397,10 @@ impl NesController {
                 netplay_relayed: false,
                 warnings: Vec::new(),
                 frozen: false,
+                eq: extras::EqState::FLAT,
+                rom_crcs,
+                correction_listed,
+                corrections_disabled: false,
             }),
         }))
     }
@@ -1364,10 +1418,17 @@ impl NesController {
         // Copy the BIOS out rather than build under the lock: parsing (and a
         // zip inflate) must not hold up the frame thread.
         let bios = self.lock().fds_bios.clone();
-        let Built { nes, dual } = build_console(rom, bios.as_deref(), sample_rate)?;
+        let Built {
+            nes,
+            dual,
+            rom_crcs,
+            correction_listed,
+        } = build_console(rom, bios.as_deref(), sample_rate)?;
         let mut g = self.lock();
         g.nes = nes;
         g.dual = dual;
+        g.rom_crcs = rom_crcs;
+        g.correction_listed = correction_listed;
         g.coin_frames = 0;
         g.frozen = false;
         self.clear_input();
@@ -1397,6 +1458,10 @@ impl NesController {
         if let Some(ra) = g.ra.as_mut() {
             ra.unload_game();
         }
+        // v3.7.0 — the player's EQ re-voiced for this rate (its history
+        // cleared), and the player's correction setting on the new console.
+        g.eq.revoice(sample_rate);
+        extras::sync_idle_corrections(&mut g);
         drop(g);
         Ok(())
     }
@@ -1427,8 +1492,15 @@ impl NesController {
 
     /// Drain the audio samples produced since the last call (interleaved mono
     /// `f32`, host sample rate). The resampler/DRC lives in the platform host.
+    ///
+    /// v3.7.0: the player's 20-band equalizer runs on these samples
+    /// ([`Self::set_equalizer_gains`]); flat (the default) it does not run.
     pub fn drain_audio(&self) -> Vec<f32> {
-        self.lock().nes.drain_audio()
+        let mut g = self.lock();
+        let mut samples = g.nes.drain_audio();
+        g.eq.process(&mut samples);
+        drop(g);
+        samples
     }
 
     /// Drain the same audio as little-endian `f32` **bytes** (4 per sample).
@@ -1439,7 +1511,7 @@ impl NesController {
     /// [`Self::drain_audio`]'s boxed `List<Float>`. Identical samples, just a
     /// cheaper transport; the determinism contract (timing-only) is untouched.
     pub fn drain_audio_bytes(&self) -> Vec<u8> {
-        let samples = self.lock().nes.drain_audio();
+        let samples = self.drain_audio();
         let mut out = Vec::with_capacity(samples.len() * 4);
         for s in &samples {
             out.extend_from_slice(&s.to_le_bytes());
