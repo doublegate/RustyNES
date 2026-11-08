@@ -1089,7 +1089,10 @@ impl<T: Transport> RollbackSession<T> {
                 // (`mesh_net::MeshHost`/`MeshJoiner`) BEFORE the session exists;
                 // a stray one reaching the running session is ignored (it never
                 // affects deterministic state).
-                NetMessage::Quality { .. } | NetMessage::Roster { .. } => {}
+                NetMessage::Quality { .. }
+                | NetMessage::Roster { .. }
+                | NetMessage::ConfirmedInputs { .. }
+                | NetMessage::StateCheckpoint { .. } => {}
                 // v3.7.0 — forensics material, for an opted-in peer only.
                 NetMessage::StateDigest { .. }
                 | NetMessage::ForensicChunk { .. }

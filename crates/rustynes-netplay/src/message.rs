@@ -466,6 +466,44 @@ pub enum NetMessage {
         /// Bytes received contiguously from offset 0.
         have: u32,
     },
+
+    /// v3.7.0 (protocol 10, `T-NETPLAY-EDGE-SPECTATE`) — every player's
+    /// CONFIRMED input for consecutive frames, the first at `start_frame`:
+    /// what an edge relay fans out to spectators (`crate::edge`). Each entry
+    /// is one frame, `inputs[i][p]` being player `p`'s `Buttons::bits()`;
+    /// ports at or past `num_players` are zero.
+    ///
+    /// Wire: tag, `num_players` (2 to 4), `start_frame` (LE `u32`), a count
+    /// byte, then `count * num_players` bytes. 1 to
+    /// [`Self::MAX_CONFIRMED_BATCH`] frames; any other count, player count or
+    /// length decodes to `None`.
+    ConfirmedInputs {
+        /// Players in the match (2 to 4).
+        num_players: u8,
+        /// The frame of `inputs[0]`.
+        start_frame: u32,
+        /// One entry per frame, every port's input.
+        inputs: Vec<[u8; crate::session::MAX_PLAYERS]>,
+    },
+
+    /// v3.7.0 (protocol 10) — one piece of a `.rns` core snapshot of the
+    /// machine ENTERING `frame`, from which a spectator joins mid-session
+    /// over a direct link (`crate::edge`). An edge relay never carries it: the
+    /// relay forwards inputs only.
+    ///
+    /// Wire: tag, `frame` (LE `u32`), `total` (LE `u32`, at most
+    /// [`crate::edge::MAX_CHECKPOINT_LEN`]), `offset` (LE `u32`), a LE `u16`
+    /// length (at most [`Self::MAX_FORENSIC_CHUNK`]), then the bytes.
+    StateCheckpoint {
+        /// The frame the snapshot enters.
+        frame: u32,
+        /// The snapshot's full length.
+        total: u32,
+        /// Where `data` starts in it.
+        offset: u32,
+        /// The bytes.
+        data: Vec<u8>,
+    },
 }
 
 impl NetMessage {
@@ -532,6 +570,12 @@ impl NetMessage {
     const TAG_STATE_DIGEST: u8 = 7;
     const TAG_FORENSIC_CHUNK: u8 = 8;
     const TAG_FORENSIC_ACK: u8 = 9;
+    const TAG_CONFIRMED_INPUTS: u8 = 10;
+    const TAG_STATE_CHECKPOINT: u8 = 11;
+
+    /// The most frames one [`Self::ConfirmedInputs`] carries (4 bytes a frame
+    /// for four players, so a full one is 263 bytes).
+    pub const MAX_CONFIRMED_BATCH: usize = 64;
 
     /// The most frames one [`Self::StateDigest`] carries (41 bytes each, so
     /// a full one is 334 bytes, well inside one datagram).
@@ -624,7 +668,11 @@ impl NetMessage {
                 out.extend_from_slice(&ping_ms.to_le_bytes());
                 out.extend_from_slice(&frame_advantage.to_le_bytes());
             }
-            Self::StateDigest { .. } | Self::ForensicChunk { .. } | Self::ForensicAck { .. } => {
+            Self::StateDigest { .. }
+            | Self::ForensicChunk { .. }
+            | Self::ForensicAck { .. }
+            | Self::ConfirmedInputs { .. }
+            | Self::StateCheckpoint { .. } => {
                 self.encode_forensics(&mut out);
             }
             Self::Roster { ref peers } => {
@@ -642,7 +690,8 @@ impl NetMessage {
         out
     }
 
-    /// The encoding of the three forensics messages (protocol 10), split out
+    /// The encoding of the protocol 10 messages (forensics and edge
+    /// spectating), split out
     /// of [`Self::to_bytes`] to keep it readable.
     fn encode_forensics(&self, out: &mut Vec<u8>) {
         match *self {
@@ -692,8 +741,87 @@ impl NetMessage {
                 out.push(section);
                 out.extend_from_slice(&have.to_le_bytes());
             }
+            Self::ConfirmedInputs {
+                num_players,
+                start_frame,
+                ref inputs,
+            } => {
+                let inputs = &inputs[..inputs.len().min(Self::MAX_CONFIRMED_BATCH)];
+                let n = usize::from(num_players.clamp(2, 4));
+                out.push(Self::TAG_CONFIRMED_INPUTS);
+                out.push(num_players);
+                out.extend_from_slice(&start_frame.to_le_bytes());
+                out.push(u8::try_from(inputs.len()).unwrap_or(u8::MAX));
+                for frame in inputs {
+                    out.extend_from_slice(&frame[..n]);
+                }
+            }
+            Self::StateCheckpoint {
+                frame,
+                total,
+                offset,
+                ref data,
+            } => {
+                let data = &data[..data.len().min(Self::MAX_FORENSIC_CHUNK)];
+                out.push(Self::TAG_STATE_CHECKPOINT);
+                out.extend_from_slice(&frame.to_le_bytes());
+                out.extend_from_slice(&total.to_le_bytes());
+                out.extend_from_slice(&offset.to_le_bytes());
+                out.extend_from_slice(&u16::try_from(data.len()).unwrap_or(u16::MAX).to_le_bytes());
+                out.extend_from_slice(data);
+            }
             _ => {}
         }
+    }
+
+    /// The body of a [`Self::ConfirmedInputs`] (after its tag).
+    fn decode_confirmed_inputs(rest: &[u8]) -> Option<Self> {
+        let num_players = *rest.first()?;
+        if !(2..=4).contains(&num_players) {
+            return None;
+        }
+        let n = usize::from(num_players);
+        let start_frame = u32::from_le_bytes(rest.get(1..5)?.try_into().ok()?);
+        let count = usize::from(*rest.get(5)?);
+        let body = rest.get(6..)?;
+        if count == 0 || count > Self::MAX_CONFIRMED_BATCH || body.len() != count * n {
+            return None;
+        }
+        let inputs = body
+            .chunks(n)
+            .map(|c| {
+                let mut f = [0u8; crate::session::MAX_PLAYERS];
+                f[..n].copy_from_slice(c);
+                f
+            })
+            .collect();
+        Some(Self::ConfirmedInputs {
+            num_players,
+            start_frame,
+            inputs,
+        })
+    }
+
+    /// The body of a [`Self::StateCheckpoint`] (after its tag).
+    fn decode_state_checkpoint(rest: &[u8]) -> Option<Self> {
+        let frame = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
+        let total = u32::from_le_bytes(rest.get(4..8)?.try_into().ok()?);
+        let offset = u32::from_le_bytes(rest.get(8..12)?.try_into().ok()?);
+        let len = usize::from(u16::from_le_bytes(rest.get(12..14)?.try_into().ok()?));
+        let data = rest.get(14..)?;
+        if data.len() != len
+            || len > Self::MAX_FORENSIC_CHUNK
+            || total as usize > crate::edge::MAX_CHECKPOINT_LEN
+            || (offset as usize).checked_add(len)? > total as usize
+        {
+            return None;
+        }
+        Some(Self::StateCheckpoint {
+            frame,
+            total,
+            offset,
+            data: data.to_vec(),
+        })
     }
 
     /// Append one [`SocketAddr`] to `out`: a 1-byte family tag, the raw address
@@ -909,6 +1037,8 @@ impl NetMessage {
             }
             Self::TAG_INPUT_BATCH => Self::decode_input_batch(rest),
             Self::TAG_STATE_DIGEST => Self::decode_state_digest(rest),
+            Self::TAG_CONFIRMED_INPUTS => Self::decode_confirmed_inputs(rest),
+            Self::TAG_STATE_CHECKPOINT => Self::decode_state_checkpoint(rest),
             Self::TAG_FORENSIC_CHUNK => Self::decode_forensic_chunk(rest),
             Self::TAG_FORENSIC_ACK => {
                 if rest.len() != 10 {
@@ -1260,6 +1390,49 @@ mod tests {
         );
         assert_eq!(NetMessage::SYNC_MAGIC, 0x524E_3130, "\"RN10\"");
         assert_eq!(PROTOCOL_VERSION, 10);
+    }
+
+    /// v3.7.0 (protocol 10) — the edge-spectator messages round-trip and
+    /// reject malformed payloads.
+    #[test]
+    fn edge_messages_encode_decode_and_reject_malformed_payloads() {
+        let two = NetMessage::ConfirmedInputs {
+            num_players: 2,
+            start_frame: 300,
+            inputs: vec![[1, 2, 0, 0], [3, 4, 0, 0], [0x80, 0x7F, 0, 0]],
+        };
+        roundtrip(&two);
+        assert_eq!(two.to_bytes().len(), 1 + 1 + 4 + 1 + 6, "two bytes a frame");
+        roundtrip(&NetMessage::ConfirmedInputs {
+            num_players: 4,
+            start_frame: 0,
+            inputs: vec![[9, 8, 7, 6]; NetMessage::MAX_CONFIRMED_BATCH],
+        });
+        let mut bad = two.to_bytes();
+        bad[1] = 5;
+        assert_eq!(NetMessage::from_bytes(&bad), None, "five players");
+        let mut short = two.to_bytes();
+        short.pop();
+        assert_eq!(NetMessage::from_bytes(&short), None, "truncated");
+        let mut zero = two.to_bytes();
+        zero[6] = 0;
+        zero.truncate(7);
+        assert_eq!(NetMessage::from_bytes(&zero), None, "no frames");
+
+        let cp = NetMessage::StateCheckpoint {
+            frame: 600,
+            total: 250_000,
+            offset: 2_048,
+            data: vec![7; 1_024],
+        };
+        roundtrip(&cp);
+        let past = NetMessage::StateCheckpoint {
+            frame: 1,
+            total: 10,
+            offset: 5,
+            data: vec![0; 6],
+        };
+        assert_eq!(NetMessage::from_bytes(&past.to_bytes()), None);
     }
 
     /// v3.7.0 (protocol 10) — the forensics messages round-trip and reject

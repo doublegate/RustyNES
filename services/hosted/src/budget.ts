@@ -156,9 +156,9 @@ function secondsToMidnight(now: number): number {
 }
 
 /** Storage-key prefixes of the per-IP hourly windows (swept by the alarm). */
-const WINDOW_PREFIXES = ["ip:", "ra-ip:", "ra-login:"] as const;
+const WINDOW_PREFIXES = ["ip:", "ra-ip:", "ra-login:", "sp-ip:"] as const;
 /** Storage-key prefixes of the per-day counters (past days swept). */
-const DAY_PREFIXES = ["day:", "ra-day:"] as const;
+const DAY_PREFIXES = ["day:", "ra-day:", "sp-day:"] as const;
 
 export class Budget extends DurableObject<Env> {
   /** Count one credential for `ip` if both guards allow it. */
@@ -178,6 +178,17 @@ export class Budget extends DurableObject<Env> {
     if (login) windows.push({ prefix: "ra-login:", limit: intVar(this.env.RA_LOGINS_PER_IP_PER_HOUR, 10, 0, 10_000) });
     const cap = intVar(this.env.RA_DAILY_CAP, 50_000, 0, 10_000_000);
     return this.admit(ip, now, windows, "ra-day:", cap);
+  }
+
+  /**
+   * v3.7.0 (T-NETPLAY-EDGE-SPECTATE) — count one NEW spectated match claimed
+   * from `ip`, against the per-IP hourly and the global daily match limits.
+   * Reconnecting to a match already claimed costs nothing (spectate.ts).
+   */
+  async admitSpectate(ip: string, now: number = Date.now()): Promise<Admission> {
+    const perIp = intVar(this.env.SPECTATE_MATCHES_PER_IP_PER_HOUR, 6, 0, 10_000);
+    const cap = intVar(this.env.SPECTATE_DAILY_MATCHES, 500, 0, 10_000_000);
+    return this.admit(ip, now, [{ prefix: "sp-ip:", limit: perIp }], "sp-day:", cap);
   }
 
   /**

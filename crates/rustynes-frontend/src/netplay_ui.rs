@@ -193,9 +193,24 @@ enum NetplayState {
     /// v1.7.0 H8 — read-only spectator session running. Drives the local
     /// emulator from the received confirmed input stream; sends nothing.
     Spectating(Box<SpectatorSession<UdpTransport>>),
+    /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — watching a match through the
+    /// hosted spectate relay: the viewer runs the core from the relayed
+    /// confirmed inputs (`rustynes_netplay::EdgeSpectator`).
+    EdgeSpectating {
+        /// The relay connection.
+        client: Box<rustynes_netplay::EdgeRelayClient>,
+        /// The viewer.
+        viewer: Box<rustynes_netplay::EdgeSpectator>,
+    },
     /// Terminal error (until `leave`).
     Error(String),
 }
+
+/// v3.7.0 — at most this many relayed frames are run per tick while a relay
+/// viewer catches up (a viewer joining mid-session receives the log from
+/// frame 0): four times real time, so it reaches the live match without
+/// stalling the window.
+const EDGE_CATCH_UP_PER_TICK: u32 = 4;
 
 /// Frontend netplay state machine. Owned by `App` (like `MovieUi`); driven
 /// once per frame from the produce path.
@@ -227,6 +242,14 @@ pub struct NetplayUi {
     /// v3.7.0 — opt the next session into desync forensics
     /// (`[netplay] desync_forensics`).
     desync_forensics: bool,
+    /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — the spectate-relay publish URL
+    /// for the next session this peer hosts, if it publishes.
+    edge_publish_url: Option<String>,
+    /// The running session's relay publisher, when it publishes.
+    edge_publisher: Option<(
+        rustynes_netplay::EdgeRelayClient,
+        rustynes_netplay::EdgePublisher,
+    )>,
 }
 
 impl Default for NetplayUi {
@@ -241,6 +264,8 @@ impl Default for NetplayUi {
             config: SessionConfig::default(),
             spectator_delay_frames: 0,
             desync_forensics: false,
+            edge_publish_url: None,
+            edge_publisher: None,
         }
     }
 }
@@ -269,6 +294,86 @@ impl NetplayUi {
         self.desync_forensics = on;
     }
 
+    /// v3.7.0 — publish the next session this peer hosts to the spectate
+    /// relay at `url` (`rustynes_netplay::spectate_url` with a publish key),
+    /// or not (`None`).
+    pub fn set_edge_publish(&mut self, url: Option<String>) {
+        self.edge_publish_url = url;
+    }
+
+    /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — watch a match through the
+    /// spectate relay at `url` (a `?role=view` URL). The app power-cycles the
+    /// machine, as for a direct spectate; the viewer starts the match from
+    /// the deterministic power-on and catches up from frame 0.
+    pub fn start_edge_spectate(&mut self, url: &str, identity: SessionIdentity) {
+        self.is_host = false;
+        self.identity = identity;
+        self.state = NetplayState::EdgeSpectating {
+            client: Box::new(rustynes_netplay::EdgeRelayClient::connect(url)),
+            viewer: Box::new(rustynes_netplay::EdgeSpectator::new(
+                identity,
+                rustynes_netplay::EdgeConfig {
+                    // A minute of five-second keyframes, about 3 MiB.
+                    max_keyframes: 12,
+                    ..rustynes_netplay::EdgeConfig::default()
+                },
+            )),
+        };
+        self.status = NetplayStatus {
+            phase: NetplayPhase::Spectating,
+            ..NetplayStatus::default()
+        };
+    }
+
+    /// v3.7.0 — drive a relay viewer one tick.
+    fn tick_edge_spectating(&mut self, nes: &mut Nes) -> NetplayTick {
+        let NetplayState::EdgeSpectating { client, viewer } = &mut self.state else {
+            unreachable!("tick_edge_spectating only runs in the EdgeSpectating state");
+        };
+        let mut closed = None;
+        for ev in client.poll() {
+            match ev {
+                rustynes_netplay::EdgeEvent::Message(m) => viewer.on_message(&m),
+                rustynes_netplay::EdgeEvent::Closed(why) => closed = Some(why),
+                rustynes_netplay::EdgeEvent::Connected => {}
+            }
+        }
+        if let Some(why) = viewer.mismatch() {
+            let msg = format!(
+                "the relayed match cannot be shown: {}",
+                match why {
+                    rustynes_netplay::IdentityMismatch::Rom =>
+                        "it runs a different ROM".to_string(),
+                    rustynes_netplay::IdentityMismatch::Config => {
+                        "it runs this ROM with different emulation settings".to_string()
+                    }
+                    rustynes_netplay::IdentityMismatch::Emulator { ours, theirs } => {
+                        rustynes_netplay::emulator_mismatch_text(ours, theirs)
+                    }
+                }
+            );
+            self.fail(msg);
+            return NetplayTick {
+                active: true,
+                produced_frame: false,
+            };
+        }
+        let ran = viewer.catch_up(nes, EDGE_CATCH_UP_PER_TICK);
+        self.status.phase = NetplayPhase::Spectating;
+        self.status.current_frame = viewer.current_frame();
+        self.status.spectator_pending = viewer.behind();
+        self.status.stalled = ran == 0;
+        if ran == 0
+            && let Some(why) = closed
+        {
+            self.fail(format!("spectate relay: {why}"));
+        }
+        NetplayTick {
+            active: true,
+            produced_frame: ran > 0,
+        }
+    }
+
     /// The configured spectator delayed-stream buffer depth (frames).
     #[must_use]
     pub const fn spectator_delay_frames(&self) -> u32 {
@@ -284,7 +389,9 @@ impl NetplayUi {
             | NetplayState::MeshHosting(_)
             | NetplayState::Joining(_) => NetplayPhase::Connecting,
             NetplayState::InGame(_) => NetplayPhase::InGame,
-            NetplayState::Spectating(_) => NetplayPhase::Spectating,
+            NetplayState::Spectating(_) | NetplayState::EdgeSpectating { .. } => {
+                NetplayPhase::Spectating
+            }
             NetplayState::Error(_) | NetplayState::Investigating { .. } => NetplayPhase::Error,
         }
     }
@@ -448,6 +555,7 @@ impl NetplayUi {
     /// Tear the session down and return to single-player. No-op if idle.
     pub fn leave(&mut self) {
         self.state = NetplayState::Idle;
+        self.edge_publisher = None;
         self.status = NetplayStatus::default();
     }
 
@@ -474,6 +582,7 @@ impl NetplayUi {
             // A spectator ignores `local_buttons` — it never authors input.
             NetplayState::Spectating(_) => self.tick_spectating(nes),
             NetplayState::Investigating { .. } => self.tick_investigating(),
+            NetplayState::EdgeSpectating { .. } => self.tick_edge_spectating(nes),
             NetplayState::Error(msg) => {
                 self.status.phase = NetplayPhase::Error;
                 self.status.message = msg.clone();
@@ -559,6 +668,17 @@ impl NetplayUi {
         if self.desync_forensics {
             session.enable_forensics(rustynes_netplay::ForensicsConfig::default());
         }
+        // v3.7.0 — the host publishes the match to the spectate relay.
+        self.edge_publisher = self
+            .edge_publish_url
+            .as_deref()
+            .filter(|_| self.config.local_player == 0)
+            .map(|url| {
+                (
+                    rustynes_netplay::EdgeRelayClient::connect(url),
+                    rustynes_netplay::EdgePublisher::new(self.identity),
+                )
+            });
         self.state = NetplayState::InGame(Box::new(session));
         self.last_peer_activity = std::time::Instant::now();
         self.last_confirmed_tracker = 0;
@@ -676,6 +796,14 @@ impl NetplayUi {
                 self.status.resimulated_frames = resimulated_frames;
                 self.status.stalled = !produced_frame;
                 self.status.diagnostics = diagnostics_view(session);
+                // v3.7.0 — publish the newly confirmed frames. A relay that
+                // is down never stalls the match: its messages are dropped.
+                if let Some((client, publisher)) = self.edge_publisher.as_mut() {
+                    let _ = client.poll();
+                    for msg in publisher.poll(session) {
+                        client.send(&msg);
+                    }
+                }
                 NetplayTick {
                     active: true,
                     produced_frame,
@@ -828,6 +956,7 @@ impl NetplayUi {
 
     /// Transition to the terminal `Error` phase with a message.
     fn fail(&mut self, message: String) {
+        self.edge_publisher = None;
         self.status = NetplayStatus {
             phase: NetplayPhase::Error,
             is_host: self.is_host,

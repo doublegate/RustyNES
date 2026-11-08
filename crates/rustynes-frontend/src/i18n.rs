@@ -367,6 +367,10 @@ catalog! {
     NpInSync => "in sync ({0} compares OK)", Some("sincronizado ({0} comparaciones correctas)");
     NpDesynced => "DESYNCED at frame {0} ({1} mismatches / {2} compares)", Some("DESINCRONIZADO en el fotograma {0} ({1} discrepancias / {2} comparaciones)");
     NpConsecutiveMismatches => "consecutive mismatches: {0}", Some("discrepancias consecutivas: {0}");
+    NpEdgeMatch => "Relay match id", Some("Id de partida del repetidor");
+    NpEdgeWatch => "Watch via the relay", Some("Ver mediante el repetidor");
+    NpEdgeNote => "Needs the hosted services. You receive the match's confirmed inputs only and run it locally.", Some("Requiere los servicios alojados. Recibes solo las entradas confirmadas de la partida y la ejecutas localmente.");
+    NpEdgePublish => "Publish this match to the spectate relay under the relay match id", Some("Publicar esta partida en el repetidor de espectadores con el id de partida del repetidor");
     NpForensics => "desync forensics: {0}", Some("análisis forense de desincronización: {0}");
     NpForensicsOptIn => "Desync forensics (shares state with the peer on a desync)", Some("Análisis forense de desincronización (comparte el estado con el otro jugador si se desincroniza)");
     NpLastCompare => "last @ frame {0}: local {1} vs remote {2} [{3}]", Some("último @ fotograma {0}: local {1} frente a remoto {2} [{3}]");

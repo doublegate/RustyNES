@@ -497,7 +497,10 @@ impl<T: Transport> SpectatorSession<T> {
                 | NetMessage::Quality { .. }
                 | NetMessage::StateDigest { .. }
                 | NetMessage::ForensicChunk { .. }
-                | NetMessage::ForensicAck { .. } => {}
+                | NetMessage::ForensicAck { .. }
+                // The edge spectator (`crate::edge`) is the reader of these.
+                | NetMessage::ConfirmedInputs { .. }
+                | NetMessage::StateCheckpoint { .. } => {}
             }
         }
     }

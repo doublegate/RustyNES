@@ -1054,7 +1054,9 @@ impl NetplayConnection {
                 | NetMessage::InputBatch { .. }
                 | NetMessage::StateDigest { .. }
                 | NetMessage::ForensicChunk { .. }
-                | NetMessage::ForensicAck { .. } => {}
+                | NetMessage::ForensicAck { .. }
+                | NetMessage::ConfirmedInputs { .. }
+                | NetMessage::StateCheckpoint { .. } => {}
             }
         }
 

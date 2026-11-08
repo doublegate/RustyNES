@@ -401,3 +401,65 @@ reads, is XORed with `$A5`. The gameplay checksum never fires.
 Mutations caught: the RAM image's offset in `BUS` moved to 0 (address
 wrong); the report frame one early; the `BUS` digest comparison skipped (no
 report); forensics on by default (the opt-in test).
+
+## 5. Edge-relayed spectating (v3.7.0, protocol 10)
+
+`T-NETPLAY-EDGE-SPECTATE`: `crates/rustynes-netplay/src/edge.rs` (the viewer
+and the publisher), `edge_client.rs` (the native WebSocket client), and the
+relay, `services/hosted/src/spectate.ts` (its README section "Spectate relay"
+has the limits, the cost, the deploy and the live gates).
+
+### 5.1 The stream
+
+The host's `EdgePublisher` turns each tick's newly confirmed frames into
+`ConfirmedInputs` (tag 10): the player count, the first frame, and every
+port's input for up to 64 consecutive frames. Its first message is the
+match's `Sync` (identity: ROM, configuration, emulation epoch). The relay
+appends a batch only if it continues the log, keeps the log, and gives a new
+viewer the identity and the whole log from frame 0 before the live feed. It
+carries nothing else: never a frame, a sample or a state.
+
+### 5.2 The viewer
+
+`EdgeSpectator` refuses another identity as `SpectatorSession` does, keeps
+the input log, and runs the core from the deterministic power-on
+(`power_on_for_movie`, the start every session uses). A confirmed frame ran on
+every player's real input, so the viewer reaches the players' confirmed state
+byte for byte at every frame; it predicts nothing and never rolls back.
+
+- **Seek and rewind:** a keyframe (core snapshot) every `keyframe_interval`
+  frames (300 by default; at most `max_keyframes`, the join point always
+  kept). A seek restores the nearest keyframe at or before the target and
+  replays the log to it, then pauses.
+- **Views:** `View::Live` follows the newest confirmed frame;
+  `View::Paused` holds where a seek or pause left it.
+- **Joining from a checkpoint:** over a direct link, a viewer can join from
+  `StateCheckpoint` (tag 11): a core snapshot of the machine entering a frame,
+  in pieces of up to 1,024 bytes, then the inputs from that frame. Any viewer
+  that has caught up holds such a machine (`EdgeSpectator::checkpoint`). The
+  relay refuses tag 11: through the relay a viewer always joins from frame 0.
+
+### 5.3 Gates
+
+`tests/edge_spectate.rs` (two players on an in-memory link with latency and
+jitter, so they roll back; the host's published frames go through the wire
+encoding):
+
+- `a_viewer_joining_mid_session_matches_the_players`: a viewer that joins
+  after 300 confirmed frames gets the log from frame 0 and matches the
+  players' confirmed entering digest at every frame it shows for 300 more.
+- `a_viewer_joining_from_a_checkpoint_matches_the_players`: a second viewer
+  joins from a checkpoint the first serves, and matches for 200 frames.
+- `seek_and_rewind_land_on_the_players_frames`.
+- `hosted_spectate_vectors_match_the_encoder`: pins the byte layouts the
+  Worker classifies (`services/hosted/test/vectors/spectate-vectors.json`,
+  which `spectate.test.ts` replays).
+
+`services/hosted/test/spectate.test.ts` (vitest in workerd): the classifier;
+a mid-session viewer gets the backlog then the live feed; inputs only (a
+checkpoint, a checksum, a per-player input, a text frame and a second identity
+are dropped, five in all, and only the next valid batch is forwarded); the log
+survives eviction; only the claiming key may publish, one at a time; the
+per-IP viewer and match limits; the kill switch at the Worker and in the
+object. `tests/edge_live.rs` is the same mid-session join against a running
+relay (`#[ignore]`d; the deploy's live gate).

@@ -8054,6 +8054,53 @@ impl App {
         }
     }
 
+    /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — the spectate-relay publish URL
+    /// for the next hosted session, with a fresh random key, when
+    /// `[netplay] edge_publish` is on and a hosted base and a valid match id
+    /// are set.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn edge_publish_url(&self) -> Option<String> {
+        use std::fmt::Write as _;
+        let np = &self.config.netplay;
+        let base = np.edge_publish.then(|| np.hosted_base()).flatten()?;
+        let key = rustynes_netplay::fresh_key_share()
+            .iter()
+            .fold(String::new(), |mut s, b| {
+                let _ = write!(s, "{b:02x}");
+                s
+            });
+        rustynes_netplay::spectate_url(&base, np.edge_match.trim(), Some(&key))
+    }
+
+    /// v3.7.0 — watch `match_id` through the hosted relay: the same ROM,
+    /// emu-thread and cold-boot plumbing as a direct spectate.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn start_edge_spectate(&mut self, match_id: &str) {
+        let Some(identity) = self.emu.lock().netplay_identity() else {
+            return;
+        };
+        let Some(url) = self
+            .config
+            .netplay
+            .hosted_base()
+            .and_then(|base| rustynes_netplay::spectate_url(&base, match_id, None))
+        else {
+            eprintln!(
+                "rustynes: watching via the relay needs a hosted base \
+                 ([netplay] hosted_base_url) and a match id of 1-32 of A-Z a-z 0-9 _ -"
+            );
+            return;
+        };
+        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+        self.pause_emu_thread_for_netplay();
+        self.netplay.start_edge_spectate(&url, identity);
+        self.emu.lock().start_sandboxed_session(|emu| {
+            emu.nes.as_mut().is_some_and(|nes| {
+                rustynes_core::power_on_for_movie(nes);
+                true
+            })
+        });
+    }
     /// v2.3.0 — act on a netplay panel request (host / join / leave).
     ///
     /// Host = player 0 (P1); joiner = player 1 (P2). A host/join is rejected
@@ -8082,6 +8129,7 @@ impl App {
             NetplayRequest::Host { .. }
             | NetplayRequest::Join { .. }
             | NetplayRequest::Spectate { .. }
+            | NetplayRequest::EdgeSpectate { .. }
                 if self.emu.lock().nes.is_none() =>
             {
                 eprintln!("rustynes: netplay needs a loaded ROM first");
@@ -8089,6 +8137,7 @@ impl App {
             NetplayRequest::Host { .. }
             | NetplayRequest::Join { .. }
             | NetplayRequest::Spectate { .. }
+            | NetplayRequest::EdgeSpectate { .. }
                 if {
                     let emu = self.emu.lock();
                     emu.movie.is_recording() || emu.movie.is_playing()
@@ -8113,6 +8162,9 @@ impl App {
                 // address from its first Sync — no remote to pre-enter or parse.
                 self.netplay
                     .set_desync_forensics(self.config.netplay.desync_forensics);
+                // v3.7.0 — publish to the spectate relay, with a fresh key.
+                let publish = self.edge_publish_url();
+                self.netplay.set_edge_publish(publish);
                 self.netplay.start_host(port, num_players, identity);
             }
             NetplayRequest::Join { remote } => {
@@ -8130,6 +8182,10 @@ impl App {
                     Err(e) => eprintln!("rustynes: bad host address {remote:?}: {e}"),
                 }
             }
+            // v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — watch through the hosted
+            // relay: the same ROM, emu-thread and cold-boot plumbing as a
+            // direct spectate.
+            NetplayRequest::EdgeSpectate { match_id } => self.start_edge_spectate(&match_id),
             // v1.7.0 H8 — read-only spectator: same ROM + emu-thread plumbing as
             // Join, but the spectator never authors input (see `start_spectate`).
             NetplayRequest::Spectate { remote } => {

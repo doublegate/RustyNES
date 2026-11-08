@@ -449,6 +449,14 @@ pub struct NetplayConfig {
     /// default, because it sends parts of this machine's state to the peer.
     #[serde(default)]
     pub desync_forensics: bool,
+    /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — the spectate-relay match id: the
+    /// one to watch, and the one a host publishes under. Empty by default.
+    #[serde(default)]
+    pub edge_match: String,
+    /// v3.7.0 — publish the sessions this peer hosts to the hosted spectate
+    /// relay under [`Self::edge_match`]. Off by default.
+    #[serde(default)]
+    pub edge_publish: bool,
 }
 
 impl NetplayConfig {
@@ -521,6 +529,8 @@ impl Default for NetplayConfig {
             stun_servers: default_stun_servers(),
             hosted_base_url: String::new(),
             desync_forensics: false,
+            edge_match: String::new(),
+            edge_publish: false,
         }
     }
 }

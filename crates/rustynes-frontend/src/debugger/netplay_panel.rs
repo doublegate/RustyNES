@@ -157,6 +157,12 @@ pub enum NetplayRequest {
         /// The host's `IP:port`.
         remote: String,
     },
+    /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — watch a match through the hosted
+    /// spectate relay.
+    EdgeSpectate {
+        /// The match id the host publishes under.
+        match_id: String,
+    },
     /// Leave the current session (back to single-player).
     Leave,
 }
@@ -392,6 +398,7 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
             &mut config.netplay.desync_forensics,
             crate::t!(NpForensicsOptIn),
         );
+        ui.checkbox(&mut config.netplay.edge_publish, crate::t!(NpEdgePublish));
         if ui.button(crate::t!(NpHostButton)).clicked()
             && let Ok(port) = state.host_port.trim().parse::<u16>()
         {
@@ -445,6 +452,19 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
                 remote: state.spectate_remote.trim().to_string(),
             });
         }
+        // v3.7.0 — through the hosted relay, by match id.
+        ui.horizontal(|ui| {
+            ui.label(crate::t!(NpEdgeMatch));
+            ui.add(egui::TextEdit::singleline(&mut config.netplay.edge_match).desired_width(120.0));
+            if ui.button(crate::t!(NpEdgeWatch)).clicked()
+                && !config.netplay.edge_match.trim().is_empty()
+            {
+                state.request = Some(NetplayRequest::EdgeSpectate {
+                    match_id: config.netplay.edge_match.trim().to_string(),
+                });
+            }
+        });
+        ui.label(egui::RichText::new(crate::t!(NpEdgeNote)).weak());
     });
 
     ui.separator();

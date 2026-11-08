@@ -1097,7 +1097,11 @@ const fn seat_named(msg: &NetMessage) -> Option<u8> {
         NetMessage::Sync { .. }
         | NetMessage::Checksum { .. }
         | NetMessage::Quality { .. }
-        | NetMessage::Roster { .. } => None,
+        | NetMessage::Roster { .. }
+        // v3.7.0: spectator traffic speaks for no seat (and a running mesh
+        // has no use for it; the session ignores it).
+        | NetMessage::ConfirmedInputs { .. }
+        | NetMessage::StateCheckpoint { .. } => None,
     }
 }
 

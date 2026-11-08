@@ -59,6 +59,18 @@ cycle-accurate core later replaced.
   pixel, else the cycle count). The debugger has no ROM-edit panel yet. Spec:
   `docs/live-patch-recorder.md`.
 
+- **Edge-relayed spectating** (`T-NETPLAY-EDGE-SPECTATE`): a host
+  publishes its match's confirmed inputs to a relay at the network edge (a
+  Cloudflare Durable Object per match in the hosted service, `/spectate/<id>`)
+  that fans them out to up to 200 viewers. Each viewer runs the game locally
+  from that stream, joins mid-session from frame 0, and can seek, rewind and
+  pause; a viewer over a direct link can also join from a state checkpoint.
+  The relay carries inputs only, never frames or states, with per-address and
+  daily limits and a kill switch (`SPECTATE_ENABLED`). Native client
+  (`EdgeRelayClient`, `EdgeSpectator`, `EdgePublisher`) in `rustynes-netplay`;
+  the desktop and mobile UI for it is not written yet. Specs:
+  `docs/netplay-session.md` section 5 and `services/hosted/README.md`.
+
 - **`cargo full-native`**: the `cargo full-build` binary (every native
   feature) built for the building machine's own CPU (`-C target-cpu=native`,
   the `release-native` profile), at `target/release-native/rustynes`. Not
