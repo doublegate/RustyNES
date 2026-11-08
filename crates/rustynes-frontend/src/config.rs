@@ -441,6 +441,14 @@ pub struct NetplayConfig {
     /// keeps the pre-v3.4.0 behaviour exactly. Native netplay ignores it.
     #[serde(default)]
     pub hosted_base_url: String,
+    /// v3.7.0 (`T-NETPLAY-DESYNC-FORENSICS`) — opt into desync forensics for
+    /// the next native session: per-frame state digests are exchanged with a
+    /// peer that opted in too, and on the first frame they differ the
+    /// differing parts of the machine state are exchanged and compared, so
+    /// the netplay panel names the frame, the subsystem and the byte. Off by
+    /// default, because it sends parts of this machine's state to the peer.
+    #[serde(default)]
+    pub desync_forensics: bool,
 }
 
 impl NetplayConfig {
@@ -512,6 +520,7 @@ impl Default for NetplayConfig {
             signaling_url: String::new(),
             stun_servers: default_stun_servers(),
             hosted_base_url: String::new(),
+            desync_forensics: false,
         }
     }
 }

@@ -367,6 +367,8 @@ catalog! {
     NpInSync => "in sync ({0} compares OK)", Some("sincronizado ({0} comparaciones correctas)");
     NpDesynced => "DESYNCED at frame {0} ({1} mismatches / {2} compares)", Some("DESINCRONIZADO en el fotograma {0} ({1} discrepancias / {2} comparaciones)");
     NpConsecutiveMismatches => "consecutive mismatches: {0}", Some("discrepancias consecutivas: {0}");
+    NpForensics => "desync forensics: {0}", Some("análisis forense de desincronización: {0}");
+    NpForensicsOptIn => "Desync forensics (shares state with the peer on a desync)", Some("Análisis forense de desincronización (comparte el estado con el otro jugador si se desincroniza)");
     NpLastCompare => "last @ frame {0}: local {1} vs remote {2} [{3}]", Some("último @ fotograma {0}: local {1} frente a remoto {2} [{3}]");
 
     // ----- Browser netplay lobby, wasm (wasm_lobby.rs) -----

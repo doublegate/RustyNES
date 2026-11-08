@@ -8111,6 +8111,8 @@ impl App {
                 self.pause_emu_thread_for_netplay();
                 // Host "listen" mode: bind the local port and learn the joiner's
                 // address from its first Sync — no remote to pre-enter or parse.
+                self.netplay
+                    .set_desync_forensics(self.config.netplay.desync_forensics);
                 self.netplay.start_host(port, num_players, identity);
             }
             NetplayRequest::Join { remote } => {
@@ -8121,6 +8123,8 @@ impl App {
                     Ok(addr) => {
                         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                         self.pause_emu_thread_for_netplay();
+                        self.netplay
+                            .set_desync_forensics(self.config.netplay.desync_forensics);
                         self.netplay.start_join(addr, identity);
                     }
                     Err(e) => eprintln!("rustynes: bad host address {remote:?}: {e}"),

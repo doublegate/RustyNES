@@ -306,3 +306,98 @@ capped at 1.
 
 **Not done.** Live play across machines (the maintainer's run); NAT traversal
 or TURN for more than two players (direct IP only); mobile (`MOB-09`).
+
+## 4. Desync forensics (v3.7.0, protocol 10)
+
+`T-NETPLAY-DESYNC-FORENSICS`, `crates/rustynes-netplay/src/forensics.rs`.
+
+The checksum (section 1.4) says THAT two peers diverged, at a checkpoint, and
+whether the picture or only the cycle term differs. It cannot say where: it
+covers the framebuffer and the cycle counter only, so a wrong RAM byte stays
+invisible until it reaches the picture, often many frames after its cause.
+Forensics names the first frame whose state differs, the `.rns` section, and
+the byte.
+
+### 4.1 Opt-in
+
+Forensics sends parts of the machine state to the peer, so it is off unless
+each peer turns it on: `RollbackSession::enable_forensics` (the desktop's
+`[netplay] desync_forensics` setting and the netplay panel's checkbox, the
+mobile bridge's `np_set_desync_forensics`). A peer that has not opted in
+ignores every forensics message and sends no state; the other side reports
+"no digest from the peer yet".
+
+### 4.2 What travels
+
+| Message (tag) | Carries | When |
+|---|---|---|
+| `StateDigest` (7) | up to 8 frames of per-section digests: one 64-bit digest of each of the `CPU`, `BUS`, `MAP`, `PPU`, `APU` section bodies of the machine entering the frame | every tick: every frame not sent yet, and the newest 4 again, so a burst of confirmations skips nothing and a lost datagram is covered |
+| `ForensicChunk` (8) | up to 1,024 bytes of one differing section body, at an offset, with the body's length | while the bodies are exchanged: up to 32 a tick, from where the peer's acknowledgement stands (go-back-N) |
+| `ForensicAck` (9) | how much of one body has arrived contiguously | every tick of the exchange |
+
+The digests are `framebuffer_digest` of each section body, taken from the
+rollback window entry of each frame as it confirms: the same canonical
+snapshot every peer reaches byte for byte (section 1.1). Only the sections
+whose digests differ travel: one wrong RAM byte costs one `BUS` body, about
+2.4 KiB. A peer keeps the snapshots of its last 64 confirmed frames (about
+16 MiB) so the divergence frame's bytes are still at hand when the peer's
+digests reveal it; a divergence found later than that reports the sections
+from the digests alone.
+
+### 4.3 The report
+
+`RollbackSession::forensics_report` returns a `ForensicReport`:
+
+- **`frame`**: the first frame whose ENTERING state differs. Whatever
+  diverged did so while the frame before it ran (or, for a write from outside
+  the core such as a RAM cheat, between the two).
+- **`sections`**: every differing section, in the order CPU, BUS, MAP, PPU,
+  APU (from the state a game's code reads most directly to the one it reads
+  least), each with its first differing byte, both peers' values there, and
+  how many bytes differ. `primary()` is the first.
+- **Locations**: a `BUS` byte at offsets 8 to `0x807` is CPU RAM `$0000` to
+  `$07FF` (the section's 2 KiB image follows its 8-byte cycle counter);
+  offsets 0 to 7 are that counter. Any other byte is reported as its offset
+  in the section body.
+
+A report is about bytes, not causes: two sections can differ at one frame
+because one wrote the other. The `APU` section also holds the host audio
+resampler's state and output rate, so peers at different output sample rates
+differ there with no gameplay difference; a report whose only differing
+section is `APU` says so.
+
+### 4.4 After a fatal desync
+
+`NetplayError::Desync` ends the session, but the exchange may still be
+running. `RollbackSession::pump_forensics` polls, folds in only the forensics
+messages and sends this peer's; the desktop keeps an ended session in an
+`Investigating` state, pumping it for up to 10 seconds, and then shows the
+report (or that the peer sent nothing) as the error message. The mobile
+bridge keeps it until `np_forensics` has returned a report or the app leaves.
+
+### 4.5 Limits
+
+- One divergence per session, against the first peer it is found with; a 3-4
+  player mesh reports the first pair.
+- Forensics never writes the emulator, the inputs or the checksum: a session
+  with it on produces every frame, sample and checksum byte-identically to
+  one with it off. Its cost, on an opted-in peer only, is one section-digest
+  pass and one snapshot copy per confirmed frame.
+
+### 4.6 Gates
+
+`tests/desync_forensics.rs`: two peers on a perfect in-memory link (nothing
+mispredicts, so no rollback can replay the planted byte away); after frame
+90, one byte of player 2's CPU RAM at `$0300`, which the fixture ROM never
+reads, is XORed with `$A5`. The gameplay checksum never fires.
+
+- `a_planted_ram_byte_is_found_at_its_frame_and_address`: both peers' reports
+  name frame 91, `BUS`, CPU RAM `$0300`, one differing byte, and each side's
+  own and the other's value.
+- `the_exchange_finishes_after_the_session_stops_advancing`: the same,
+  finished by `pump_forensics` alone once the divergence is found.
+- `a_peer_that_did_not_opt_in_sends_no_state`.
+
+Mutations caught: the RAM image's offset in `BUS` moved to 0 (address
+wrong); the report frame one early; the `BUS` digest comparison skipped (no
+report); forensics on by default (the opt-in test).

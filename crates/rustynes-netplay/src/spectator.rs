@@ -490,9 +490,14 @@ impl<T: Transport> SpectatorSession<T> {
                 // A spectator ignores acks (it sends no input to ack), peer
                 // checksums (it does not participate in desync detection), and
                 // quality hints (it never stalls the players).
+                // v3.7.0 — and the players' desync forensics, which is
+                // between players.
                 NetMessage::InputAck { .. }
                 | NetMessage::Checksum { .. }
-                | NetMessage::Quality { .. } => {}
+                | NetMessage::Quality { .. }
+                | NetMessage::StateDigest { .. }
+                | NetMessage::ForensicChunk { .. }
+                | NetMessage::ForensicAck { .. } => {}
             }
         }
     }

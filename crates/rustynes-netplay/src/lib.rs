@@ -98,6 +98,9 @@
 // The portable session core: transport-agnostic, no `std::net`, compiles on
 // `wasm32-unknown-unknown` (the v2.5.0 Phase C wasm-compile gate).
 pub mod diagnostics;
+// v3.7.0 (`T-NETPLAY-DESYNC-FORENSICS`) — opt-in desync forensics: per-frame
+// section digests, the first diverging frame, and a byte-level report.
+pub mod forensics;
 pub mod message;
 pub mod rng;
 pub mod session;
@@ -166,6 +169,10 @@ pub use connection::{
     ConnectionState, DisconnectReason, NetplayConnection, PeerLink, UdpTransport,
 };
 pub use diagnostics::{CrcCompare, DesyncDiagnostics, DesyncStatus};
+pub use forensics::{
+    ForensicReport, ForensicsConfig, ForensicsStatus, SECTION_ORDER, SectionDiff, SectionDigests,
+    StateLocation, section_digests,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use mesh_net::{MeshError, MeshHost, MeshJoiner, UdpMeshTransport};
 pub use message::{

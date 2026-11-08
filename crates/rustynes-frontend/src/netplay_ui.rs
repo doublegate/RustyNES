@@ -62,9 +62,9 @@ use std::net::SocketAddr;
 
 use rustynes_core::{Buttons, Nes};
 use rustynes_netplay::{
-    AdvanceOutcome, ConnectionState, DisconnectReason, MeshHost, MeshJoiner, NetplayConnection,
-    NetplayError, RollbackSession, SessionConfig, SessionIdentity, SpectatorConfig,
-    SpectatorSession, Transport, UdpTransport,
+    AdvanceOutcome, ConnectionState, DisconnectReason, ForensicsStatus, MeshHost, MeshJoiner,
+    NetplayConnection, NetplayError, RollbackSession, SessionConfig, SessionIdentity,
+    SpectatorConfig, SpectatorSession, Transport, UdpTransport,
 };
 
 /// How long a joiner waits for its host to answer at all before giving up
@@ -83,6 +83,12 @@ const MESH_GATHER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// The session's transport: a 2-player host's [`UdpTransport`] or a mesh peer's
 /// (and every joiner's) `UdpMeshTransport`. Both are sealed (protocol 9).
 type SessionTransport = Box<dyn Transport>;
+
+/// v3.7.0 (`T-NETPLAY-DESYNC-FORENSICS`) — how long a session that ended in a
+/// desync keeps exchanging forensics material before it gives up on the
+/// peer's half. The exchange itself takes a few ticks on a working link; a
+/// peer that has not opted in never answers.
+const FORENSICS_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Default local UDP port a host binds when none is specified.
 pub const DEFAULT_HOST_PORT: u16 = 7000;
@@ -172,6 +178,18 @@ enum NetplayState {
     Joining(Box<MeshJoiner>),
     /// Rollback session running.
     InGame(Box<RollbackSession<SessionTransport>>),
+    /// v3.7.0 — the session ended in a desync with forensics on: it no
+    /// longer advances, but keeps exchanging the forensics material until the
+    /// report is in or [`FORENSICS_DEADLINE`] passes. The emulator is frozen,
+    /// as in `Error`.
+    Investigating {
+        /// The ended session, pumped for forensics only.
+        session: Box<RollbackSession<SessionTransport>>,
+        /// Why it ended.
+        why: String,
+        /// When it ended.
+        since: std::time::Instant,
+    },
     /// v1.7.0 H8 — read-only spectator session running. Drives the local
     /// emulator from the received confirmed input stream; sends nothing.
     Spectating(Box<SpectatorSession<UdpTransport>>),
@@ -206,6 +224,9 @@ pub struct NetplayUi {
     /// spectator lag. `0` (default) shows confirmed frames immediately. See
     /// [`SpectatorConfig::delay_frames`](rustynes_netplay::SpectatorConfig::delay_frames).
     spectator_delay_frames: u32,
+    /// v3.7.0 — opt the next session into desync forensics
+    /// (`[netplay] desync_forensics`).
+    desync_forensics: bool,
 }
 
 impl Default for NetplayUi {
@@ -219,6 +240,7 @@ impl Default for NetplayUi {
             status: NetplayStatus::default(),
             config: SessionConfig::default(),
             spectator_delay_frames: 0,
+            desync_forensics: false,
         }
     }
 }
@@ -241,6 +263,12 @@ impl NetplayUi {
         self.spectator_delay_frames = frames;
     }
 
+    /// v3.7.0 — opt the next session into desync forensics. Takes effect when
+    /// the session starts; a running one keeps what it started with.
+    pub const fn set_desync_forensics(&mut self, on: bool) {
+        self.desync_forensics = on;
+    }
+
     /// The configured spectator delayed-stream buffer depth (frames).
     #[must_use]
     pub const fn spectator_delay_frames(&self) -> u32 {
@@ -257,7 +285,7 @@ impl NetplayUi {
             | NetplayState::Joining(_) => NetplayPhase::Connecting,
             NetplayState::InGame(_) => NetplayPhase::InGame,
             NetplayState::Spectating(_) => NetplayPhase::Spectating,
-            NetplayState::Error(_) => NetplayPhase::Error,
+            NetplayState::Error(_) | NetplayState::Investigating { .. } => NetplayPhase::Error,
         }
     }
 
@@ -445,6 +473,7 @@ impl NetplayUi {
             NetplayState::InGame(_) => self.tick_in_game(nes, local_buttons),
             // A spectator ignores `local_buttons` — it never authors input.
             NetplayState::Spectating(_) => self.tick_spectating(nes),
+            NetplayState::Investigating { .. } => self.tick_investigating(),
             NetplayState::Error(msg) => {
                 self.status.phase = NetplayPhase::Error;
                 self.status.message = msg.clone();
@@ -526,7 +555,10 @@ impl NetplayUi {
         // its save (CodeRabbit on #561). The app keeps that cleared RAM off the
         // `.sav` (`EmuCore::release_battery_for_session`).
         rustynes_core::power_on_for_movie(nes);
-        let session = RollbackSession::new(self.config, transport, self.identity);
+        let mut session = RollbackSession::new(self.config, transport, self.identity);
+        if self.desync_forensics {
+            session.enable_forensics(rustynes_netplay::ForensicsConfig::default());
+        }
         self.state = NetplayState::InGame(Box::new(session));
         self.last_peer_activity = std::time::Instant::now();
         self.last_confirmed_tracker = 0;
@@ -672,6 +704,24 @@ impl NetplayUi {
                     // variant via its `Display` rather than panicking.
                     ref other => format!("netplay error: {other}"),
                 };
+                // v3.7.0 — with forensics on, keep the ended session long
+                // enough to finish the exchange.
+                if matches!(e, NetplayError::Desync { .. })
+                    && !matches!(session.forensics_status(), ForensicsStatus::Off)
+                    && let NetplayState::InGame(session) = std::mem::take(&mut self.state)
+                {
+                    self.status.phase = NetplayPhase::Error;
+                    self.status.message = format!("{why}; collecting desync forensics");
+                    self.state = NetplayState::Investigating {
+                        session,
+                        why,
+                        since: std::time::Instant::now(),
+                    };
+                    return NetplayTick {
+                        active: true,
+                        produced_frame: false,
+                    };
+                }
                 self.fail(why);
                 NetplayTick {
                     active: true,
@@ -744,6 +794,38 @@ impl NetplayUi {
         }
     }
 
+    /// v3.7.0 — drive an ended session's forensics exchange one tick, and end
+    /// it with the report (or with why there is none).
+    fn tick_investigating(&mut self) -> NetplayTick {
+        let NetplayState::Investigating {
+            session,
+            why,
+            since,
+        } = &mut self.state
+        else {
+            unreachable!("tick_investigating only runs in the Investigating state");
+        };
+        session.pump_forensics();
+        let done = match session.forensics_report() {
+            Some(report) => Some(format!("{why}; {report}")),
+            None if since.elapsed() > FORENSICS_DEADLINE => Some(format!(
+                "{why}; desync forensics: the peer sent no state (it may not have \
+                 opted in)"
+            )),
+            None => None,
+        };
+        self.status.diagnostics.forensics = Some(forensics_text(session));
+        if let Some(message) = done {
+            let diagnostics = core::mem::take(&mut self.status.diagnostics);
+            self.fail(message);
+            self.status.diagnostics = diagnostics;
+        }
+        NetplayTick {
+            active: true,
+            produced_frame: false,
+        }
+    }
+
     /// Transition to the terminal `Error` phase with a message.
     fn fail(&mut self, message: String) {
         self.status = NetplayStatus {
@@ -762,6 +844,33 @@ impl NetplayUi {
 ///
 /// [`NetplayDiagnosticsView`]: crate::debugger::NetplayDiagnosticsView
 /// [`DesyncDiagnostics`]: rustynes_netplay::DesyncDiagnostics
+/// v3.7.0 — the forensics line for the netplay panel.
+fn forensics_text<T: Transport>(session: &RollbackSession<T>) -> String {
+    if let Some(report) = session.forensics_report() {
+        return report.to_string();
+    }
+    match session.forensics_status() {
+        ForensicsStatus::Off => "off".to_string(),
+        ForensicsStatus::Watching {
+            compared_through: None,
+        } => "on; no digest from the peer yet (it may not have opted in)".to_string(),
+        ForensicsStatus::Watching {
+            compared_through: Some(f),
+        } => format!("on; state matches through frame {f}"),
+        ForensicsStatus::Collecting {
+            frame,
+            received,
+            expected,
+        } => format!(
+            "state differs entering frame {frame}; exchanging it ({received} of {} bytes)",
+            expected.map_or_else(|| "?".to_string(), |e| e.to_string())
+        ),
+        // `Reported` and `Unavailable` returned above (each carries a report);
+        // `ForensicsStatus` is `#[non_exhaustive]`.
+        _ => String::new(),
+    }
+}
+
 fn diagnostics_view<T: Transport>(
     session: &RollbackSession<T>,
 ) -> crate::debugger::NetplayDiagnosticsView {
@@ -798,6 +907,8 @@ fn diagnostics_view<T: Transport>(
         mismatches: diag.mismatches(),
         last_compare: last,
         recent,
+        forensics: (!matches!(session.forensics_status(), ForensicsStatus::Off))
+            .then(|| forensics_text(session)),
     }
 }
 

@@ -53,6 +53,7 @@ use std::collections::{BTreeMap, VecDeque};
 use rustynes_core::{Buttons, Nes};
 
 use crate::diagnostics::DesyncDiagnostics;
+use crate::forensics::{ForensicReport, Forensics, ForensicsConfig, ForensicsStatus};
 use crate::message::{IdentityMismatch, KEY_SHARE_LEN, NetMessage, SessionIdentity, SyncVerdict};
 use crate::transport::Transport;
 
@@ -535,6 +536,12 @@ pub struct RollbackSession<T: Transport> {
     /// session already computes and exchanges, never feeding back into the
     /// rollback algorithm, so it cannot perturb determinism or correctness.
     diagnostics: DesyncDiagnostics,
+
+    /// v3.7.0 (`T-NETPLAY-DESYNC-FORENSICS`) — opt-in desync forensics
+    /// (`crate::forensics`). `None` until [`Self::enable_forensics`]. Reads
+    /// the window entries the session already records; never writes the
+    /// emulator or the inputs.
+    forensics: Option<Box<Forensics>>,
 }
 
 impl<T: Transport> RollbackSession<T> {
@@ -581,6 +588,7 @@ impl<T: Transport> RollbackSession<T> {
             remote_checksums: BTreeMap::new(),
             next_checksum_frame: config.checksum_interval,
             diagnostics: DesyncDiagnostics::new(),
+            forensics: None,
         };
         // GGPO input-delay convention: the first `input_delay` frames have no
         // buffered local input, so they run with "no buttons" and are
@@ -692,6 +700,61 @@ impl<T: Transport> RollbackSession<T> {
     #[must_use]
     pub const fn diagnostics(&self) -> &DesyncDiagnostics {
         &self.diagnostics
+    }
+
+    /// v3.7.0 (`T-NETPLAY-DESYNC-FORENSICS`) — opt this peer into desync
+    /// forensics (`crate::forensics`): per-frame section digests are
+    /// exchanged with every peer that has opted in too, and on the first
+    /// frame they differ the differing section bodies are exchanged and
+    /// compared. Call before the first [`Self::advance`]; a later call keeps
+    /// the investigation already running. A peer that has not opted in
+    /// ignores the messages and sends no state.
+    pub fn enable_forensics(&mut self, config: ForensicsConfig) {
+        if self.forensics.is_none() {
+            self.forensics = Some(Box::new(Forensics::new(config, self.local_player())));
+        }
+    }
+
+    /// Where the desync investigation stands ([`ForensicsStatus::Off`] unless
+    /// [`Self::enable_forensics`] was called).
+    #[must_use]
+    pub fn forensics_status(&self) -> ForensicsStatus {
+        self.forensics
+            .as_ref()
+            .map_or(ForensicsStatus::Off, |f| f.status())
+    }
+
+    /// The desync report, once the investigation has one.
+    #[must_use]
+    pub fn forensics_report(&self) -> Option<&ForensicReport> {
+        self.forensics.as_ref().and_then(|f| f.report())
+    }
+
+    /// Keep the forensics exchange going after the session has ended with an
+    /// error (typically [`NetplayError::Desync`]), when [`Self::advance`] is
+    /// no longer called: poll the transport, fold in the forensics messages,
+    /// and send this peer's. Every other message is dropped, so do not call
+    /// it on a session that is still being advanced. A no-op with forensics
+    /// off.
+    pub fn pump_forensics(&mut self) {
+        if self.forensics.is_none() {
+            return;
+        }
+        for msg in self.transport.poll() {
+            if let Some(fx) = self.forensics.as_mut() {
+                fx.on_message(&msg);
+            }
+        }
+        self.flush_forensics();
+    }
+
+    /// Send what forensics has queued.
+    fn flush_forensics(&mut self) {
+        if let Some(fx) = self.forensics.as_mut() {
+            for msg in fx.outbox() {
+                self.transport.send(&msg);
+            }
+        }
     }
 
     /// Borrow the transport (e.g. to inspect link stats). Mainly for tests.
@@ -843,6 +906,7 @@ impl<T: Transport> RollbackSession<T> {
         // 3b. Promote the frames that just became confirmed: record their
         //     canonical digests and drop their window entries.
         self.promote_confirmed();
+        self.flush_forensics();
 
         // 3c. Resolve any remote checksums now that more frames are confirmed.
         self.compare_pending_checksums()?;
@@ -1026,6 +1090,14 @@ impl<T: Transport> RollbackSession<T> {
                 // a stray one reaching the running session is ignored (it never
                 // affects deterministic state).
                 NetMessage::Quality { .. } | NetMessage::Roster { .. } => {}
+                // v3.7.0 — forensics material, for an opted-in peer only.
+                NetMessage::StateDigest { .. }
+                | NetMessage::ForensicChunk { .. }
+                | NetMessage::ForensicAck { .. } => {
+                    if let Some(fx) = self.forensics.as_mut() {
+                        fx.on_message(&msg);
+                    }
+                }
             }
         }
 
@@ -1143,6 +1215,9 @@ impl<T: Transport> RollbackSession<T> {
         for g in self.window_base..new_base {
             let i = (g - self.window_base) as usize;
             let entering = self.window[i].digest.0;
+            if let Some(fx) = self.forensics.as_mut() {
+                fx.record_local(g, &self.window[i].snapshot);
+            }
             if self.confirmed_entering.is_empty() {
                 self.entering_base = g;
             }

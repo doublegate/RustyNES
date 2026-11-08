@@ -89,6 +89,10 @@ pub struct NetplayDiagnosticsView {
     /// The most recent comparisons (oldest first), capped at
     /// [`NetplayDiagnosticsView::HISTORY_SHOWN`] entries for the panel table.
     pub recent: Vec<CrcCompareView>,
+    /// v3.7.0 (`T-NETPLAY-DESYNC-FORENSICS`) — the desync forensics line:
+    /// the report once there is one, else where the investigation stands.
+    /// `None` with forensics off.
+    pub forensics: Option<String>,
 }
 
 impl NetplayDiagnosticsView {
@@ -383,6 +387,11 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
             ui.label(egui::RichText::new(crate::t!(NpFourScoreNote)).weak());
         }
         ui.label(egui::RichText::new(crate::t!(NpHostNote)).weak());
+        // v3.7.0 — applies to the session this peer hosts or joins next.
+        ui.checkbox(
+            &mut config.netplay.desync_forensics,
+            crate::t!(NpForensicsOptIn),
+        );
         if ui.button(crate::t!(NpHostButton)).clicked()
             && let Ok(port) = state.host_port.trim().parse::<u16>()
         {
@@ -514,6 +523,10 @@ fn diagnostics_section(ui: &mut egui::Ui, diag: &NetplayDiagnosticsView) {
                 }
             }
 
+            if let Some(text) = &diag.forensics {
+                ui.label(crate::tf!(NpForensics, text));
+            }
+
             if let Some(last) = diag.last_compare {
                 let kind = if last.matched {
                     crate::t!(NpKindMatch)
@@ -610,6 +623,7 @@ mod tests {
             local_player: 1,
             in_sync: false,
             first_desync_frame: Some(60),
+            forensics: Some("first divergence entering frame 61".to_string()),
             consecutive_mismatches: 3,
             total_compares: 10,
             mismatches: 3,

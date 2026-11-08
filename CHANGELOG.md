@@ -26,7 +26,28 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Netplay protocol 10** (handshake magic `"RN10"`): desync forensics and
+  edge-relayed spectating add messages an older peer cannot read. A peer on
+  v3.4.x to v3.6.x (protocol 9, `"RNE9"`) is refused at the handshake as
+  another emulator version, naming its emulation epoch, rather than
+  connecting and then waiting for forensics material it would drop. Both
+  players need v3.7.0.
+
 ### Added
+
+- **Desync forensics** (`T-NETPLAY-DESYNC-FORENSICS`, opt-in on each peer:
+  `[netplay] desync_forensics`, the netplay panel's checkbox, or the mobile
+  bridge's `np_set_desync_forensics`). Opted-in peers exchange a digest of
+  each save-state section (CPU, BUS, MAP, PPU, APU) for every confirmed
+  frame; at the first frame they differ, they exchange just the differing
+  sections and the netplay panel names the frame, the section, the first
+  differing byte (a CPU RAM address for RAM), both values and how many bytes
+  differ. It finds a divergence the gameplay checksum cannot see, such as a
+  RAM byte that has not reached the picture yet, and keeps collecting for up
+  to 10 seconds after a fatal desync. A peer that has not opted in sends no
+  state. Spec: `docs/netplay-session.md` section 4.
 
 - **`cargo full-native`**: the `cargo full-build` binary (every native
   feature) built for the building machine's own CPU (`-C target-cpu=native`,
