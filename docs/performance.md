@@ -584,7 +584,11 @@ artifact:
   included; and a matching `[target.'cfg(...)']` table in a user config is
   appended AFTER the triple flags (the rustc line read `native ... x86-64-v3
   ... znver1`), so a `target-cpu` there wins. Before comparing the builds,
-  unset both variables and move any `target-cpu` out of a `cfg()` table. The
+  unset both variables and move any `target-cpu` out of a `cfg()` table.
+  The alias sets only `target-cpu`, so a user's own `-C target-feature=...`
+  flags stay active on top of it, and `full-baseline` can then use features
+  beyond `x86-64`: remove them too, and check the final rustc line of a `-v`
+  build for any `target-feature` before comparing (PR #641 review). The
   merge needs the user's `rustflags` to be an array: a string-form
   `rustflags = "-C ..."` makes Cargo refuse the configuration ("could not load
   Cargo configuration") under any of the aliases, so convert it to
