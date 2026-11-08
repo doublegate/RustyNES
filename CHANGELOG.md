@@ -93,15 +93,18 @@ cycle-accurate core later replaced.
 - **`cargo full-native`**: the `cargo full-build` binary (every native
   feature) built for the building machine's own CPU (`-C target-cpu=native`,
   the `release-native` profile), at `target/release-native/rustynes`. Not
-  portable, so release binaries keep the baseline build. No speed-up over
-  `full-build` is measured yet.
+  portable, so release binaries keep the baseline build. Not measurably
+  faster: on the maintainer's i9-10850K, `cpu_target_ab.sh` found a mixed sign
+  across workloads, with only one workload about 2% faster (see
+  `docs/performance.md`, "CPU-target comparison").
 - **`cargo full-v3`**: the same binary for an x86-64 PC that has the whole
   x86-64-v3 level (`-C target-cpu=x86-64-v3`: AVX, AVX2, BMI1/2, F16C, FMA,
   LZCNT, MOVBE; Intel Core from Haswell and AMD from Excavator / Zen, not
   every Pentium, Celeron or Atom of those years), in the `release-v3`
   profile, at `target/release-v3/rustynes`. It is the one to copy to another
   modern PC; on the machine that built it, `full-native` enables everything it
-  does and more. Not measured yet either.
+  does and more. Not faster on that machine: measured +0.5 to +1.6% slower on
+  five of six readings, so rejected as a gain.
 - **`cargo full-baseline`**: the same binary with `-C target-cpu=x86-64`
   pinned, the target the release binaries use, at
   `target/release-baseline/rustynes`. It is the "before" column for comparing

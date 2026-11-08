@@ -611,6 +611,44 @@ artifact:
   `skylake`: 26 target features under native, 18 under v3), so v3 is the
   binary for another machine rather than a faster one for this one.
 
+### CPU-target comparison (v3.7.0, 2026-11-08): no build is faster
+
+`scripts/perf/cpu_target_ab.sh` run with its defaults: three fresh builds,
+each final rustc line confirmed (`target-cpu=x86-64`, `x86-64-v3` and
+`native`), then 3,600 frames per invocation, five balanced rounds (B V N N V
+B) and two independent runs, pinned to core 2. Host: the maintainer's
+i9-10850K, load average 5.8 / 5.0 / 4.4 out of 20 hardware threads (two
+Verilator ladders were running on other cores). Negative is faster than the
+baseline; `drift_%` is the baseline's own change from first to last
+invocation.
+
+| run | workload | baseline ms | v3 % | native % | drift % |
+|---|---|---|---|---|---|
+| 1 | nestest | 16,943.2 | +0.87 | -0.34 | +0.66 |
+| 1 | flowing_palette | 12,262.1 | +0.51 | -2.47 | +0.58 |
+| 1 | AccuracyCoin | 16,088.7 | +1.61 | -0.36 | +0.84 |
+| 2 | nestest | 16,990.0 | +1.46 | +0.64 | +0.91 |
+| 2 | flowing_palette | 12,009.4 | -0.84 | -2.16 | -1.32 |
+| 2 | AccuracyCoin | 16,207.9 | +0.83 | -0.77 | -0.20 |
+
+**Verdict under `ab_check.sh`'s rule: both are rejected.**
+
+- **`full-v3`** is slower on five of the six readings, by +0.5 to +1.6%, and
+  the sixth reverses the sign. It is not a gain, and there is weak evidence
+  of a small loss.
+- **`full-native`** is faster on five of six, but run 2's nestest is +0.64%:
+  a mixed sign. Apart from flowing_palette's -2.5 / -2.2%, every difference is
+  inside the drift floor (up to 1.32%). flowing_palette is the one workload
+  where native looks consistently ahead; that is a hypothesis for a
+  per-workload study, not an adopted result.
+
+So the release binaries' baseline `x86-64` build loses nothing measurable on
+this host. The aliases stay what they were added as: a way to build for a
+specific CPU, not a recommended speed-up. A quieter host or longer runs could
+resolve differences below about 1%. They are not worth chasing, given that
+run-ahead is what multiplies frame cost in practice (see the frame-cost note
+above).
+
 ### v2.1.8 "Performance" A1 — specialized visible-scanline fast dot path
 
 **Profile first (mandatory).** A `perf record` of a representative mixed
