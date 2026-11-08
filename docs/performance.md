@@ -609,7 +609,7 @@ artifact:
   host that does:
 
   ```bash
-  RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release -p rustynes-frontend
+  RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --profile release-v3 -p rustynes-frontend
   ```
 
   Useful for a self-built desktop binary; not wired into the release matrix
