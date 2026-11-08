@@ -252,6 +252,34 @@ pub enum CliCommand {
         frames: u32,
     },
 
+    /// Replay a reference movie on a clean ROM and on the same ROM with a BPS
+    /// patch applied, and report the first frame after which they differ.
+    ///
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`). Headless. The movie is the one recorded
+    /// on the clean ROM. With `--pins`, the RAM-pin sidecar the live-patch
+    /// recorder wrote beside the patch is checked against the patch's
+    /// metadata (its name and SHA-256) and applied after every frame on the
+    /// patched side. See `docs/live-patch-recorder.md`.
+    ///
+    /// Exit codes: 0 no divergence, 4 a divergence reported, 1 an error.
+    PatchRegress {
+        /// The clean ROM image the movie was recorded on.
+        #[arg(value_name = "ROM", value_hint = clap::ValueHint::FilePath)]
+        rom: PathBuf,
+
+        /// The BPS patch.
+        #[arg(value_name = "PATCH", value_hint = clap::ValueHint::FilePath)]
+        patch: PathBuf,
+
+        /// The reference movie (`.rnm`).
+        #[arg(value_name = "MOVIE", value_hint = clap::ValueHint::FilePath)]
+        movie: PathBuf,
+
+        /// The RAM-pin sidecar the patch's metadata names.
+        #[arg(long, value_name = "TOML", value_hint = clap::ValueHint::FilePath)]
+        pins: Option<PathBuf>,
+    },
+
     /// Write each audio channel as its own WAV: pulse 1 and 2, triangle,
     /// noise, DMC, the cartridge's expansion chip, and the mixer's
     /// interaction term, beside the console's mix.
@@ -672,6 +700,34 @@ mod tests {
                 shell: clap_complete::Shell::Bash
             })
         ));
+    }
+
+    #[test]
+    fn patch_regress_subcommand_parses() {
+        let cli = Cli::try_parse_from([
+            "rustynes",
+            "patch-regress",
+            "g.nes",
+            "g.bps",
+            "run.rnm",
+            "--pins",
+            "g.pins.toml",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(CliCommand::PatchRegress {
+                rom,
+                patch,
+                movie,
+                pins,
+            }) => {
+                assert_eq!(rom, PathBuf::from("g.nes"));
+                assert_eq!(patch, PathBuf::from("g.bps"));
+                assert_eq!(movie, PathBuf::from("run.rnm"));
+                assert_eq!(pins, Some(PathBuf::from("g.pins.toml")));
+            }
+            other => panic!("expected patch-regress, got {other:?}"),
+        }
     }
 
     #[test]

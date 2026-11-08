@@ -26,7 +26,50 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Breaking
+
+- **Netplay protocol 10** (handshake magic `"RN10"`): desync forensics and
+  edge-relayed spectating add messages an older peer cannot read. A peer on
+  v3.4.x to v3.6.x (protocol 9, `"RNE9"`) is refused at the handshake as
+  another emulator version, naming its emulation epoch, rather than
+  connecting and then waiting for forensics material it would drop. Both
+  players need v3.7.0.
+
 ### Added
+
+- **Desync forensics** (`T-NETPLAY-DESYNC-FORENSICS`, opt-in on each peer:
+  `[netplay] desync_forensics`, the netplay panel's checkbox, or the mobile
+  bridge's `np_set_desync_forensics`). Opted-in peers exchange a digest of
+  each save-state section (CPU, BUS, MAP, PPU, APU) for every confirmed
+  frame; at the first frame they differ, they exchange just the differing
+  sections and the netplay panel names the frame, the section, the first
+  differing byte (a CPU RAM address for RAM), both values and how many bytes
+  differ. It finds a divergence the gameplay checksum cannot see, such as a
+  RAM byte that has not reached the picture yet, and keeps collecting for up
+  to 10 seconds after a fatal desync. A peer that has not opted in sends no
+  state. Spec: `docs/netplay-session.md` section 4.
+
+- **The live-patch recorder** (`T-HACK-BPS-RECORDER`): PRG and CHR edits
+  recorded against a clean ROM are written as a BPS patch (implemented from
+  the format's public specification), and RAM pins go to a `.pins.toml`
+  sidecar in the raw RAM cheat format that the patch's metadata names by file
+  name and SHA-256. `rustynes patch-regress <ROM> <PATCH> <MOVIE> [--pins]`
+  replays a reference movie on the clean and the patched ROM and reports the
+  first frame they differ and why (a RAM address with both values, else a
+  pixel, else the cycle count). The debugger has no ROM-edit panel yet. Spec:
+  `docs/live-patch-recorder.md`.
+
+- **Edge-relayed spectating** (`T-NETPLAY-EDGE-SPECTATE`): a host
+  publishes its match's confirmed inputs to a relay at the network edge (a
+  Cloudflare Durable Object per match in the hosted service, `/spectate/<id>`)
+  that fans them out to up to 200 viewers. Each viewer runs the game locally
+  from that stream, joins mid-session from frame 0, and can seek, rewind and
+  pause; a viewer over a direct link can also join from a state checkpoint.
+  The relay carries inputs only, never frames or states, with per-address and
+  daily limits and a kill switch (`SPECTATE_ENABLED`). Native client
+  (`EdgeRelayClient`, `EdgeSpectator`, `EdgePublisher`) in `rustynes-netplay`;
+  the desktop and mobile UI for it is not written yet. Specs:
+  `docs/netplay-session.md` section 5 and `services/hosted/README.md`.
 
 - **`cargo full-native`**: the `cargo full-build` binary (every native
   feature) built for the building machine's own CPU (`-C target-cpu=native`,

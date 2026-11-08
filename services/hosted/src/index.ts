@@ -6,6 +6,9 @@
 //   POST /turn-credentials     short-lived TURN ICE servers (turn.ts; GET is
 //                              refused, see its "Why POST only")
 //   POST /ra/dorequest.php     the browser RetroAchievements proxy (ra.ts)
+//   GET  /spectate/<match>     WebSocket upgrade -> that match's edge relay
+//                              (spectate.ts; ?role=publish&key=... or
+//                              ?role=view), confirmed inputs only
 //   GET  /healthz              liveness, for the runbook's checks
 //
 // Every route applies the same Origin rule first (cors.ts): a browser page
@@ -17,10 +20,12 @@
 import { allowedOrigin, corsHeaders, json } from "./cors";
 import { CLIENT_IP_HEADER, type Env } from "./env";
 import { handleRa } from "./ra";
+import { MATCH_ID } from "./spectate";
 import { handleTurn } from "./turn";
 
 export { Budget } from "./budget";
 export { Lobby } from "./lobby";
+export { Spectate } from "./spectate";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -45,6 +50,25 @@ export default {
       const headers = new Headers(request.headers);
       headers.set(CLIENT_IP_HEADER, ip);
       return env.LOBBY.getByName("lobby").fetch(new Request(request.url, { headers }));
+    }
+
+    if (path.startsWith("/spectate/")) {
+      const match = path.slice("/spectate/".length);
+      if (!MATCH_ID.test(match)) return json(400, { error: "match", message: "A match id is 1-32 of A-Z a-z 0-9 _ -." });
+      // The kill switch, checked here too so a switched-off relay costs no
+      // Durable Object request.
+      if (env.SPECTATE_ENABLED !== "true") {
+        return json(503, { error: "disabled", message: "Spectating is switched off." });
+      }
+      if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
+        return new Response("RustyNES spectate relay: connect with a WebSocket.\n", {
+          status: 426,
+          headers: { "Content-Type": "text/plain" },
+        });
+      }
+      const headers = new Headers(request.headers);
+      headers.set(CLIENT_IP_HEADER, ip);
+      return env.SPECTATE.getByName(`match:${match}`).fetch(new Request(request.url, { headers }));
     }
 
     if (path === "/turn-credentials") {

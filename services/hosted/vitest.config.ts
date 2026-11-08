@@ -34,6 +34,9 @@ export default defineConfig({
           // under test, so the tests switch it on. The kill-switch test sets
           // "false" itself.
           TURN_ENABLED: "true",
+          // v3.7.0: small spectate limits so the tests reach them.
+          SPECTATE_MAX_VIEWERS_PER_IP: "3",
+          SPECTATE_MATCHES_PER_IP_PER_HOUR: "3",
         },
       },
     }),

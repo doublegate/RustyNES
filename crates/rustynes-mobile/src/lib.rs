@@ -1114,6 +1114,13 @@ struct Inner {
     netplay_error: Option<String>,
     netplay_desync: bool,
     netplay_last_stalled: bool,
+    /// v3.7.0 (`T-NETPLAY-DESYNC-FORENSICS`) — opt the next session into
+    /// desync forensics ([`NesController::np_set_desync_forensics`]).
+    netplay_forensics: bool,
+    /// v3.7.0 — a session that ended in a desync with forensics on, kept so
+    /// [`NesController::np_forensics`] can finish the exchange. Dropped on
+    /// `np_leave` and when a session starts.
+    netplay_ended: Option<Box<RollbackSession<UdpTransport>>>,
     /// Sticky flag: the live session fell back to a TURN relay (symmetric NAT),
     /// so gameplay rides the relay rather than a direct / hole-punched socket
     /// (v1.8.7). Set when `np_tick_negotiating` hands a relayed connection off;
@@ -1393,6 +1400,8 @@ impl NesController {
                 netplay: None,
                 netplay_error: None,
                 netplay_desync: false,
+                netplay_forensics: false,
+                netplay_ended: None,
                 netplay_last_stalled: false,
                 netplay_relayed: false,
                 warnings: Vec::new(),
@@ -2826,7 +2835,39 @@ impl NesController {
         g.netplay_desync = false;
         g.netplay_last_stalled = false;
         g.netplay_relayed = false;
+        g.netplay_ended = None;
         drop(g);
+    }
+
+    /// v3.7.0 (`T-NETPLAY-DESYNC-FORENSICS`) — opt the next session into
+    /// desync forensics: per-frame state digests are exchanged with a peer
+    /// that opted in too, and on the first frame they differ, the differing
+    /// parts of the machine state. Off by default, because it sends parts of
+    /// this machine's state to the peer. A running session keeps what it
+    /// started with.
+    pub fn np_set_desync_forensics(&self, on: bool) {
+        self.lock().netplay_forensics = on;
+    }
+
+    /// v3.7.0 — the desync forensics report (`ForensicReport`'s text: the
+    /// first diverging frame, each differing state section, its first
+    /// differing byte and where it lives), once there is one, from the
+    /// running session or from one that ended in a desync. Polling it after a
+    /// desync also keeps that session's exchange going, so the app calls it
+    /// each frame until it returns a report or it gives up. `None` with
+    /// forensics off or nothing found.
+    pub fn np_forensics(&self) -> Option<String> {
+        let mut g = self.lock();
+        if let Some(ended) = g.netplay_ended.as_mut() {
+            ended.pump_forensics();
+            return ended.forensics_report().map(ToString::to_string);
+        }
+        match &g.netplay {
+            Some(NetplaySession::InGame(session, _)) => {
+                session.forensics_report().map(ToString::to_string)
+            }
+            _ => None,
+        }
     }
 
     /// `true` while a netplay session is active or connecting (so the host loop
@@ -3534,7 +3575,11 @@ fn np_tick_connecting(g: &mut Inner, mut conn: NetplayConnection, is_host: bool)
                 ..SessionConfig::default()
             };
             let rom_hash = rustynes_netplay::SessionIdentity::of(&g.nes);
-            let session = RollbackSession::new(config, transport, rom_hash);
+            let mut session = RollbackSession::new(config, transport, rom_hash);
+            if g.netplay_forensics {
+                session.enable_forensics(rustynes_netplay::ForensicsConfig::default());
+            }
+            g.netplay_ended = None;
             g.netplay = Some(NetplaySession::InGame(Box::new(session), is_host));
             NpTick::STALLED
         }
@@ -3595,6 +3640,16 @@ fn np_tick_in_game(
         }
         Err(e) => {
             let desync = matches!(e, NetplayError::Desync { .. });
+            // v3.7.0 — keep a desynced session with forensics on, so
+            // `np_forensics` can finish the exchange.
+            if desync
+                && !matches!(
+                    session.forensics_status(),
+                    rustynes_netplay::ForensicsStatus::Off
+                )
+            {
+                g.netplay_ended = Some(Box::new(session));
+            }
             g.netplay = None;
             g.netplay_error = Some(format!("netplay error: {e}"));
             g.netplay_desync = desync;

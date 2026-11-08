@@ -176,13 +176,14 @@ impl SessionIdentity {
                 Err(why) => SyncVerdict::Refuse(why),
             }
         } else if NetMessage::OLDER_SYNC_MAGICS.contains(&magic) {
-            // Protocols 6, 7 and 8 carry their epoch, so the reason can name
+            // Protocols 6 to 9 carry their epoch, so the reason can name
             // it; protocols 4 and 5 have none.
             let theirs = matches!(
                 magic,
                 NetMessage::PROTOCOL_6_SYNC_MAGIC
                     | NetMessage::PROTOCOL_7_SYNC_MAGIC
                     | NetMessage::PROTOCOL_8_SYNC_MAGIC
+                    | NetMessage::PROTOCOL_9_SYNC_MAGIC
             )
             .then_some(peer.epoch);
             SyncVerdict::Refuse(IdentityMismatch::Emulator {
@@ -257,8 +258,18 @@ impl SessionIdentity {
 /// [`NetMessage::OLDER_SYNC_MAGICS`] and is refused as another emulator
 /// version, naming its epoch: it neither seals nor opens a sealed datagram.
 ///
+/// `10` (v3.7.0, `T-NETPLAY-DESYNC-FORENSICS` and `T-NETPLAY-EDGE-SPECTATE`):
+/// three opt-in desync-forensics messages ([`NetMessage::StateDigest`],
+/// [`NetMessage::ForensicChunk`], [`NetMessage::ForensicAck`], tags 7 to 9,
+/// `crate::forensics`) and the edge-relayed spectator's checkpoint join
+/// (tags 10 and 11, `crate::edge`). The `Sync` layout is protocol 9's (88
+/// bytes), under the magic `"RN10"`. A v3.4.x-v3.6.x peer's `"RNE9"` joins
+/// [`NetMessage::OLDER_SYNC_MAGICS`] and is refused as another emulator
+/// version, naming its epoch: it would drop the new tags, so a forensics
+/// exchange with it would wait for material that never comes.
+///
 /// [`from_bytes`]: NetMessage::from_bytes
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 
 /// v3.4.0 (protocol 9) — the length of one peer's handshake key share, the
 /// random contribution it makes to the session's datagram key (`crate::auth`).
@@ -395,6 +406,104 @@ pub enum NetMessage {
         /// own share, which works through a NAT where its address does not.
         peers: Vec<(u8, SocketAddr, [u8; KEY_SHARE_LEN])>,
     },
+
+    /// v3.7.0 (protocol 10, `T-NETPLAY-DESYNC-FORENSICS`) — the per-section
+    /// state digests of consecutive confirmed frames, sent only by a peer
+    /// that opted into desync forensics (`RollbackSession::enable_forensics`).
+    /// `digests[i]` is [`crate::forensics::section_digests`] of the machine
+    /// entering frame `start_frame + i`, one digest per `.rns` section in
+    /// [`crate::forensics::SECTION_ORDER`].
+    ///
+    /// Wire: tag, `player`, `start_frame` (LE `u32`), a count byte, then
+    /// `count` entries of five LE `u64`s. 1 to
+    /// [`Self::MAX_STATE_DIGESTS`] entries; anything else decodes to `None`.
+    StateDigest {
+        /// The sender's player index.
+        player: u8,
+        /// The frame `digests[0]` describes.
+        start_frame: u32,
+        /// One entry per frame from `start_frame`.
+        digests: Vec<crate::forensics::SectionDigests>,
+    },
+
+    /// v3.7.0 (protocol 10) — one piece of one `.rns` section body of the
+    /// machine entering `frame`, the first frame whose state digests two
+    /// opted-in peers found to differ. Only the sections that differ are sent.
+    ///
+    /// Wire: tag, `player`, `frame` (LE `u32`), `section` (an index into
+    /// [`crate::forensics::SECTION_ORDER`]), `total` (the whole body's length,
+    /// LE `u32`), `offset` (LE `u32`), a LE `u16` length, then the bytes. At
+    /// most [`Self::MAX_FORENSIC_CHUNK`] bytes; a section index past the
+    /// order, a `total` past [`crate::forensics::MAX_SECTION_LEN`], or a
+    /// piece reaching past `total` decodes to `None`.
+    ForensicChunk {
+        /// The sender's player index.
+        player: u8,
+        /// The frame whose entering state the body belongs to.
+        frame: u32,
+        /// Which section, as an index into the forensic section order.
+        section: u8,
+        /// The section body's full length.
+        total: u32,
+        /// Where `data` starts in the body.
+        offset: u32,
+        /// The bytes.
+        data: Vec<u8>,
+    },
+
+    /// v3.7.0 (protocol 10) — how much of one section body the sender has
+    /// received contiguously from the start: the sender of the chunks resumes
+    /// from `have` (go-back-N over an unreliable link).
+    ///
+    /// Wire: tag, `player`, `frame` (LE `u32`), `section`, `have` (LE `u32`).
+    ForensicAck {
+        /// The acknowledging peer's player index.
+        player: u8,
+        /// The divergence frame the body belongs to.
+        frame: u32,
+        /// Which section.
+        section: u8,
+        /// Bytes received contiguously from offset 0.
+        have: u32,
+    },
+
+    /// v3.7.0 (protocol 10, `T-NETPLAY-EDGE-SPECTATE`) — every player's
+    /// CONFIRMED input for consecutive frames, the first at `start_frame`:
+    /// what an edge relay fans out to spectators (`crate::edge`). Each entry
+    /// is one frame, `inputs[i][p]` being player `p`'s `Buttons::bits()`;
+    /// ports at or past `num_players` are zero.
+    ///
+    /// Wire: tag, `num_players` (2 to 4), `start_frame` (LE `u32`), a count
+    /// byte, then `count * num_players` bytes. 1 to
+    /// [`Self::MAX_CONFIRMED_BATCH`] frames; any other count, player count or
+    /// length decodes to `None`.
+    ConfirmedInputs {
+        /// Players in the match (2 to 4).
+        num_players: u8,
+        /// The frame of `inputs[0]`.
+        start_frame: u32,
+        /// One entry per frame, every port's input.
+        inputs: Vec<[u8; crate::session::MAX_PLAYERS]>,
+    },
+
+    /// v3.7.0 (protocol 10) — one piece of a `.rns` core snapshot of the
+    /// machine ENTERING `frame`, from which a spectator joins mid-session
+    /// over a direct link (`crate::edge`). An edge relay never carries it: the
+    /// relay forwards inputs only.
+    ///
+    /// Wire: tag, `frame` (LE `u32`), `total` (LE `u32`, at most
+    /// [`crate::edge::MAX_CHECKPOINT_LEN`]), `offset` (LE `u32`), a LE `u16`
+    /// length (at most [`Self::MAX_FORENSIC_CHUNK`]), then the bytes.
+    StateCheckpoint {
+        /// The frame the snapshot enters.
+        frame: u32,
+        /// The snapshot's full length.
+        total: u32,
+        /// Where `data` starts in it.
+        offset: u32,
+        /// The bytes.
+        data: Vec<u8>,
+    },
 }
 
 impl NetMessage {
@@ -406,7 +515,7 @@ impl NetMessage {
     /// consider the session synced while the v5 side waited for a reply it
     /// refuses. Every version compares the magic, so a changed one is
     /// rejected on both sides.
-    pub const SYNC_MAGIC: u32 = 0x524E_4539; // "RNE9"
+    pub const SYNC_MAGIC: u32 = 0x524E_3130; // "RN10"
 
     /// `RustyNES`'s own earlier `Sync` magics: protocol 4 (`"RNES"`, v2.5.x to
     /// v2.9.7), protocol 5 (`"RNE5"`, v2.9.8 and v2.9.9) and protocol 6
@@ -414,12 +523,13 @@ impl NetMessage {
     /// is refused with a reason ([`SessionIdentity::check_sync`]). Code that
     /// needs one protocol names its constant below rather than an index, so
     /// adding a protocol to this list cannot silently re-point a check.
-    pub const OLDER_SYNC_MAGICS: [u32; 5] = [
+    pub const OLDER_SYNC_MAGICS: [u32; 6] = [
         Self::PROTOCOL_4_SYNC_MAGIC,
         Self::PROTOCOL_5_SYNC_MAGIC,
         Self::PROTOCOL_6_SYNC_MAGIC,
         Self::PROTOCOL_7_SYNC_MAGIC,
         Self::PROTOCOL_8_SYNC_MAGIC,
+        Self::PROTOCOL_9_SYNC_MAGIC,
     ];
     /// Protocol 4's `Sync` magic, `"RNES"` (v2.5.x to v2.9.7): a 36-byte
     /// payload with no config hash and no epoch.
@@ -438,6 +548,10 @@ impl NetMessage {
     /// payload, epoch included and no key share. Refused because a protocol
     /// 8 peer neither seals nor opens a sealed datagram (protocol 9).
     pub const PROTOCOL_8_SYNC_MAGIC: u32 = 0x524E_4538;
+    /// Protocol 9's `Sync` magic, `"RNE9"` (v3.4.x to v3.6.x): today's 88-byte
+    /// layout, epoch and key share included. Refused because a protocol 9
+    /// peer drops the forensics and edge-spectator tags (protocol 10).
+    pub const PROTOCOL_9_SYNC_MAGIC: u32 = 0x524E_4539;
     /// The most inputs one [`Self::InputBatch`] carries: what its count byte
     /// can express. The session's retransmit window is far smaller.
     pub const MAX_INPUT_BATCH: usize = u8::MAX as usize;
@@ -453,6 +567,23 @@ impl NetMessage {
     const TAG_QUALITY: u8 = 4;
     const TAG_ROSTER: u8 = 5;
     const TAG_INPUT_BATCH: u8 = 6;
+    const TAG_STATE_DIGEST: u8 = 7;
+    const TAG_FORENSIC_CHUNK: u8 = 8;
+    const TAG_FORENSIC_ACK: u8 = 9;
+    const TAG_CONFIRMED_INPUTS: u8 = 10;
+    const TAG_STATE_CHECKPOINT: u8 = 11;
+
+    /// The most frames one [`Self::ConfirmedInputs`] carries (4 bytes a frame
+    /// for four players, so a full one is 263 bytes).
+    pub const MAX_CONFIRMED_BATCH: usize = 64;
+
+    /// The most frames one [`Self::StateDigest`] carries (41 bytes each, so
+    /// a full one is 334 bytes, well inside one datagram).
+    pub const MAX_STATE_DIGESTS: usize = 8;
+    /// The most body bytes one [`Self::ForensicChunk`] carries: with its
+    /// 17-byte header and the sealed transport's framing, one datagram stays
+    /// under the 1,200 bytes a path MTU of 1,280 leaves for UDP payload.
+    pub const MAX_FORENSIC_CHUNK: usize = 1024;
 
     // IP-family tags inside a `Roster` entry's address encoding.
     const IP_V4: u8 = 4;
@@ -537,6 +668,13 @@ impl NetMessage {
                 out.extend_from_slice(&ping_ms.to_le_bytes());
                 out.extend_from_slice(&frame_advantage.to_le_bytes());
             }
+            Self::StateDigest { .. }
+            | Self::ForensicChunk { .. }
+            | Self::ForensicAck { .. }
+            | Self::ConfirmedInputs { .. }
+            | Self::StateCheckpoint { .. } => {
+                self.encode_forensics(&mut out);
+            }
             Self::Roster { ref peers } => {
                 out.push(Self::TAG_ROSTER);
                 // A count byte (peers.len() <= MAX_ROSTER fits a u8 trivially),
@@ -550,6 +688,140 @@ impl NetMessage {
             }
         }
         out
+    }
+
+    /// The encoding of the protocol 10 messages (forensics and edge
+    /// spectating), split out
+    /// of [`Self::to_bytes`] to keep it readable.
+    fn encode_forensics(&self, out: &mut Vec<u8>) {
+        match *self {
+            Self::StateDigest {
+                player,
+                start_frame,
+                ref digests,
+            } => {
+                let digests = &digests[..digests.len().min(Self::MAX_STATE_DIGESTS)];
+                out.push(Self::TAG_STATE_DIGEST);
+                out.push(player);
+                out.extend_from_slice(&start_frame.to_le_bytes());
+                out.push(u8::try_from(digests.len()).unwrap_or(u8::MAX));
+                for entry in digests {
+                    for d in entry {
+                        out.extend_from_slice(&d.to_le_bytes());
+                    }
+                }
+            }
+            Self::ForensicChunk {
+                player,
+                frame,
+                section,
+                total,
+                offset,
+                ref data,
+            } => {
+                let data = &data[..data.len().min(Self::MAX_FORENSIC_CHUNK)];
+                out.push(Self::TAG_FORENSIC_CHUNK);
+                out.push(player);
+                out.extend_from_slice(&frame.to_le_bytes());
+                out.push(section);
+                out.extend_from_slice(&total.to_le_bytes());
+                out.extend_from_slice(&offset.to_le_bytes());
+                out.extend_from_slice(&u16::try_from(data.len()).unwrap_or(u16::MAX).to_le_bytes());
+                out.extend_from_slice(data);
+            }
+            Self::ForensicAck {
+                player,
+                frame,
+                section,
+                have,
+            } => {
+                out.push(Self::TAG_FORENSIC_ACK);
+                out.push(player);
+                out.extend_from_slice(&frame.to_le_bytes());
+                out.push(section);
+                out.extend_from_slice(&have.to_le_bytes());
+            }
+            Self::ConfirmedInputs {
+                num_players,
+                start_frame,
+                ref inputs,
+            } => {
+                let inputs = &inputs[..inputs.len().min(Self::MAX_CONFIRMED_BATCH)];
+                let n = usize::from(num_players.clamp(2, 4));
+                out.push(Self::TAG_CONFIRMED_INPUTS);
+                out.push(num_players);
+                out.extend_from_slice(&start_frame.to_le_bytes());
+                out.push(u8::try_from(inputs.len()).unwrap_or(u8::MAX));
+                for frame in inputs {
+                    out.extend_from_slice(&frame[..n]);
+                }
+            }
+            Self::StateCheckpoint {
+                frame,
+                total,
+                offset,
+                ref data,
+            } => {
+                let data = &data[..data.len().min(Self::MAX_FORENSIC_CHUNK)];
+                out.push(Self::TAG_STATE_CHECKPOINT);
+                out.extend_from_slice(&frame.to_le_bytes());
+                out.extend_from_slice(&total.to_le_bytes());
+                out.extend_from_slice(&offset.to_le_bytes());
+                out.extend_from_slice(&u16::try_from(data.len()).unwrap_or(u16::MAX).to_le_bytes());
+                out.extend_from_slice(data);
+            }
+            _ => {}
+        }
+    }
+
+    /// The body of a [`Self::ConfirmedInputs`] (after its tag).
+    fn decode_confirmed_inputs(rest: &[u8]) -> Option<Self> {
+        let num_players = *rest.first()?;
+        if !(2..=4).contains(&num_players) {
+            return None;
+        }
+        let n = usize::from(num_players);
+        let start_frame = u32::from_le_bytes(rest.get(1..5)?.try_into().ok()?);
+        let count = usize::from(*rest.get(5)?);
+        let body = rest.get(6..)?;
+        if count == 0 || count > Self::MAX_CONFIRMED_BATCH || body.len() != count * n {
+            return None;
+        }
+        let inputs = body
+            .chunks(n)
+            .map(|c| {
+                let mut f = [0u8; crate::session::MAX_PLAYERS];
+                f[..n].copy_from_slice(c);
+                f
+            })
+            .collect();
+        Some(Self::ConfirmedInputs {
+            num_players,
+            start_frame,
+            inputs,
+        })
+    }
+
+    /// The body of a [`Self::StateCheckpoint`] (after its tag).
+    fn decode_state_checkpoint(rest: &[u8]) -> Option<Self> {
+        let frame = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
+        let total = u32::from_le_bytes(rest.get(4..8)?.try_into().ok()?);
+        let offset = u32::from_le_bytes(rest.get(8..12)?.try_into().ok()?);
+        let len = usize::from(u16::from_le_bytes(rest.get(12..14)?.try_into().ok()?));
+        let data = rest.get(14..)?;
+        if data.len() != len
+            || len > Self::MAX_FORENSIC_CHUNK
+            || total as usize > crate::edge::MAX_CHECKPOINT_LEN
+            || (offset as usize).checked_add(len)? > total as usize
+        {
+            return None;
+        }
+        Some(Self::StateCheckpoint {
+            frame,
+            total,
+            offset,
+            data: data.to_vec(),
+        })
     }
 
     /// Append one [`SocketAddr`] to `out`: a 1-byte family tag, the raw address
@@ -608,6 +880,64 @@ impl NetMessage {
         })
     }
 
+    /// The body of a [`Self::StateDigest`] (after its tag): exactly `count`
+    /// entries, 1 to [`Self::MAX_STATE_DIGESTS`].
+    fn decode_state_digest(rest: &[u8]) -> Option<Self> {
+        const ENTRY: usize = 8 * crate::forensics::SECTION_COUNT;
+        let player = *rest.first()?;
+        let start_frame = u32::from_le_bytes(rest.get(1..5)?.try_into().ok()?);
+        let count = usize::from(*rest.get(5)?);
+        let body = rest.get(6..)?;
+        if count == 0 || count > Self::MAX_STATE_DIGESTS || body.len() != count * ENTRY {
+            return None;
+        }
+        let (entries, _) = body.as_chunks::<ENTRY>();
+        let digests = entries
+            .iter()
+            .map(|entry| {
+                let mut d = [0u64; crate::forensics::SECTION_COUNT];
+                let (words, _) = entry.as_chunks::<8>();
+                for (slot, word) in d.iter_mut().zip(words) {
+                    *slot = u64::from_le_bytes(*word);
+                }
+                d
+            })
+            .collect();
+        Some(Self::StateDigest {
+            player,
+            start_frame,
+            digests,
+        })
+    }
+
+    /// The body of a [`Self::ForensicChunk`] (after its tag). The piece must
+    /// lie inside a body no longer than [`crate::forensics::MAX_SECTION_LEN`],
+    /// and its length field must match the bytes that follow.
+    fn decode_forensic_chunk(rest: &[u8]) -> Option<Self> {
+        let player = *rest.first()?;
+        let frame = u32::from_le_bytes(rest.get(1..5)?.try_into().ok()?);
+        let section = crate::forensics::checked_section(*rest.get(5)?)?;
+        let total = u32::from_le_bytes(rest.get(6..10)?.try_into().ok()?);
+        let offset = u32::from_le_bytes(rest.get(10..14)?.try_into().ok()?);
+        let len = usize::from(u16::from_le_bytes(rest.get(14..16)?.try_into().ok()?));
+        let data = rest.get(16..)?;
+        if data.len() != len
+            || len > Self::MAX_FORENSIC_CHUNK
+            || total as usize > crate::forensics::MAX_SECTION_LEN
+            || (offset as usize).checked_add(len)? > total as usize
+        {
+            return None;
+        }
+        Some(Self::ForensicChunk {
+            player,
+            frame,
+            section,
+            total,
+            offset,
+            data: data.to_vec(),
+        })
+    }
+
     /// The body of a [`Self::Sync`] (after its tag), in any layout this build
     /// recognises: protocol 9's 88 bytes under any magic, and the older
     /// layouts each at exactly its own length under its own magic, so the
@@ -615,7 +945,7 @@ impl NetMessage {
     fn decode_sync(rest: &[u8]) -> Option<Self> {
         let magic = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
         match rest.len() {
-            // Protocol 9: magic + epoch + two hashes + the key share.
+            // Protocols 9 and 10: magic + epoch + two hashes + the key share.
             // Exactly that length: a longer payload is a later
             // protocol's, not this one's with junk on the end.
             88 => {
@@ -706,6 +1036,21 @@ impl NetMessage {
                 Some(Self::InputAck { player, frame })
             }
             Self::TAG_INPUT_BATCH => Self::decode_input_batch(rest),
+            Self::TAG_STATE_DIGEST => Self::decode_state_digest(rest),
+            Self::TAG_CONFIRMED_INPUTS => Self::decode_confirmed_inputs(rest),
+            Self::TAG_STATE_CHECKPOINT => Self::decode_state_checkpoint(rest),
+            Self::TAG_FORENSIC_CHUNK => Self::decode_forensic_chunk(rest),
+            Self::TAG_FORENSIC_ACK => {
+                if rest.len() != 10 {
+                    return None;
+                }
+                Some(Self::ForensicAck {
+                    player: rest[0],
+                    frame: u32::from_le_bytes(rest.get(1..5)?.try_into().ok()?),
+                    section: crate::forensics::checked_section(rest[5])?,
+                    have: u32::from_le_bytes(rest.get(6..10)?.try_into().ok()?),
+                })
+            }
             Self::TAG_SYNC => Self::decode_sync(rest),
             Self::TAG_CHECKSUM => {
                 let frame = u32::from_le_bytes(rest.get(0..4)?.try_into().ok()?);
@@ -1004,9 +1349,157 @@ mod tests {
         );
         assert!(NetMessage::OLDER_SYNC_MAGICS.contains(&NetMessage::PROTOCOL_8_SYNC_MAGIC));
         bytes[1..5].copy_from_slice(&NetMessage::SYNC_MAGIC.to_le_bytes());
-        assert_eq!(NetMessage::from_bytes(&bytes), None, "RNE9 is 88 bytes");
-        assert_eq!(NetMessage::SYNC_MAGIC, 0x524E_4539, "\"RNE9\"");
-        assert_eq!(PROTOCOL_VERSION, 9);
+        assert_eq!(NetMessage::from_bytes(&bytes), None, "RN10 is 88 bytes");
+    }
+
+    /// v3.7.0 (protocol 10) — a v3.4.x-v3.6.x peer's 88-byte `"RNE9"` `Sync`
+    /// decodes, and is refused as another emulator version naming its epoch,
+    /// rather than accepted: it would drop every forensics and edge-spectator
+    /// message.
+    #[test]
+    fn a_protocol_9_peer_is_refused_as_another_version_naming_its_epoch() {
+        let ours = SessionIdentity::new([7u8; 32], [9u8; 32]);
+        let bytes = NetMessage::Sync {
+            magic: NetMessage::PROTOCOL_9_SYNC_MAGIC,
+            identity: ours,
+            key_share: [5; KEY_SHARE_LEN],
+        }
+        .to_bytes();
+        assert_eq!(
+            bytes.len(),
+            89,
+            "protocol 9 and 10 share the 88-byte layout"
+        );
+        let Some(NetMessage::Sync {
+            magic, identity, ..
+        }) = NetMessage::from_bytes(&bytes)
+        else {
+            panic!("a protocol-9 Sync decodes");
+        };
+        assert_eq!(
+            ours.check_sync(magic, &identity),
+            SyncVerdict::Refuse(IdentityMismatch::Emulator {
+                ours: ours.epoch,
+                theirs: Some(ours.epoch),
+            })
+        );
+        assert!(NetMessage::OLDER_SYNC_MAGICS.contains(&NetMessage::PROTOCOL_9_SYNC_MAGIC));
+        assert_eq!(
+            ours.check_sync(NetMessage::SYNC_MAGIC, &identity),
+            SyncVerdict::Accept
+        );
+        assert_eq!(NetMessage::SYNC_MAGIC, 0x524E_3130, "\"RN10\"");
+        assert_eq!(PROTOCOL_VERSION, 10);
+    }
+
+    /// v3.7.0 (protocol 10) — the edge-spectator messages round-trip and
+    /// reject malformed payloads.
+    #[test]
+    fn edge_messages_encode_decode_and_reject_malformed_payloads() {
+        let two = NetMessage::ConfirmedInputs {
+            num_players: 2,
+            start_frame: 300,
+            inputs: vec![[1, 2, 0, 0], [3, 4, 0, 0], [0x80, 0x7F, 0, 0]],
+        };
+        roundtrip(&two);
+        assert_eq!(two.to_bytes().len(), 1 + 1 + 4 + 1 + 6, "two bytes a frame");
+        roundtrip(&NetMessage::ConfirmedInputs {
+            num_players: 4,
+            start_frame: 0,
+            inputs: vec![[9, 8, 7, 6]; NetMessage::MAX_CONFIRMED_BATCH],
+        });
+        let mut bad = two.to_bytes();
+        bad[1] = 5;
+        assert_eq!(NetMessage::from_bytes(&bad), None, "five players");
+        let mut short = two.to_bytes();
+        short.pop();
+        assert_eq!(NetMessage::from_bytes(&short), None, "truncated");
+        let mut zero = two.to_bytes();
+        zero[6] = 0;
+        zero.truncate(7);
+        assert_eq!(NetMessage::from_bytes(&zero), None, "no frames");
+
+        let cp = NetMessage::StateCheckpoint {
+            frame: 600,
+            total: 250_000,
+            offset: 2_048,
+            data: vec![7; 1_024],
+        };
+        roundtrip(&cp);
+        let past = NetMessage::StateCheckpoint {
+            frame: 1,
+            total: 10,
+            offset: 5,
+            data: vec![0; 6],
+        };
+        assert_eq!(NetMessage::from_bytes(&past.to_bytes()), None);
+    }
+
+    /// v3.7.0 (protocol 10) — the forensics messages round-trip and reject
+    /// malformed payloads.
+    #[test]
+    fn forensics_messages_encode_decode_and_reject_malformed_payloads() {
+        let digest = NetMessage::StateDigest {
+            player: 1,
+            start_frame: 77,
+            digests: vec![[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]],
+        };
+        roundtrip(&digest);
+        let mut bytes = digest.to_bytes();
+        bytes.pop();
+        assert_eq!(NetMessage::from_bytes(&bytes), None, "truncated entry");
+        let mut empty = digest.to_bytes();
+        empty[6] = 0;
+        empty.truncate(7);
+        assert_eq!(NetMessage::from_bytes(&empty), None, "no entries");
+
+        let chunk = NetMessage::ForensicChunk {
+            player: 0,
+            frame: 91,
+            section: 1,
+            total: 2_000,
+            offset: 1_024,
+            data: vec![0xAB; 976],
+        };
+        roundtrip(&chunk);
+        let NetMessage::ForensicChunk { .. } = chunk else {
+            unreachable!()
+        };
+        // A piece reaching past the announced total.
+        let past = NetMessage::ForensicChunk {
+            player: 0,
+            frame: 91,
+            section: 1,
+            total: 1_000,
+            offset: 990,
+            data: vec![0; 20],
+        };
+        assert_eq!(NetMessage::from_bytes(&past.to_bytes()), None);
+        // A section index past the order.
+        let mut bad = chunk.to_bytes();
+        bad[6] = 5;
+        assert_eq!(NetMessage::from_bytes(&bad), None);
+        // A total past the cap.
+        let huge = NetMessage::ForensicChunk {
+            player: 0,
+            frame: 1,
+            section: 0,
+            total: u32::try_from(crate::forensics::MAX_SECTION_LEN + 1).expect("fits"),
+            offset: 0,
+            data: vec![1],
+        };
+        assert_eq!(NetMessage::from_bytes(&huge.to_bytes()), None);
+
+        let ack = NetMessage::ForensicAck {
+            player: 1,
+            frame: 91,
+            section: 4,
+            have: 4_096,
+        };
+        roundtrip(&ack);
+        let mut long = ack.to_bytes();
+        long.push(0);
+        assert_eq!(NetMessage::from_bytes(&long), None, "trailing byte");
     }
 
     /// v3.4.0 — the key share round-trips at the end of a protocol 9 `Sync`

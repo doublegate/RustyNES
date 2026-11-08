@@ -133,6 +133,23 @@ fn read_vuint(data: &[u8], pos: &mut usize) -> Option<u64> {
     }
 }
 
+/// v3.7.0 — the metadata block of a BPS patch.
+///
+/// The bytes after the three header sizes, or `None` if the patch is not BPS
+/// or is truncated there. The live-patch recorder names its RAM-pin sidecar in it
+/// (`crate::patch_recorder::sidecar_reference`).
+#[must_use]
+pub fn bps_metadata(patch: &[u8]) -> Option<&[u8]> {
+    if patch.get(..4)? != b"BPS1" {
+        return None;
+    }
+    let mut pos = 4;
+    let _source = read_vuint(patch, &mut pos)?;
+    let _target = read_vuint(patch, &mut pos)?;
+    let len = usize::try_from(read_vuint(patch, &mut pos)?).ok()?;
+    patch.get(pos..pos.checked_add(len)?)
+}
+
 /// Upper bound on a patch's declared output size (UPS/BPS). NES images are at
 /// most a few MiB; 64 MiB is far above any legitimate target yet rejects a
 /// malformed/hostile patch declaring a huge size that would OOM the allocation
