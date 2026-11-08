@@ -2240,6 +2240,9 @@ impl App {
             {
                 emu.set_nes(nes);
             }
+            // v3.7.0 — the live-patch recorder records against this image
+            // (none for a cabinet, an FDS disk or an NSF).
+            emu.start_rom_patch(&self.rom_bytes);
             // v2.9.8 — the two settings that live on `EmuCore` rather than on
             // the console, set under the install lock for the same reason the
             // console was configured before it: the emulation thread cannot
@@ -8727,6 +8730,9 @@ impl App {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    // One per-frame pump, read top to bottom; v3.7.0's recorder status and
+    // save request took it past the limit.
+    #[allow(clippy::too_many_lines)]
     fn post_produce_housekeeping(&mut self) {
         // v2.3.0 "Datum II" — refresh detached tool windows once per produced
         // frame, but only those whose content actually changes: `Live` panels
@@ -8894,6 +8900,10 @@ impl App {
             // by the editing panels. They land in the SAME gated post-frame
             // poke stage as the raw cheats, under the SAME `emu.write` gate.
             let debug_pokes = debugger.take_debug_pokes();
+            // v3.7.0 (`T-HACK-BPS-RECORDER`) — "Save patch..." from the memory
+            // panel: the recorder is cloned under the brief lock below and the
+            // files are written after it drops, never inside the egui closure.
+            let save_patch = debugger.take_save_patch_request();
             // Republish the combined write gate (netplay / RA-hardcore / TAS
             // replay or record) computed from the EXACT same condition
             // `emu.write` uses, so the produce path drops the edits when
@@ -8903,11 +8913,60 @@ impl App {
             let movie_locked = guard.movie.is_playing() || guard.movie.is_recording();
             let locked = netplay_locked || movie_locked;
             guard.writes_locked = locked;
+            let patch_to_save = save_patch
+                .then(|| guard.rom_patch.clone())
+                .flatten()
+                .map(|rec| (rec, raw_cheats.clone()));
             guard.raw_cheats = raw_cheats;
             guard.debug_pokes.extend(debug_pokes);
+            let patch_info = crate::debugger::RomPatchInfo {
+                recording: guard.rom_patch.is_some(),
+                writes: guard.rom_writes,
+                last: guard.rom_write_status.clone(),
+            };
             drop(guard);
+            if let Some(d) = self.debugger.as_mut() {
+                d.set_rom_patch_info(patch_info);
+            }
             self.publish_debugger_write_gate(locked);
+            if let Some((rec, pins)) = patch_to_save {
+                self.save_live_patch(&rec, &pins);
+            }
         }
+    }
+
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`) — ask where to save the live-patch
+    /// recorder's BPS patch and write it (and its RAM-pin sidecar when `pins`
+    /// are enabled) with `patch_recorder::write_patch_files`, reporting the
+    /// outcome on the status bar. Runs with no emu lock held.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_live_patch(
+        &mut self,
+        rec: &crate::patch_recorder::PatchRecorder,
+        pins: &[crate::cheats::RawCheat],
+    ) {
+        let stem = std::path::Path::new(&self.rom_label)
+            .file_stem()
+            .map_or_else(|| "patch".to_string(), |s| s.to_string_lossy().into_owned());
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("BPS patch", &["bps"])
+            .set_file_name(format!("{stem}.bps"))
+            .save_file()
+        else {
+            return;
+        };
+        let msg = match crate::patch_recorder::write_patch_files(rec, pins, &path) {
+            Ok(written) => StatusMessage::info(format!(
+                "Saved {}",
+                written
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            )),
+            Err(e) => StatusMessage::error(format!("Save patch failed: {e}")),
+        };
+        self.ui.set_status(msg);
     }
 
     /// v2.3.6 — mirror the combined write gate onto the debugger overlay.
@@ -9776,6 +9835,16 @@ impl App {
                     guard.writes_locked = locked;
                     guard.raw_cheats = raw_cheats;
                     guard.debug_pokes.extend(debug_pokes);
+                    // v3.7.0 — the ROM views' recorder status. ROM edits work
+                    // in the browser; "Save patch..." is desktop-only (the
+                    // request is dropped here), recorded as such in
+                    // `docs/live-patch-recorder.md`.
+                    let _ = debugger.take_save_patch_request();
+                    debugger.set_rom_patch_info(crate::debugger::RomPatchInfo {
+                        recording: guard.rom_patch.is_some(),
+                        writes: guard.rom_writes,
+                        last: guard.rom_write_status.clone(),
+                    });
                     // v2.3.6 — the RAM Atlas needs the same gate: it advances the
                     // live `Nes` and pokes work RAM, which would diverge a TAS
                     // timeline being recorded or replayed. Mirrored here as well as
@@ -10062,6 +10131,8 @@ impl App {
             } else {
                 emu.set_nes(nes);
             }
+            // v3.7.0 — the live-patch recorder's clean image.
+            emu.start_rom_patch(&self.rom_bytes);
             emu.begin_web_battery()
         };
         // v2.9.9 (NF-12) — every browser load lands here; a recording the
@@ -10277,6 +10348,8 @@ impl App {
             } else {
                 guard.set_nes(nes);
             }
+            // v3.7.0 — the live-patch recorder's clean image.
+            guard.start_rom_patch(&self.rom_bytes);
             if let Some(raw) = raw_cheats {
                 guard.raw_cheats = raw;
             }

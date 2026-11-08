@@ -251,6 +251,14 @@ impl Somari116 {
 }
 
 impl Mapper for Somari116 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         // The MMC3's A12 filter and the MMC1's consecutive-write check both
         // count CPU cycles; the MMC3 is an IRQ source.

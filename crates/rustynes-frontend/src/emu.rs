@@ -59,6 +59,103 @@ pub enum DebugPoke {
         /// Byte value to write.
         value: u8,
     },
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`) — write one PRG-ROM or CHR-ROM byte in
+    /// place, by offset within that section of the image (not a CPU / PPU
+    /// address). Routes through `Nes::debug_poke_rom`, and every write that
+    /// lands is fed to [`EmuCore::rom_patch`], so "Save patch..." writes
+    /// exactly the edits the running game has. Gated more tightly than the
+    /// other pokes: see [`rom_write_refusal`].
+    Rom {
+        /// Which section.
+        space: rustynes_core::RomSpace,
+        /// The offset within it.
+        offset: u32,
+        /// Byte value to write.
+        value: u8,
+    },
+}
+
+/// v3.7.0 — why a queued [`DebugPoke::Rom`] write is refused this frame, or
+/// `None` when it may land.
+///
+/// A ROM edit changes the game itself for the rest of the session (it is not
+/// a one-frame perturbation like a RAM poke, and no save state, movie or
+/// netplay frame carries it), so it is refused whenever the session's
+/// timeline must be reproducible from its inputs alone:
+///
+/// - `RetroAchievements` hardcore (`hardcore_blocked`): a patched game is not
+///   the game the achievement set was made for;
+/// - a movie recording or playing (`movie_idle == false`): the `.rnm` would
+///   claim the clean ROM's identity and replay differently on it. This is
+///   checked from the movie state itself, not only through `writes_locked`;
+/// - `writes_locked`, the app's combined gate (netplay, which would desync
+///   the peers, and TAS record / replay).
+///
+/// A refused write is a no-op: it is drained from the queue, nothing in the
+/// console or the recorder changes, and the reason is published on
+/// [`EmuCore::rom_write_status`] for the memory panel to show.
+#[must_use]
+pub const fn rom_write_refusal(
+    writes_locked: bool,
+    movie_idle: bool,
+    hardcore_blocked: bool,
+) -> Option<&'static str> {
+    if hardcore_blocked {
+        Some("ROM edits are off in RetroAchievements hardcore")
+    } else if !movie_idle {
+        Some("ROM edits are off while a movie records or plays")
+    } else if writes_locked {
+        Some("ROM edits are off during netplay and TAS replay")
+    } else {
+        None
+    }
+}
+
+/// v3.7.0 — apply one ROM write to the console and the recorder together, or
+/// neither.
+///
+/// The recorder is checked first: a write it could not record (no iNES image
+/// to record against, or a board whose ROM section is not the image's
+/// section byte for byte in length) is refused before the console changes, so
+/// the live game and the saved patch never disagree.
+///
+/// # Errors
+///
+/// A message for the memory panel.
+pub fn apply_rom_write(
+    nes: &mut Nes,
+    recorder: Option<&mut crate::patch_recorder::PatchRecorder>,
+    space: rustynes_core::RomSpace,
+    offset: usize,
+    value: u8,
+) -> Result<(), String> {
+    use rustynes_core::RomSpace;
+    let rec = recorder.ok_or_else(|| {
+        "ROM edits need an iNES image to record against (not FDS, NSF or UNIF)".to_string()
+    })?;
+    let layout = rec.layout();
+    let image_len = match space {
+        RomSpace::Prg => layout.prg_len,
+        RomSpace::Chr => layout.chr_len,
+    };
+    let board_len = nes
+        .debug_rom_len(space)
+        .ok_or_else(|| rustynes_core::RomWriteError::Unsupported(space).to_string())?;
+    if board_len != image_len {
+        return Err(format!(
+            "this board's {} is {board_len:#x} bytes but the image's is {image_len:#x}",
+            space.label()
+        ));
+    }
+    nes.debug_poke_rom(space, offset, value)
+        .map_err(|e| e.to_string())?;
+    let recorded = match space {
+        RomSpace::Prg => rec.set_prg(offset, value),
+        RomSpace::Chr => rec.set_chr(offset, value),
+    };
+    // In range for the console means in range for the recorder: the lengths
+    // were checked equal above.
+    recorded.map_err(|e| e.to_string())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -612,6 +709,21 @@ pub struct EmuCore {
     /// edits are a no-op under netplay / TAS replay/record / RA-hardcore. Empty
     /// (the no-edit default) makes the produce path byte-identical.
     pub debug_pokes: Vec<DebugPoke>,
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`) — the live-patch recorder for the loaded
+    /// cartridge, built from the clean image at ROM load (`None` for an image
+    /// it cannot record against: FDS, NSF, UNIF, a Vs. `DualSystem` cabinet).
+    /// Every [`DebugPoke::Rom`] write that lands is fed to it, and only those,
+    /// so its edited image is the live game's ROM; "Save patch..." encodes it.
+    /// Reinstalling the same image ([`Self::set_nes`]) restarts it clean, since
+    /// the new console has no edits.
+    pub rom_patch: Option<crate::patch_recorder::PatchRecorder>,
+    /// v3.7.0 — the outcome of the last [`DebugPoke::Rom`] write, for the
+    /// memory panel: `Ok` with what was written, `Err` with why it was refused.
+    /// `None` until the first ROM write.
+    pub rom_write_status: Option<Result<String, String>>,
+    /// v3.7.0 — ROM writes that landed (and were recorded) since the recorder
+    /// started; shown by the memory panel.
+    pub rom_writes: usize,
     /// v1.7.0 "Forge" Workstream A1 — the combined write gate (`true` under
     /// netplay / TAS replay or record). `App` republishes it each frame from the
     /// EXACT same condition `emu.write` uses (T-110-E2). When `true`, the
@@ -964,16 +1076,49 @@ impl EmuCore {
     /// movie the player is still running.
     pub fn set_nes(&mut self, nes: Nes) {
         self.end_movie_session();
+        // v3.7.0 — the new console carries no ROM edit. Keep a recorder only
+        // for the same image (netplay start, movie load and reset-with-new-
+        // config reinstall it), restarted clean; a ROM load installs its own
+        // after this (`App::load_rom_at`).
+        self.rom_patch = self
+            .rom_patch
+            .take()
+            .and_then(|r| r.restarted_for(nes.image_sha256()));
+        self.rom_write_status = None;
+        self.rom_writes = 0;
         self.mapper_name = nes.mapper_info().name;
         self.game_correction_default = nes.coherent_midline_copy();
         self.dual = None;
         self.nes = Some(nes);
     }
 
+    /// v3.7.0 — start a live-patch recorder against `image`, the bytes the
+    /// installed single console was built from (`App::rom_bytes`). Called by
+    /// every ROM-load path after [`Self::set_nes`]. No recorder when no
+    /// single console is installed, when `image` is not that console's image
+    /// (its `image_sha256` differs), or when it is not an iNES image the
+    /// recorder can lay out (FDS, NSF, UNIF): ROM writes are then refused with
+    /// that reason.
+    pub fn start_rom_patch(&mut self, image: &[u8]) {
+        let same_image = self.nes.as_ref().is_some_and(|nes| {
+            let digest: [u8; 32] = <sha2::Sha256 as sha2::Digest>::digest(image).into();
+            digest == *nes.image_sha256()
+        });
+        self.rom_patch = same_image
+            .then(|| crate::patch_recorder::PatchRecorder::new(image).ok())
+            .flatten();
+        self.rom_write_status = None;
+        self.rom_writes = 0;
+    }
+
     /// Install a Vs. `DualSystem` cabinet, refreshing the cached mapper name from
     /// the MAIN console (the one whose status the shell reports).
     pub fn set_dual(&mut self, dual: Box<rustynes_core::VsDualSystem>) {
         self.end_movie_session();
+        // v3.7.0 — a cabinet's ROM is not edited (two consoles, one image).
+        self.rom_patch = None;
+        self.rom_write_status = None;
+        self.rom_writes = 0;
         self.mapper_name = dual.main().mapper_info().name;
         self.nes = None;
         self.dual = Some(dual);
@@ -1186,6 +1331,9 @@ impl EmuCore {
             #[cfg(not(target_arch = "wasm32"))]
             speedrun: None,
             debug_pokes: Vec::new(),
+            rom_patch: None,
+            rom_write_status: None,
+            rom_writes: 0,
             writes_locked: false,
             overclock_scanlines: 0,
             cpu_overclock: 0,
@@ -2051,23 +2199,51 @@ impl EmuCore {
             // (`hardcore_blocked`). One-shot: drained, so a later replay/record
             // sees no residual perturbation. The empty (no-edit) queue keeps the
             // produce path byte-identical.
-            if !self.writes_locked
-                && !crate::session_policy::hardcore::refuses(
-                    crate::session_policy::hardcore::Feature::MemoryEditor,
-                    hardcore_blocked,
-                )
-            {
-                for poke in self.debug_pokes.drain(..) {
-                    match poke {
-                        DebugPoke::CpuRam { addr, value } => nes.poke_ram(addr, value),
-                        DebugPoke::PpuBus { addr, value } => nes.debug_poke_ppu(addr, value),
-                        DebugPoke::Oam { idx, value } => nes.poke_oam_byte(idx, value),
+            //
+            // v3.7.0 — a ROM write (`DebugPoke::Rom`) has its own, tighter gate,
+            // `rom_write_refusal`, which also reads the movie state directly;
+            // a refused one is drained like any locked poke and its reason
+            // published. Every queued poke is drained either way, so nothing
+            // is deferred to a later unlocked frame.
+            let hardcore_refuses = crate::session_policy::hardcore::refuses(
+                crate::session_policy::hardcore::Feature::MemoryEditor,
+                hardcore_blocked,
+            );
+            let open = !self.writes_locked && !hardcore_refuses;
+            let rom_refusal = rom_write_refusal(
+                self.writes_locked,
+                self.movie.mode() == crate::movie_ui::MovieMode::Idle,
+                hardcore_refuses,
+            );
+            for poke in self.debug_pokes.drain(..) {
+                match poke {
+                    DebugPoke::Rom {
+                        space,
+                        offset,
+                        value,
+                    } => {
+                        self.rom_write_status = Some(match rom_refusal {
+                            Some(why) => Err(why.to_string()),
+                            None => apply_rom_write(
+                                nes,
+                                self.rom_patch.as_mut(),
+                                space,
+                                offset as usize,
+                                value,
+                            )
+                            .map(|()| {
+                                self.rom_writes += 1;
+                                format!("{} {offset:#06x} = ${value:02X}", space.label())
+                            }),
+                        });
                     }
+                    // Locked / hardcore: drop the edit (locked = no-op, not
+                    // deferred).
+                    _ if !open => {}
+                    DebugPoke::CpuRam { addr, value } => nes.poke_ram(addr, value),
+                    DebugPoke::PpuBus { addr, value } => nes.debug_poke_ppu(addr, value),
+                    DebugPoke::Oam { idx, value } => nes.poke_oam_byte(idx, value),
                 }
-            } else {
-                // Locked / hardcore: discard queued edits so they never leak into
-                // a later unlocked frame (locked = no-op, not deferred).
-                self.debug_pokes.clear();
             }
             // v1.7.0 "Forge" Workstream H4 — tally a lag frame when the program
             // polled no controller this forward frame. `was_input_polled_this_frame`
@@ -3492,6 +3668,283 @@ mod tests {
             0x00,
             "hardcore-blocked poke must be a no-op"
         );
+    }
+
+    /// v3.7.0 — a console built from `rom`, its recorder started, as every
+    /// ROM-load path installs one.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn rom_patch_core(rom: &[u8]) -> EmuCore {
+        let mut core = EmuCore::new();
+        core.set_nes(Nes::from_rom(rom).unwrap());
+        core.start_rom_patch(rom);
+        assert!(core.rom_patch.is_some(), "an iNES image is recorded");
+        core
+    }
+
+    /// v3.7.0 — the edit the gate tests queue: `synth_nrom`'s `JMP $C000`
+    /// operand (PRG offset 1) becomes `$03`, so a write that lands sends the
+    /// CPU to `$C003` (a `BRK`) and changes the machine on the next frame.
+    #[cfg(not(target_arch = "wasm32"))]
+    const ROM_EDIT: DebugPoke = DebugPoke::Rom {
+        space: rustynes_core::RomSpace::Prg,
+        offset: 1,
+        value: 0x03,
+    };
+
+    /// v3.7.0 — run four frames of `rom` under `setup` (the gate to test),
+    /// queueing [`ROM_EDIT`] before the first when `write` is set. Returns the
+    /// whole-machine snapshot, the framebuffer, PRG offset 1 as the console
+    /// reads it, whether the recorder holds an edit, the writes counted, the
+    /// status, and whether the queue drained.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::type_complexity)]
+    fn run_rom_case(
+        rom: &[u8],
+        write: bool,
+        setup: impl Fn(&mut EmuCore, &mut FrameInputs),
+    ) -> (
+        Vec<u8>,
+        Vec<u8>,
+        Option<u8>,
+        bool,
+        usize,
+        Option<Result<String, String>>,
+        bool,
+    ) {
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let mut core = rom_patch_core(rom);
+        let mut inputs = quiet_inputs();
+        setup(&mut core, &mut inputs);
+        if write {
+            core.debug_pokes.push(ROM_EDIT);
+        }
+        for _ in 0..4 {
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        let drained = core.debug_pokes.is_empty();
+        let edits = core
+            .rom_patch
+            .as_ref()
+            .is_some_and(crate::patch_recorder::PatchRecorder::has_edits);
+        let status = core.rom_write_status.clone();
+        let writes = core.rom_writes;
+        let nes = core.nes.as_mut().unwrap();
+        (
+            nes.snapshot(),
+            nes.framebuffer().to_vec(),
+            nes.debug_peek_rom(rustynes_core::RomSpace::Prg, 1),
+            edits,
+            writes,
+            status,
+            drained,
+        )
+    }
+
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`) — the ROM-write gate. A queued ROM write
+    /// is a no-op while `writes_locked` (netplay / TAS replay), while a movie
+    /// RECORDS (set on the movie only, with `writes_locked` left clear, so the
+    /// movie check is what refuses it), and under `RetroAchievements` hardcore:
+    /// the console's ROM byte, the recorder, the whole-machine snapshot and
+    /// the frame are byte-identical to the same run with no write, the queue
+    /// is drained (not deferred), and the refusal's reason is published. With
+    /// no gate the same write lands, is recorded, and changes the machine.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn a_rom_write_is_refused_while_locked_recording_or_hardcore() {
+        type Setup = fn(&mut EmuCore, &mut FrameInputs);
+        let rom = synth_nrom();
+        let cases: [(&str, Setup, &str); 3] = [
+            ("locked", |c, _| c.writes_locked = true, "netplay"),
+            (
+                "recording",
+                |c, _| {
+                    let nes = c.nes.as_mut().unwrap();
+                    c.movie.start_recording_power_on(nes, false);
+                },
+                "movie",
+            ),
+            ("hardcore", |_, i| i.hardcore_blocked = true, "hardcore"),
+        ];
+        for (name, setup, reason) in cases {
+            let without = run_rom_case(&rom, false, setup);
+            let with = run_rom_case(&rom, true, setup);
+            assert_eq!(with.2, Some(0x00), "{name}: the ROM byte is unchanged");
+            assert!(!with.3, "{name}: nothing was recorded");
+            assert_eq!(with.4, 0, "{name}: no write counted");
+            assert!(with.6, "{name}: the queue is drained, not deferred");
+            assert!(
+                with.5
+                    .as_ref()
+                    .is_some_and(|s| s.as_ref().is_err_and(|why| why.contains(reason))),
+                "{name}: refusal published, got {:?}",
+                with.5
+            );
+            assert!(with.0 == without.0, "{name}: the machine is byte-identical");
+            assert!(with.1 == without.1, "{name}: the frame is byte-identical");
+        }
+        // Open: the same write lands, is recorded and changes the machine.
+        let without = run_rom_case(&rom, false, |_, _| {});
+        let with = run_rom_case(&rom, true, |_, _| {});
+        assert_eq!(with.2, Some(0x03), "the ROM byte is written");
+        assert!(with.3, "and recorded");
+        assert_eq!(with.4, 1);
+        assert!(matches!(with.5, Some(Ok(_))), "{:?}", with.5);
+        assert!(with.0 != without.0, "the CPU now runs the edited code");
+    }
+
+    /// v3.7.0 — the gate on its own, in the order the reasons are reported.
+    #[test]
+    fn rom_write_refusal_names_the_first_gate_that_holds() {
+        assert_eq!(rom_write_refusal(false, true, false), None);
+        assert!(rom_write_refusal(false, true, true).is_some_and(|s| s.contains("hardcore")));
+        assert!(rom_write_refusal(false, false, false).is_some_and(|s| s.contains("movie")));
+        assert!(rom_write_refusal(true, true, false).is_some_and(|s| s.contains("netplay")));
+        assert!(rom_write_refusal(true, false, true).is_some_and(|s| s.contains("hardcore")));
+    }
+
+    /// v3.7.0 — with no ROM write queued, a session with the recorder is
+    /// byte-identical to one without it (and so to every earlier release):
+    /// the recorder and the ROM gate add nothing to the run loop, so
+    /// `EMULATION_EPOCH` does not move.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn no_rom_write_means_a_byte_identical_session() {
+        let rom = synth_nrom();
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let mut plain = EmuCore::new();
+        plain.set_nes(Nes::from_rom(&rom).unwrap());
+        assert!(plain.rom_patch.is_none());
+        let mut recorded = rom_patch_core(&rom);
+        let inputs = quiet_inputs();
+        for _ in 0..8 {
+            plain.produce_one_frame(&inputs, &mut sinks);
+            recorded.produce_one_frame(&inputs, &mut sinks);
+            let (a, b) = (plain.nes.as_ref().unwrap(), recorded.nes.as_ref().unwrap());
+            assert!(
+                a.snapshot() == b.snapshot(),
+                "the machine is byte-identical"
+            );
+            assert!(
+                a.framebuffer() == b.framebuffer(),
+                "the frame is byte-identical"
+            );
+        }
+        assert!(!recorded.rom_patch.as_ref().unwrap().has_edits());
+        assert_eq!(recorded.rom_write_status, None);
+    }
+
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`) — end to end: PRG and CHR edits applied
+    /// through the queued, gated path over several frames (one refused past
+    /// the end, which must not reach the patch either), then "Save patch..."
+    /// (`write_patch_files`) with a RAM pin, then the saved BPS applied to the
+    /// clean ROM by the v1.2.0 applier: the result is the live console's ROM
+    /// byte for byte, and the recorder's edited image; the sidecar verifies
+    /// against the patch's metadata.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn queued_rom_edits_save_a_patch_that_rebuilds_the_live_rom() {
+        use rustynes_core::RomSpace;
+        let mut rom = synth_nrom();
+        // Distinct CHR so a CHR edit is visible in the image.
+        for (i, b) in rom[16 + 16 * 1024..].iter_mut().enumerate() {
+            *b = u8::try_from(i % 251).unwrap();
+        }
+        let mut sinks = FrameSinks {
+            audio: None,
+            #[cfg(feature = "retroachievements")]
+            ra: None,
+        };
+        let mut core = rom_patch_core(&rom);
+        let inputs = quiet_inputs();
+        let edits: &[(RomSpace, u32, u8)] = &[
+            (RomSpace::Prg, 0x0100, 0xA9),
+            (RomSpace::Prg, 0x0101, 0x42),
+            (RomSpace::Prg, 0x3FFF, 0x77),
+            (RomSpace::Chr, 0x0000, 0xFF),
+            (RomSpace::Chr, 0x1FFF, 0x01),
+            (RomSpace::Prg, 0x0100, 0xEA), // a second write of one byte
+        ];
+        for chunk in edits.chunks(2) {
+            for &(space, offset, value) in chunk {
+                core.debug_pokes.push(DebugPoke::Rom {
+                    space,
+                    offset,
+                    value,
+                });
+            }
+            core.produce_one_frame(&inputs, &mut sinks);
+        }
+        // Past the end of PRG: refused, and not recorded.
+        core.debug_pokes.push(DebugPoke::Rom {
+            space: RomSpace::Prg,
+            offset: 0x4000,
+            value: 1,
+        });
+        core.produce_one_frame(&inputs, &mut sinks);
+        assert!(matches!(core.rom_write_status, Some(Err(_))));
+        assert_eq!(core.rom_writes, edits.len());
+
+        let rec = core.rom_patch.clone().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hack.bps");
+        let pins = [RawCheat {
+            address: 0x0055,
+            value: 9,
+            compare: None,
+            enabled: true,
+        }];
+        let written = crate::patch_recorder::write_patch_files(&rec, &pins, &path).unwrap();
+        assert_eq!(written, [path.clone(), dir.path().join("hack.pins.toml")]);
+        let bps = std::fs::read(&path).unwrap();
+        let patched = crate::patch::apply_bps(&rom, &bps).expect("the saved patch applies");
+        assert_eq!(patched, rec.edited(), "the recorder's image");
+        // The live console's ROM, byte for byte.
+        let nes = core.nes.as_mut().unwrap();
+        let live_prg: Vec<u8> = (0..0x4000)
+            .map(|o| nes.debug_peek_rom(RomSpace::Prg, o).unwrap())
+            .collect();
+        let live_chr: Vec<u8> = (0..0x2000)
+            .map(|o| nes.debug_peek_rom(RomSpace::Chr, o).unwrap())
+            .collect();
+        assert_eq!(&patched[16..16 + 0x4000], &live_prg[..]);
+        assert_eq!(&patched[16 + 0x4000..], &live_chr[..]);
+        assert_eq!(&patched[..16], &rom[..16], "the header is untouched");
+        assert_eq!(patched[16 + 0x100], 0xEA, "the last write of a byte wins");
+        // The sidecar is the one the patch names.
+        let meta = String::from_utf8(crate::patch::bps_metadata(&bps).unwrap().to_vec()).unwrap();
+        let text = std::fs::read_to_string(&written[1]).unwrap();
+        let got = crate::patch_recorder::verify_sidecar(&meta, "hack.pins.toml", &text).unwrap();
+        assert_eq!(got, pins);
+    }
+
+    /// v3.7.0 — reinstalling the same image (netplay start, movie load)
+    /// restarts the recorder clean, since the new console has no edit; a
+    /// console of another image drops it.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn reinstalling_a_console_restarts_or_drops_the_recorder() {
+        let rom = synth_nrom();
+        let mut core = rom_patch_core(&rom);
+        core.rom_patch.as_mut().unwrap().set_prg(5, 0x99).unwrap();
+        core.rom_writes = 1;
+        core.set_nes(Nes::from_rom(&rom).unwrap());
+        assert!(
+            !core.rom_patch.as_ref().unwrap().has_edits(),
+            "restarted clean"
+        );
+        assert_eq!(core.rom_writes, 0);
+        let mut other = rom;
+        other[16 + 5] = 0x42;
+        core.set_nes(Nes::from_rom(&other).unwrap());
+        assert!(core.rom_patch.is_none(), "another image is not recorded");
     }
 
     /// v1.7.0 "Forge" Workstream H4 — the lag-frame tally. The synth NROM loops

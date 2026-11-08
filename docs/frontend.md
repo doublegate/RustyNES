@@ -2054,6 +2054,29 @@ workstream rides on.
   work-RAM poke/freeze (applied like a cheat), so the no-edit path is
   byte-identical and determinism holds.
 
+  **v3.7.0 (`T-HACK-BPS-RECORDER`): live ROM editing.** Two more domains,
+  **PRG-ROM** and **CHR-ROM**, list the cartridge's ROM by offset within that
+  section of the image (six hex digits; not a CPU / PPU address) and are
+  editable. An edit is not written by the panel: it is queued as
+  `DebugPoke::Rom` and applied after the next frame in the gated post-frame
+  stage, through `Nes::debug_poke_rom`, which writes the board's own ROM buffer
+  in place (the CPU / PPU see the byte from the next access). Its gate,
+  `emu::rom_write_refusal`, refuses it under RA hardcore, while a movie records
+  or plays (read from the movie state, not only from `writes_locked`), and
+  while `writes_locked` (netplay, TAS replay); a refused write is drained, not
+  deferred, and its reason shows in the panel. Each write that lands is fed to
+  the session's `PatchRecorder` (`EmuCore::rom_patch`, started from the clean
+  image at every ROM load), and **Save patch...** writes its BPS patch and,
+  with RAM pins (the enabled raw cheats and freezes), the `.pins.toml`
+  sidecar. The button only raises a request
+  (`DebuggerOverlay::take_save_patch_request`); `App::save_live_patch` clones
+  the recorder under a brief lock after the egui pass, drops the lock, and
+  writes the files (desktop only). Boards that do not offer a section (CHR-RAM,
+  self-flashing boards, the FFE copiers, FDS, NSF) show why instead of a list.
+  Save states carry no ROM, so a rewind keeps an edit and a state loaded on the
+  clean image runs the clean ROM. Spec: `docs/live-patch-recorder.md`
+  section 5.
+
 - **RAM Search + RAM Watch (C3)** — the **Memory Compare** panel (Debug → Memory
   Compare) is upgraded from the v1.3.0 changed/unchanged search into the
   BizHawk/FCEUX-class tool. **RAM Search** now has an **operator × compare-to

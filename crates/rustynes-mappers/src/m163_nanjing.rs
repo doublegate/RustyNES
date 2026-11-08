@@ -125,6 +125,10 @@ impl Nanjing163 {
 }
 
 impl Mapper for Nanjing163 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     /// v3.1.0: not pure -- it latches PPU A13 from reads, so the PPU's display-only
     /// "disable sprite limit" reads are not made on this board.
     fn chr_reads_are_pure(&self) -> bool {

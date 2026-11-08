@@ -289,6 +289,33 @@ impl PatchRecorder {
         self.layout
     }
 
+    /// The clean image the recorder was started against.
+    #[must_use]
+    pub fn clean(&self) -> &[u8] {
+        &self.clean
+    }
+
+    /// Whether any PRG or CHR byte differs from the clean image.
+    #[must_use]
+    pub fn has_edits(&self) -> bool {
+        self.edited != self.clean
+    }
+
+    /// v3.7.0 — this recorder restarted with no edits, if `image_sha256` (a
+    /// console's `Nes::image_sha256`, the whole file's SHA-256) is the clean
+    /// image's, else `None`. For a frontend that reinstalls a console: the new
+    /// one carries no ROM edit, so neither may the recorder, and a console of
+    /// another image must not be recorded against this one. RAM pins are kept
+    /// (they are not ROM edits).
+    #[must_use]
+    pub fn restarted_for(self, image_sha256: &[u8; 32]) -> Option<Self> {
+        let same: [u8; 32] = Sha256::digest(&self.clean).into();
+        (same == *image_sha256).then(|| Self {
+            edited: self.clean.clone(),
+            ..self
+        })
+    }
+
     /// The image with every edit so far applied.
     #[must_use]
     pub fn edited(&self) -> &[u8] {
@@ -302,7 +329,8 @@ impl PatchRecorder {
     }
 
     /// Set PRG-ROM byte `offset` (0-based in PRG-ROM, not a CPU address: the
-    /// debugger resolves a CPU address through the mapper's current bank).
+    /// debugger's PRG-ROM view and `Nes::debug_poke_rom` use the same offsets,
+    /// and `EmuCore` feeds every ROM write that lands here).
     ///
     /// # Errors
     ///
@@ -369,6 +397,40 @@ impl PatchRecorder {
             sidecar,
         }
     }
+}
+
+/// v3.7.0 — "Save patch...": write a recorder's patch and its sidecar.
+///
+/// Writes `recorder`'s BPS patch to `bps_path` and, when `pins` (the session's enabled raw RAM cheats and freezes) are not
+/// empty, the RAM-pin sidecar beside it, named from the patch's file stem
+/// exactly as [`PatchRecorder::finish`] names and hashes it. The recorder
+/// itself is not changed (the pins go into a copy), so saving twice writes the
+/// same files. Returns the paths written, patch first.
+///
+/// # Errors
+///
+/// The first write that failed.
+pub fn write_patch_files(
+    recorder: &PatchRecorder,
+    pins: &[RawCheat],
+    bps_path: &std::path::Path,
+) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut rec = recorder.clone();
+    for pin in pins.iter().filter(|p| p.enabled) {
+        rec.pin_ram(pin.address, pin.value, pin.compare);
+    }
+    let stem = bps_path
+        .file_stem()
+        .map_or_else(|| "patch".into(), |s| s.to_string_lossy().into_owned());
+    let out = rec.finish(&stem);
+    std::fs::write(bps_path, &out.bps)?;
+    let mut written = vec![bps_path.to_path_buf()];
+    if let Some((name, text)) = out.sidecar {
+        let side = bps_path.with_file_name(name);
+        std::fs::write(&side, text)?;
+        written.push(side);
+    }
+    Ok(written)
 }
 
 /// The recorder's output.

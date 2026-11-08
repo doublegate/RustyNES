@@ -95,6 +95,14 @@ impl Jaleco86 {
 }
 
 impl Mapper for Jaleco86 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -237,6 +245,14 @@ impl Jaleco140 {
 }
 
 impl Mapper for Jaleco140 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -540,6 +556,14 @@ impl Jaleco72 {
 }
 
 impl Mapper for Jaleco72 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.inner.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.inner.chr, !self.inner.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -601,6 +625,14 @@ impl Jaleco92 {
 }
 
 impl Mapper for Jaleco92 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.inner.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.inner.chr, !self.inner.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -682,6 +714,14 @@ impl Jaleco101 {
 }
 
 impl Mapper for Jaleco101 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

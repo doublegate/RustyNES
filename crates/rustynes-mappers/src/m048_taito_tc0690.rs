@@ -179,6 +179,14 @@ impl TaitoTc0690 {
 }
 
 impl Mapper for TaitoTc0690 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     // v2.8.0 Phase 4 — CPU-cycle hook + IRQ source; no on-cart audio.
     fn caps(&self) -> MapperCaps {
         MapperCaps::CYCLE_IRQ

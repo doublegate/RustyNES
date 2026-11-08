@@ -143,6 +143,10 @@ impl Inl31 {
 }
 
 impl Mapper for Inl31 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -340,6 +344,10 @@ impl MagicFloor218 {
 }
 
 impl Mapper for MagicFloor218 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -487,6 +495,10 @@ impl Cufrom29 {
 }
 
 impl Mapper for Cufrom29 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -1037,6 +1049,10 @@ impl Action53M28 {
 }
 
 impl Mapper for Action53M28 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -1403,6 +1419,18 @@ impl Unrom512M30 {
 }
 
 impl Mapper for Unrom512M30 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        // A flashable board's PRG is its battery save (`save_data`), so an
+        // edit there would be written out as the game's own flash; only the
+        // plain-ROM configuration offers it.
+        let is_rom = !self.flashable();
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, is_rom)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, self.chr_is_rom)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

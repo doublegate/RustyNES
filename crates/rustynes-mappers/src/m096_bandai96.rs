@@ -115,6 +115,14 @@ impl Bandai96 {
 }
 
 impl Mapper for Bandai96 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     /// v3.1.0: not pure -- its inner CHR bank follows the last PPU address read, so the PPU's display-only
     /// "disable sprite limit" reads are not made on this board.
     fn chr_reads_are_pure(&self) -> bool {

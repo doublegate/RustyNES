@@ -107,6 +107,14 @@ impl TxSrom {
 }
 
 impl Mapper for TxSrom {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        self.inner.debug_prg_rom_mut()
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        self.inner.debug_chr_rom_mut()
+    }
+
     // Battery save lives in the wrapped MMC3's PRG-RAM (core audit IMP-10):
     // without forwarding, TxSROM carts such as Ys III wrote an empty `.sav`.
     fn sram(&self) -> &[u8] {

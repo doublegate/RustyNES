@@ -88,6 +88,14 @@ impl Waixing252 {
 }
 
 impl Mapper for Waixing252 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        self.inner.debug_prg_rom_mut()
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        self.inner.debug_chr_rom_mut()
+    }
+
     fn caps(&self) -> MapperCaps {
         self.inner.caps()
     }
