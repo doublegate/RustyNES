@@ -39,8 +39,9 @@ import com.google.android.gms.games.snapshot.SnapshotMetadataChange
  * their own devices. On a true divergent conflict the SDK hands BOTH copies to us via
  * `DataOrConflict.getConflict()`; we surface that to the caller through [onConflict]
  * with a [SaveConflict] offering **keep-local** / **keep-cloud**, then call
- * `resolveConflict`. (A richer 3-way merge UI is a deliberate TODO — last-write-wins +
- * the explicit keep-local/keep-cloud picker is the solid first version.)
+ * `resolveConflict`. (v3.7.0, MOB-08: the "3-way merge UI" TODO is recorded as not
+ * applicable: a save state is an opaque binary snapshot with no stored common
+ * ancestor, so there is nothing to merge; keep-local / keep-cloud is the resolution.)
  *
  * Snapshot APIs are blocking Tasks; run [pushSlot]/[pullSlot] off the main thread
  * (the callers already use the SAF/background executor pattern).

@@ -28,7 +28,9 @@ import javax.crypto.spec.GCMParameterSpec
  * over the Keystore for "optimal" envelope-encryption / key-rotation; for these few
  * short-lived tokens, direct Keystore AES-GCM is the canonical, lean choice. Credential
  * Manager / AccountManager are for interactive auth / passkeys, not at-rest token
- * storage, so they don't apply here.) TODO: layer Tink if richer key rotation is wanted.
+ * storage, so they don't apply here.) Tink for richer key rotation: recorded at v3.7.0
+ * (MOB-08) as a maintainer decision, since it adds a dependency and nothing needs
+ * rotation today.
  *
  * Passwords proper (the RA account password, the SAF-picker logins) are NEVER
  * persisted at all — only the derived token is. This is for the values that must

@@ -22,6 +22,14 @@ crate-type = ["lib", "cdylib", "staticlib"]
 [lints]
 workspace = true
 
+[features]
+# v3.7.0 (`T-MOBILE-GAME-CORRECTIONS`) — the bridge test that drives a real Rad
+# Racer dump from `tests/roms/external/` (gitignored; your own dump, never
+# committed). Off by default; the workspace's `--features commercial-roms` runs
+# turn it on, and without the dump the test says so and passes, like every
+# other `commercial-roms` suite.
+commercial-roms = []
+
 [dependencies]
 # Default features include `std`; the bridge is a hosted (std) target, never the
 # `no_std` chip-stack gate. It re-exports the byte-identical core unchanged. The

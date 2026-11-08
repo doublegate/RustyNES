@@ -33,6 +33,16 @@ on:
       - 'crates/rustynes-ra/**'
       - 'crates/rustynes-hdpack/**'
       - 'crates/rustynes-gfx-shaders/**'
+      # v3.7.0: rustynes-gamedb has been a bridge dependency since v2.9.8 and
+      # was missing here (re-derived with the cargo tree command above). The
+      # bridge also compiles three desktop source files through `#[path]`
+      # modules (the EQ and the Game Genie database, with the database's TSV
+      # catalogs), which `cargo tree` cannot see: a change to any of them
+      # changes the Android library.
+      - 'crates/rustynes-gamedb/**'
+      - 'crates/rustynes-frontend/src/eq.rs'
+      - 'crates/rustynes-frontend/src/genie_db.rs'
+      - 'crates/rustynes-frontend/src/genie_database*.tsv'
       - 'android/**'
       - '.github/workflows/android.yml'
       - 'Cargo.toml'

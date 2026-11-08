@@ -300,6 +300,73 @@ the app is submitted; this repository has no F-Droid metadata file to carry it.
 The submission is the store-listing step deferred by ADR 0035. F-Droid's
 reviewers make the final call; this records what RustyNES will ask for and why.
 
+## The mobile extras (v3.7.0)
+
+- **The bridge (`rustynes-mobile`'s `extras` module).** The desktop's 20-band
+  graphic EQ (`rustynes-frontend/src/eq.rs`) and its Game Genie code database
+  (`genie_db.rs` and its three TSV catalogs) are compiled into the bridge from
+  the desktop's own source files (`#[path]` modules in `lib.rs`), not copied, so
+  one fix reaches the desktop, Android and iOS together. The EQ runs on the
+  drained host-rate samples (`drain_audio` / `drain_audio_bytes`), an output
+  stage like the desktop's: a flat bank (the default) installs no filter and the
+  samples are bit-identical, which the bridge's host tests compare bit for bit.
+  The gains (`set_equalizer_gains`, 20 values, clamped to +/-12 dB, non-finite
+  taken as 0) persist across `load_rom`, re-voiced at its sample rate. The code
+  database matches a ROM on its header-excluded and full-file CRC32s, taken from
+  the bytes the host passed before `correct_rom` rewrites a header;
+  `cheat_database_codes` lists, `cheat_add_genie` (unchanged) enables, so
+  validation and the hardcore refusal are the existing ones. The core keeps one
+  active code per address, so a second code for an address replaces the first.
+- **The per-game picture corrections (ADR 0051, `T-MOBILE-GAME-CORRECTIONS`).**
+  `set_game_corrections_enabled(false)` is the desktop's `[enhancements]
+  disable_game_corrections` and libretro's `rustynes_game_corrections =
+  disabled`: *Rad Racer* is drawn as the hardware draws it. The setting persists
+  across loads and applies at once, except while a movie or a netplay session
+  holds the console's options (`HardwareOptions`, carried in `.rnm` format 8 and
+  the netplay digest); a change then lands on the first single-player frame
+  after the session ends. Gate: `extras::rad_racer` under `--features
+  commercial-roms` drives a real dump (`tests/roms/external/mapper-001-MMC1/Rad
+  Racer.nes`, never committed) through the bridge and matches every frame of
+  1,101 against a bare core with the correction set by hand, both ways.
+- **Settings:** "Per-game picture corrections" (on by default, with a hint
+  when the open game is listed), "Equalizer (20-band)" (sliders labelled from
+  `equalizerBandFrequencies()`, a Flat button), and "Game Genie codes", which
+  opens `CheatsSheet` (Cheats.kt): the database's codes for the game, grouped by
+  category, and a typed code. The ticked codes are saved per game (`CheatStore`,
+  SharedPreferences `cheats`, keyed by ROM identity) and re-applied when the game
+  is opened. The EQ gains and the switch are pushed to every new controller
+  (`applyAudioVideoPrefs`), since each opened ROM builds one.
+- **`T-RA-HARDCORE-RESUME` (maintainer, 2026-11-08: keep the refusal).** The
+  RetroAchievements session is created after `prepareRom` builds the controller,
+  so the bridge alone let the auto-resume load through and then power-cycled
+  when hardcore took effect: the game restarted with nothing saying why.
+  `AutoResume.decide` now refuses the load first when RA and hardcore are both
+  on, keeps the state (it resumes once hardcore is off), and the status line
+  says "started from power-on: RetroAchievements hardcore does not allow
+  resuming a saved state". JVM test: `MobileExtrasTest`. iOS has no auto-resume
+  path, so nothing changes there.
+- **`T-ANDROID-GPU-FRAMESKIP`.** With the GPU renderer on, the 61,440-pixel
+  RGBA -> ARGB pack is no longer done every frame: `CpuFrame` remembers the
+  frame and packs it only when something reads it. A clip recording or an
+  external display reads every frame, so they force the pack each frame as
+  before; a screenshot packs the remembered frame first
+  (`capture.refreshLatest`). `CpuFrameTest` checks that every read sees the
+  frame the always-pack loop showed, over random frame sequences. No
+  throughput is claimed: that is run-sheet row F1, on a device.
+- **MOB-08, the nine Kotlin TODOs** (`to-dos/plans/research/v3.1-line-survey-oracle-backlog.md`):
+
+  | Site | Outcome |
+  | --- | --- |
+  | `BoxArt.kt` box-art fallback source | FIXED: stale. `ScraperSources.kt` has tried TheGamesDB (the user's key) and ScreenScraper (gated off until RustyNES registers a devid) before libretro since v1.8.8; the comment now says so. `Mob08Test` pins the libretro candidate URLs |
+  | `States.kt` live save-state thumbnails | FIXED: Save captures the current frame (`capture.refreshLatest`, then the latest bitmap) and stores a 64 x 60 thumbnail (`Thumbs.downscale`, `Mob08Test`) |
+  | `Library.kt` long-press menu | FIXED: a d-pad-only TV opens the tile menu with MENU, the gamepad Y button, or a long press of centre / Enter (`TileKeys.opensMenu`, `Mob08Test`) |
+  | `LibraryImport.kt` folder nesting | FIXED: the comment said "one level", but the scan recursed with no bound at all; it now descends at most `ImportWalk.MAX_DEPTH` (8) levels and never re-enters a folder it has seen (`Mob08Test`) |
+  | `Capture.kt` audio in clips | RECORDED: an AAC track through a second `MediaCodec` into the `MediaMuxer` needs a device to verify (no JVM reach), so it stays video-only; the TODO names the plan |
+  | `MainActivity.kt` list-detail rail | RECORDED: an expanded-window layout change, verifiable only on a foldable or tablet |
+  | `play/CloudSave.kt` 3-way merge | RECORDED AS NOT APPLICABLE: a save state is an opaque binary snapshot with no stored common ancestor, so there is nothing to merge; keep-local / keep-cloud is the complete resolution |
+  | `SecurePrefs.kt` Tink key rotation | RECORDED: a maintainer decision (it adds a dependency); Keystore AES-GCM is Android's documented primary mechanism and nothing needs rotation today |
+  | `strings.xml` / `MainActivity.kt` `TODO(i18n)` | PARTIAL: every string v3.7.0 adds is in `values/` and `values-es/`; the remaining dynamic status-line literals are a separate sweep |
+
 ## CI
 
 `.github/workflows/android.yml` runs on changes to the mobile crates / `android/`:

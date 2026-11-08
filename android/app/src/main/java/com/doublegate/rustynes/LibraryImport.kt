@@ -58,7 +58,11 @@ object LibraryImport {
         // Map a lowercase base name (no ext) -> the image child, for sibling matching.
         val imagesByBase = mutableMapOf<String, Uri>()
 
-        fun scan(parentDocId: String) {
+        // v3.7.0 (MOB-08): folders already scanned, for ImportWalk's bound.
+        val seen = HashSet<String>()
+
+        fun scan(parentDocId: String, depth: Int) {
+            if (!ImportWalk.shouldScan(depth, parentDocId, seen)) return
             val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId)
             val subdirs = mutableListOf<String>()
             runCatching {
@@ -93,13 +97,15 @@ object LibraryImport {
                     }
                 }
             }
-            // One level of subfolders (a typical "ROMs/<system>/" layout) — bounded to
-            // avoid pathological deep trees; deeper nesting is a TODO if requested.
-            subdirs.forEach { scan(it) }
+            // Subfolders (a typical "ROMs/<system>/" layout and deeper). v3.7.0
+            // (MOB-08): this comment used to say "one level" while the call below
+            // recursed without any bound; ImportWalk now caps it at MAX_DEPTH levels
+            // and skips a folder already scanned.
+            subdirs.forEach { scan(it, depth + 1) }
         }
 
         val rootDocId = DocumentsContract.getTreeDocumentId(treeUri)
-        scan(rootDocId)
+        scan(rootDocId, 0)
 
         val total = roms.size
         var added = 0

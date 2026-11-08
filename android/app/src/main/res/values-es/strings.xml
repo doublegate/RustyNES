@@ -186,4 +186,20 @@
     <string name="host_warning_recovered_from_internal_error">RustyNES detuvo el juego tras un error interno. Se terminó cualquier sesión de juego en red. Vuelve a abrir el juego o carga un estado guardado para continuar.</string>
     <!-- v3.6.0 (T-ANDROID-API37): ACCESS_LOCAL_NETWORK refused for LAN netplay. -->
     <string name="netplay_local_network_refused">El juego en LAN necesita el permiso de Dispositivos cercanos para comunicarse con el otro jugador. Actívalo en Ajustes › Aplicaciones › RustyNES › Permisos › Dispositivos cercanos y vuelve a crear o unirte a la partida. El juego en línea (código de sala) no lo necesita.</string>
+    <!-- ===== v3.7.0 (D24, T-MOBILE-EXTRAS / T-MOBILE-GAME-CORRECTIONS / T-RA-HARDCORE-RESUME) ===== -->
+    <string name="settings_game_corrections">Correcciones de imagen por juego</string>
+    <string name="settings_game_corrections_hint">Activado oculta un fallo auténtico del hardware en los juegos de la lista (la raya a la derecha de la carretera en Rad Racer). Desactivado dibuja la imagen del propio hardware. Una película o una sesión de juego en red conserva la opción grabada.</string>
+    <string name="settings_game_corrections_hint_listed">Este juego tiene una corrección. Desactivado dibuja la imagen del propio hardware.</string>
+    <string name="settings_equalizer">Ecualizador (20 bandas)</string>
+    <string name="settings_equalizer_flat">Plano (desactivado)</string>
+    <string name="settings_cheats">Trucos</string>
+    <string name="settings_open_cheats">Códigos Game Genie</string>
+    <string name="cheats_title">Códigos Game Genie</string>
+    <string name="cheats_no_rom">Carga un juego para usar trucos.</string>
+    <string name="cheats_typed_label">Código (6 u 8 letras)</string>
+    <string name="cheats_add">Añadir</string>
+    <string name="cheats_none_listed">La base de datos no tiene códigos para este juego. Los códigos escritos siguen funcionando.</string>
+    <string name="cheats_listed_for">De la base de datos de códigos: %1$s</string>
+    <string name="cheats_refused">Código no añadido: %1$s</string>
+    <string name="notice_hardcore_resume">iniciado desde el encendido: el modo hardcore de RetroAchievements no permite reanudar un estado guardado</string>
 </resources>
