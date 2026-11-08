@@ -548,7 +548,9 @@ for the shipping binary.
 
 The portable release build targets the baseline `x86-64` ISA so the shipped
 binary runs everywhere. Two opt-in variants trade portability for a tuned
-instruction set — both keep the emulated output byte-identical (Rust enables no
+instruction set (`release-native`, `release-v3`), and a third,
+`release-baseline` (`cargo full-baseline`, described under the first), pins the
+shipped `x86-64` target explicitly for comparisons. The tuned two keep the emulated output byte-identical (Rust enables no
 fast-math / FP contraction under `target-cpu`), but **verify with the oracle
 suite anyway** when benchmarking with them, and never ship them as the portable
 artifact:
@@ -576,7 +578,13 @@ artifact:
   key for a triple you are not building is inert. Command-line arrays are
   appended after the user file's, and rustc takes the last `-C target-cpu`,
   so the alias's flag wins; a `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` variable does
-  not change that, and only an exported `RUSTFLAGS` replaces everything. The
+  not change that. Three things DO defeat it, each measured on a scratch crate
+  (2026-11-07): an exported `RUSTFLAGS`, or `CARGO_ENCODED_RUSTFLAGS` -- even
+  set to an EMPTY value -- replaces every configured flag, the alias's
+  included; and a matching `[target.'cfg(...)']` table in a user config is
+  appended AFTER the triple flags (the rustc line read `native ... x86-64-v3
+  ... znver1`), so a `target-cpu` there wins. Before comparing the builds,
+  unset both variables and move any `target-cpu` out of a `cfg()` table. The
   merge needs the user's `rustflags` to be an array: a string-form
   `rustflags = "-C ..."` makes Cargo refuse the configuration ("could not load
   Cargo configuration") under any of the aliases, so convert it to

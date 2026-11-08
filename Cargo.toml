@@ -335,10 +335,11 @@ inherits = "release"
 # would also replace a user's own flags such as a mold linker). x86-64-v3 is a
 # whole level -- AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, MOVBE, XSAVE on top of
 # v2 -- not merely AVX2: Intel Core from Haswell (2013) and AMD from Excavator /
-# Zen run it, while many Pentium / Celeron / Atom parts of those years do not. It is a SUBSET of what `target-cpu=native`
-# enables on such a host, so it is the binary to hand to another modern PC, not a
-# faster one for this machine. Its own profile keeps its objects apart from
-# both `release` and `release-native`. Like `release-native`, never shipped.
+# Zen run it, while many Pentium / Celeron / Atom parts of those years do not.
+# It is a SUBSET of what `target-cpu=native` enables on such a host, so it is
+# the binary to hand to another modern PC, not a faster one for this machine.
+# Its own profile keeps its objects apart from both `release` and
+# `release-native`. Like `release-native`, never shipped.
 [profile.release-v3]
 inherits = "release"
 

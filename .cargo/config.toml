@@ -69,8 +69,11 @@ incompatible-rust-versions = "fallback"
 # makes Cargo refuse the configuration ("could not load Cargo configuration"),
 # so convert it to `["-C", "..."]`; and a `CARGO_TARGET_<TRIPLE>_RUSTFLAGS`
 # environment variable does NOT outrank the alias (its flags land between the
-# file's and the alias's, which stays last). A `RUSTFLAGS` environment variable
-# still replaces all of it. Check
+# file's and the alias's, which stays last). What DOES defeat it: a `RUSTFLAGS`
+# or `CARGO_ENCODED_RUSTFLAGS` environment variable (the latter even when set to
+# an empty value) replaces all of it, and a matching `[target.'cfg(...)']` table
+# in a user config is appended AFTER the triple flags, so a `target-cpu` there
+# wins (measured: `native ... x86-64-v3 ... znver1`). Check
 # with `-v` that the last `-C target-cpu` on the final rustc line is the one you
 # asked for. `full-baseline` and `full-v3` are x86-64 aliases: an Apple Silicon
 # or other ARM host cannot target `x86-64` or `x86-64-v3`. `full-native` is valid
