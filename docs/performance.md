@@ -548,7 +548,9 @@ for the shipping binary.
 
 The portable release build targets the baseline `x86-64` ISA so the shipped
 binary runs everywhere. Two opt-in variants trade portability for a tuned
-instruction set — both keep the emulated output byte-identical (Rust enables no
+instruction set (`release-native`, `release-v3`), and a third,
+`release-baseline` (`cargo full-baseline`, described under the first), pins the
+shipped `x86-64` target explicitly for comparisons. The tuned two keep the emulated output byte-identical (Rust enables no
 fast-math / FP contraction under `target-cpu`), but **verify with the oracle
 suite anyway** when benchmarking with them, and never ship them as the portable
 artifact:
@@ -562,16 +564,74 @@ artifact:
   RUSTFLAGS="-C target-cpu=native" cargo build --profile release-native -p rustynes-frontend
   ```
 
-- **`x86-64-v3` (portable-but-modern desktop).** A middle ground that stays
-  portable across essentially all 2015-and-later x86-64 desktops (AVX2 + BMI2 +
-  FMA) without pinning to one exact CPU:
+  `cargo full-native` (`.cargo/config.toml`) is this recipe with the `full`
+  feature set, the host-tuned twin of `cargo full-build`; it writes
+  `target/release-native/rustynes`. It sets the flag through `--config`
+  overrides of `build.rustflags` AND of the per-triple `rustflags` for every
+  host the project builds on (`x86_64-unknown-linux-gnu`,
+  `x86_64-apple-darwin`, `x86_64-pc-windows-msvc`, `x86_64-pc-windows-gnu`,
+  and for `full-native` also `aarch64-apple-darwin` and
+  `aarch64-unknown-linux-gnu`), because Cargo prefers a matching per-triple
+  `rustflags` over `build.rustflags`: with only the first, a user-level
+  `~/.cargo/config.toml` that sets per-triple flags silently wins (measured
+  2026-11-06, when a `full-v3` build compiled every crate with `native`). A
+  key for a triple you are not building is inert. Command-line arrays are
+  appended after the user file's, and rustc takes the last `-C target-cpu`,
+  so the alias's flag wins; a `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` variable does
+  not change that. Three things DO defeat it, each measured on a scratch crate
+  (2026-11-07): an exported `RUSTFLAGS`, or `CARGO_ENCODED_RUSTFLAGS` -- even
+  set to an EMPTY value -- replaces every configured flag, the alias's
+  included; and a matching `[target.'cfg(...)']` table in a user config is
+  appended AFTER the triple flags (the rustc line read `native ... x86-64-v3
+  ... znver1`), so a `target-cpu` there wins. Before comparing the builds,
+  unset both variables and move any `target-cpu` out of a `cfg()` table.
+  The alias sets only `target-cpu`, so a user's own `-C target-feature=...`
+  flags stay active on top of it, and `full-baseline` can then use features
+  beyond `x86-64`: remove them too, and check the final rustc line of a `-v`
+  build for any `target-feature` before comparing (PR #641 review). The
+  merge needs the user's `rustflags` to be an array: a string-form
+  `rustflags = "-C ..."` makes Cargo refuse the configuration ("could not load
+  Cargo configuration") under any of the aliases, so convert it to
+  `["-C", "..."]`. Check the last `-C target-cpu` on the final rustc line of a
+  `-v` build. `full-native` works on any host; `full-baseline` and `full-v3`
+  are x86-64 only, because `x86-64` and `x86-64-v3` are not CPUs an Apple
+  Silicon or other ARM host can target.
+
+  No speed-up over `full-build` is measured yet, and no harness in this
+  repository compares CPU targets: `scripts/perf/ab_check.sh` compares two
+  REVISIONS (or feature sets) at one CPU configuration, running `cargo bench`
+  without these profiles or flags, so pointing it at the aliases would bench
+  the same configuration on both sides. A CPU-target comparison means timing
+  the three built binaries themselves, under the same evidence rule
+  (`ab_check.sh`'s: a second independent run, an A/B/A order control, a
+  mixed-sign result is a rejection). If your own cargo config already sets
+  `target-cpu=native`, plain `full-build` is a native build too, so the
+  baseline must pin `target-cpu=x86-64` explicitly. `cargo full-baseline`
+  does that, in its own `release-baseline` profile
+  (`target/release-baseline/rustynes`), so the three-way comparison is
+  `full-baseline` against `full-v3` against `full-native`.
+
+- **`x86-64-v3` (portable-but-modern desktop).** A middle ground between the
+  baseline and one exact CPU. It requires the WHOLE x86-64-v3 level -- AVX,
+  AVX2, BMI1, BMI2, F16C, FMA, LZCNT, MOVBE and XSAVE, on top of v2's SSE4.2
+  and POPCNT -- not merely AVX2: Intel Core from Haswell and AMD from
+  Excavator / Zen qualify, while many Pentium, Celeron and Atom parts of the
+  same years lack AVX entirely and will not run it. On Linux,
+  `/lib64/ld-linux-x86-64.so.2 --help` lists `x86-64-v3 (supported)` on a
+  host that does:
 
   ```bash
-  RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --release -p rustynes-frontend
+  RUSTFLAGS="-C target-cpu=x86-64-v3" cargo build --profile release-v3 -p rustynes-frontend
   ```
 
   Useful for a self-built desktop binary; not wired into the release matrix
   (which ships the maximally-portable baseline `x86-64` build).
+  `cargo full-v3` builds it with the `full` features in the `release-v3`
+  profile, at `target/release-v3/rustynes`. On a host that has x86-64-v3,
+  `target-cpu=native` enables a superset of v3's features plus the host's own
+  scheduling model (the maintainer's i9-10850K, reported by rustc as
+  `skylake`: 26 target features under native, 18 under v3), so v3 is the
+  binary for another machine rather than a faster one for this one.
 
 ### v2.1.8 "Performance" A1 — specialized visible-scanline fast dot path
 

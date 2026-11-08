@@ -120,6 +120,9 @@ cargo run --release -p rustynes-frontend                 # opens with no ROM; me
 # purely opt-in (shipped/default build + core unchanged). Aliases in .cargo/config.toml:
 cargo full-run path/to/rom.nes                           # run the maximal native binary (alias ends in `--`, so flags forward, e.g. `cargo full-run --fullscreen rom.nes`)
 cargo full-build                                         # build it (= --release -p rustynes-frontend --features full)
+cargo full-native                                        # same, tuned for THIS CPU (release-native + target-cpu=native; not portable; target/release-native/rustynes)
+cargo full-v3                                            # same, for an x86-64-v3 PC (the whole level, not just AVX2; release-v3; target/release-v3/rustynes)
+cargo full-baseline                                      # same, pinned to target-cpu=x86-64 (what releases ship; the A/B baseline -- a user cargo config can make plain full-build native)
 # WASM-only features (script-wasm, browser-cheevos, wasm-canvas) are excluded by design.
 # Default keys P1: arrows = D-pad, Z = A, X = B, Enter = Start, RShift = Select.
 # Default keys P2: WASD = D-pad, Q = A, E = B, P = Start, R = Select (L before v2.7.3).
@@ -219,7 +222,7 @@ what a session needs before it knows what it is doing.
 | the MiSTer sibling — the RTL, Quartus, the rungs, the bitstream | [`docs/agents/mister-cosim.md`](docs/agents/mister-cosim.md) | 38 |
 | accuracy work — AccuracyCoin, blargg, sub-tests, goldens, the PPU | [`docs/agents/accuracy-oracle.md`](docs/agents/accuracy-oracle.md) | 24 |
 | reading a result — what it does and does not prove | [`docs/agents/measurement-discipline.md`](docs/agents/measurement-discipline.md) | 22 |
-| the shell, `pre-commit`, `gh`, `/tmp`, long-running jobs | [`docs/agents/tooling-traps.md`](docs/agents/tooling-traps.md) | 26 |
+| the shell, `pre-commit`, `gh`, `/tmp`, long-running jobs | [`docs/agents/tooling-traps.md`](docs/agents/tooling-traps.md) | 30 |
 | a dependency bump, or why one is blocked | [`docs/agents/dependencies.md`](docs/agents/dependencies.md) | 5 |
 | a performance claim, or a debugger panel that outlives its `Nes` | [`docs/agents/perf-and-panels.md`](docs/agents/perf-and-panels.md) | 9 |
 

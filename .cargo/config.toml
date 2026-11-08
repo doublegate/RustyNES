@@ -41,9 +41,78 @@ incompatible-rust-versions = "fallback"
 # be eaten by `cargo run`) is forwarded to the emulator binary, not to Cargo.
 # `full-build` takes no binary args, so it has no trailing `--`. These names do
 # not collide with any built-in cargo subcommand.
+#
+# `full-native` is the same `full` binary tuned for THIS machine's CPU: the
+# `release-native` profile (inherits `release`, so fat LTO / one codegen unit /
+# panic=abort / opt-level 3 all carry over) plus `-C target-cpu=native`. Cargo
+# profiles cannot carry rustflags on stable, so the flag rides on the alias as
+# `--config` overrides; the separate profile keeps the host-tuned objects in
+# `target/release-native/`, out of the portable release cache, and the binary
+# lands at `target/release-native/rustynes`. NOT portable: never ship it.
+#
+# WHY THE ALIAS SETS THE FLAG MORE THAN ONCE (measured 2026-11-06). Cargo reads
+# a matching `target.<triple>.rustflags` IN PREFERENCE TO `build.rustflags`, so a
+# user-level `~/.cargo/config.toml` with a per-triple `rustflags` (the
+# maintainer's sets `target-cpu=native` plus mold there) made a
+# `build.rustflags`-only alias a silent no-op: the first `full-v3` build compiled
+# every crate (403 rustc calls) with `native` and none with `x86-64-v3`. The
+# alias therefore also sets the per-triple key for EVERY x86-64 host the project
+# builds on -- `x86_64-unknown-linux-gnu`, `x86_64-apple-darwin`,
+# `x86_64-pc-windows-msvc`, `x86_64-pc-windows-gnu` (PR #641 review: a Linux-only
+# key left an Intel Mac or a Windows user's own per-triple flags in charge). A
+# key for a triple not being built is inert. Command-line `--config` arrays are
+# APPENDED after the user file's (observed order on the rustc line:
+# `target-cpu=native ... fuse-ld=mold ... target-cpu=x86-64-v3`), and rustc takes
+# the LAST `-C target-cpu`, so the alias wins while the user's linker flags
+# survive. Two caveats, measured 2026-11-07 (PR #641 review): the merge needs
+# the user's `rustflags` to be an ARRAY -- a string-form `rustflags = "-C ..."`
+# makes Cargo refuse the configuration ("could not load Cargo configuration"),
+# so convert it to `["-C", "..."]`; and a `CARGO_TARGET_<TRIPLE>_RUSTFLAGS`
+# environment variable does NOT outrank the alias (its flags land between the
+# file's and the alias's, which stays last). What DOES defeat it: a `RUSTFLAGS`
+# or `CARGO_ENCODED_RUSTFLAGS` environment variable (the latter even when set to
+# an empty value) replaces all of it, and a matching `[target.'cfg(...)']` table
+# in a user config is appended AFTER the triple flags, so a `target-cpu` there
+# wins (measured: `native ... x86-64-v3 ... znver1`). Check
+# with `-v` that the last `-C target-cpu` on the final rustc line is the one you
+# asked for. `full-baseline` and `full-v3` are x86-64 aliases: an Apple Silicon
+# or other ARM host cannot target `x86-64` or `x86-64-v3`. `full-native` is valid
+# everywhere, so it also carries the `aarch64-apple-darwin` and
+# `aarch64-unknown-linux-gnu` keys.
+#
+# The CPU flag changes no emulated output (Rust enables no fast-math / FP
+# contraction under target-cpu), and no speed claim is made: none is measured,
+# and no harness here compares CPU targets yet. `scripts/perf/ab_check.sh`
+# compares two REVISIONS at one CPU configuration (it runs `cargo bench` without
+# these profiles or flags), so a CPU-target comparison means timing the three
+# binaries themselves under its evidence rule (`docs/performance.md`). On a
+# machine whose own config already sets `target-cpu=native`, plain `full-build`
+# is ALREADY a native build, so the baseline must pin `target-cpu=x86-64`.
+#
+# `full-v3` is the portable-but-modern build: `-C target-cpu=x86-64-v3` in the
+# `release-v3` profile, at `target/release-v3/rustynes`. It needs the WHOLE
+# x86-64-v3 level (AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, MOVBE, XSAVE on top
+# of v2), not merely AVX2: Intel Core from Haswell and AMD from Excavator / Zen,
+# but not the many Pentium / Celeron / Atom parts of those years that lack AVX.
+# On Linux, `/lib64/ld-linux-x86-64.so.2 --help` lists `x86-64-v3 (supported)`
+# on a host that has it. On such a host `native` enables everything v3 does PLUS
+# the host's remaining features and its scheduling model (measured on the
+# maintainer's i9-10850K, which rustc reports as `skylake`: 26 target features
+# under native, 18 under v3), so v3 is the one to copy to another machine, not
+# a faster one for this machine. Same override and precedence traps.
+#
+# `full-baseline` pins `-C target-cpu=x86-64`, the target the shipped release
+# binaries use, in the `release-baseline` profile, at
+# `target/release-baseline/rustynes`. It is the honest "before" column for a
+# three-way comparison (`full-baseline` vs `full-v3` vs `full-native`) on any
+# x86-64 machine, including one whose own cargo config makes plain `full-build`
+# native.
 [alias]
 full-run = "run --release -p rustynes-frontend --features full --"
 full-build = "build --release -p rustynes-frontend --features full"
+full-baseline = "build --profile release-baseline -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-apple-darwin.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-pc-windows-msvc.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-pc-windows-gnu.rustflags=[\"-C\",\"target-cpu=x86-64\"]"
+full-native = "build --profile release-native -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-apple-darwin.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-pc-windows-msvc.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-pc-windows-gnu.rustflags=[\"-C\",\"target-cpu=native\"] --config target.aarch64-apple-darwin.rustflags=[\"-C\",\"target-cpu=native\"] --config target.aarch64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=native\"]"
+full-v3 = "build --profile release-v3 -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-apple-darwin.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-pc-windows-msvc.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-pc-windows-gnu.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"]"
 
 # Resilient crates.io downloads — the permanent fix for the recurring CI flake.
 # Jobs intermittently failed fetching crates with curl errors like
