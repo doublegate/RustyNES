@@ -90,7 +90,10 @@ reported with its cause, in this order:
 3. else the CPU cycle count.
 
 `rustynes patch-regress <ROM> <PATCH.bps> <MOVIE.rnm> [--pins FILE]` runs it:
-exit 0 for no divergence, 4 for a reported one, 1 for an error.
+exit 0 for no divergence, 4 for a reported one, 1 for an error. A patch whose
+metadata names a RAM-pin sidecar needs it: without `--pins` the command
+refuses, naming the file (`pins_without_sidecar`), rather than replaying
+without the pins and reporting them as a regression.
 
 ## 4. Gates
 
@@ -238,6 +241,14 @@ requires the check before the start.
 
 RAM pins alone do not refuse a recording: they are raw cheats, which a
 recording already excludes.
+
+Movie **playback** and **netplay** (host, join, spectate, the browser lobby)
+are refused over live edits too (`EmuCore::session_refusal`, added after
+the PR #646 review): both run the console as it stands, edited bytes included, while
+the movie and the netplay identity name the clean ROM's hash, so a movie
+would replay against bytes it was not recorded on and a peer or viewer would
+desync. `app::tests::every_playback_and_netplay_entry_point_refuses_live_rom_edits`
+pins every entry point the same way.
 
 **Reset edits** (memory panel, PRG-ROM / CHR-ROM views) queues
 `DebugPoke::RomReset`, applied under the same gate as an edit: the clean

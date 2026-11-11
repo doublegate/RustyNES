@@ -94,6 +94,16 @@ pub const RECORDING_REFUSED_FOR_ROM_EDITS: &str = "the ROM has live debugger edi
      patch and load the patched ROM, or reset the edits (Memory panel, PRG-ROM / CHR-ROM, \
      Reset edits), before recording a movie";
 
+/// v3.7.0 (#646 review) — why playback and netplay refuse live ROM edits.
+///
+/// Both run the console as it stands, while the movie
+/// and the netplay identity name the clean ROM's hash, so a movie would
+/// replay against bytes it was not recorded on and a netplay peer or viewer
+/// would desync on the first edited byte read.
+pub const SESSION_REFUSED_FOR_ROM_EDITS: &str = "the ROM has live debugger edits: save the \
+     patch and load the patched ROM, or reset the edits (Memory panel, PRG-ROM / CHR-ROM, \
+     Reset edits), before playing a movie or starting netplay";
+
 /// v3.7.0 — why a queued [`DebugPoke::Rom`] write is refused this frame, or
 /// `None` when it may land.
 ///
@@ -1158,6 +1168,18 @@ impl EmuCore {
     pub fn recording_refusal(&self) -> Option<&'static str> {
         self.has_rom_edits()
             .then_some(RECORDING_REFUSED_FOR_ROM_EDITS)
+    }
+
+    /// v3.7.0 (#646 review) — why movie playback or a netplay session
+    /// (host, join, spectate, the browser lobby) may not start now, or
+    /// `None`: the same rule as [`Self::recording_refusal`], since each runs
+    /// the edited console under the clean ROM's hash. The source-shape test
+    /// `every_playback_and_netplay_entry_point_refuses_live_rom_edits` checks
+    /// every entry point asks it.
+    #[must_use]
+    pub fn session_refusal(&self) -> Option<&'static str> {
+        self.has_rom_edits()
+            .then_some(SESSION_REFUSED_FOR_ROM_EDITS)
     }
 
     /// v3.7.0 — start a live-patch recorder against `image`, the bytes the
@@ -4030,6 +4052,7 @@ mod tests {
         }];
         core.produce_one_frame(&inputs, &mut sinks);
         assert_eq!(core.recording_refusal(), None, "pins are not ROM edits");
+        assert_eq!(core.session_refusal(), None, "pins do not refuse a session");
         // A ROM edit lands: recording is refused, naming the way out.
         core.debug_pokes.push(DebugPoke::Rom {
             space: rustynes_core::RomSpace::Chr,
@@ -4040,6 +4063,14 @@ mod tests {
         let why = core.recording_refusal().expect("refused with an edit");
         assert!(
             why.contains("save the patch") && why.contains("reset the edits"),
+            "{why}"
+        );
+        // v3.7.0 (#646 review): playback and netplay are refused too.
+        let why = core
+            .session_refusal()
+            .expect("a session is refused with an edit");
+        assert!(
+            why.contains("movie") && why.contains("netplay") && why.contains("reset the edits"),
             "{why}"
         );
         // A TAStudio session refuses the reset (and any edit) like a movie.

@@ -529,6 +529,25 @@ pub fn sidecar_reference(metadata: &str) -> Option<(String, String)> {
     Some((attr("file")?, attr("sha256")?))
 }
 
+/// v3.7.0 (#646 review) — the pins a regression replay runs with when no
+/// sidecar was given.
+///
+/// None, unless the patch's metadata names one, which is an error naming
+/// the file. A patch recorded with RAM pins replayed without
+/// them reports the pins as a regression that is not there (or hides one).
+///
+/// # Errors
+///
+/// [`RecorderError::SidecarMismatch`] naming the sidecar the patch requires.
+pub fn pins_without_sidecar(metadata: Option<&str>) -> Result<Vec<RawCheat>, RecorderError> {
+    match metadata.and_then(sidecar_reference) {
+        Some((name, _)) => Err(RecorderError::SidecarMismatch(format!(
+            "the patch was recorded with RAM pins in {name}: pass it with --pins"
+        ))),
+        None => Ok(Vec::new()),
+    }
+}
+
 /// Check a sidecar against the patch's metadata and parse its pins.
 ///
 /// # Errors
@@ -853,6 +872,16 @@ mod tests {
         // The metadata names it by name and hash, and refuses another.
         let pins = verify_sidecar(&out.metadata, &name, &text).expect("matches");
         assert!(verify_sidecar(&out.metadata, "other.toml", &text).is_err());
+        // Without the sidecar, a regression replay refuses, naming it; a patch
+        // with no pins needs none.
+        let why = pins_without_sidecar(Some(&out.metadata)).expect_err("pins required");
+        assert!(why.to_string().contains("probe.pins.toml"), "{why}");
+        let plain = PatchRecorder::new(&clean).expect("iNES").finish("plain");
+        assert_eq!(
+            pins_without_sidecar(Some(&plain.metadata)).expect("no pins"),
+            Vec::new()
+        );
+        assert_eq!(pins_without_sidecar(None).expect("no metadata"), Vec::new());
         assert!(verify_sidecar(&out.metadata, &name, &text.replace("92", "93")).is_err());
         // The metadata is in the patch itself, where `bps_metadata` finds it.
         let meta = crate::patch::bps_metadata(&out.bps).expect("metadata");

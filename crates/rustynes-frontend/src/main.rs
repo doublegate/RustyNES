@@ -174,7 +174,10 @@ fn run_patch_regress(
         let movie = rustynes_core::Movie::deserialize(&read_capped(movie_path)?)
             .map_err(|e| format!("{}: {e}", movie_path.display()))?;
         let pins = pins_path.map_or_else(
-            || Ok(Vec::new()),
+            || {
+                let meta = patch::bps_metadata(&bps).map(String::from_utf8_lossy);
+                patch_recorder::pins_without_sidecar(meta.as_deref()).map_err(|e| e.to_string())
+            },
             |p| -> Result<_, String> {
                 let text = String::from_utf8(read_capped(p)?)
                     .map_err(|e| format!("{} is not UTF-8 text: {e}", p.display()))?;

@@ -58,7 +58,9 @@ cycle-accurate core later replaced.
   name and SHA-256. `rustynes patch-regress <ROM> <PATCH> <MOVIE> [--pins]`
   replays a reference movie on the clean and the patched ROM and reports the
   first frame they differ and why (a RAM address with both values, else a
-  pixel, else the cycle count). Spec: `docs/live-patch-recorder.md`.
+  pixel, else the cycle count). A patch recorded with RAM pins needs its
+  sidecar: without `--pins` the command refuses, naming the file. Spec:
+  `docs/live-patch-recorder.md`.
 
 - **Live ROM editing in the debugger** (`T-HACK-BPS-RECORDER`): the Memory
   panel gains PRG-ROM and CHR-ROM views, by offset in the ROM file, whose
@@ -72,8 +74,11 @@ cycle-accurate core later replaced.
   start while an edit exists, since the movie would name the clean ROM:
   save the patch and load the patched ROM, or use **Reset edits**, which puts
   the clean bytes back. Switching RetroAchievements hardcore on is refused the
-  same way, because the power cycle hardcore makes keeps the edited ROM. RAM
-  pins alone do not block either. Supported on
+  same way, because the power cycle hardcore makes keeps the edited ROM, and
+  so are movie playback and netplay (host, join, spectate, the browser lobby):
+  both run the edited console under the clean ROM's hash, so a movie would
+  replay against the wrong bytes and a peer would desync. RAM pins alone
+  block none of these. Supported on
   204 mapper numbers for PRG and 175 for CHR;
   CHR-RAM boards, self-flashing boards (GTROM, flashable UNROM 512), the FFE
   copiers, FDS and NSF are not. Save states carry no ROM, so loading one on
@@ -94,9 +99,13 @@ cycle-accurate core later replaced.
   On the desktop the netplay panel publishes a hosted match under a relay
   match id and watches one by that id; it has no seek or rewind buttons yet,
   though the client supports both. The publish key is minted once and kept
-  (`[netplay] edge_publish_key`), so a host can re-host its own match id, and
-  a refused or dropped publish is reported in the panel while the match
-  carries on. Viewers present no key, so anyone with a match id can watch:
+  (`[netplay] edge_publish_key`), so a host can re-host its own match id; a
+  re-hosted match starts a fresh log on the relay, and the previous match's
+  viewers are told it restarted. The host sends inputs in 8-frame batches
+  (7.5 messages a second at 60 Hz, inside the relay's limit), and a refused,
+  dropped or stalled publish is reported in the panel while the match carries
+  on. The relay stores only a batch's new frames, and naming an id nobody
+  claimed stores nothing. Viewers present no key, so anyone with a match id can watch:
   a host that publishes with the match id empty gets a random 128-bit one,
   shown in the status bar, and the panel warns when a typed id is short
   enough to guess. The mobile apps have no spectating UI

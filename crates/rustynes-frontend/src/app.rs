@@ -3399,6 +3399,14 @@ impl App {
             eprintln!("rustynes: movie play: no ROM loaded");
             return;
         }
+        // v3.7.0 (#646 review) — no playback over live ROM edits.
+        if let Some(why) = guard.session_refusal() {
+            drop(guard);
+            eprintln!("rustynes: movie play refused: {why}");
+            self.ui
+                .set_status(StatusMessage::error(format!("Playback refused: {why}")));
+            return;
+        }
         let total = movie.len();
         // v2.9.0 — the seek replaces the save RAM with the movie's, which
         // must not reach the `.sav` (`EmuCore::start_sandboxed_session`).
@@ -3607,6 +3615,14 @@ impl App {
         let total = movie.len();
         {
             let mut guard = self.emu.lock();
+            // v3.7.0 (#646 review) — no playback over live ROM edits.
+            if let Some(why) = guard.session_refusal() {
+                drop(guard);
+                eprintln!("rustynes: movie import refused: {why}");
+                self.ui
+                    .set_status(StatusMessage::error(format!("Playback refused: {why}")));
+                return;
+            }
             // v2.9.0 — see `EmuCore::start_sandboxed_session`.
             let mut seek_error = None;
             let began = guard.start_sandboxed_session(|emu| {
@@ -4636,6 +4652,11 @@ impl App {
         };
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
+        // v3.7.0 (#646 review) — no playback over live ROM edits.
+        if let Some(why) = emu.session_refusal() {
+            crate::wasm_io::log(&format!("movie playback refused: {why}"));
+            return;
+        }
         // Review round 9 on #640: see `handle_movie_play_toggle`.
         emu.sync_idle_player_options();
         let Some(nes) = emu.nes.as_mut() else {
@@ -8083,6 +8104,11 @@ impl App {
                 host: _,
                 num_players,
             } => {
+                let refused = self.emu.lock().session_refusal();
+                if let Some(why) = refused {
+                    crate::wasm_io::log(&format!("rustynes: netplay refused: {why}"));
+                    return;
+                }
                 let Some(identity) = self.emu.lock().netplay_identity() else {
                     crate::wasm_io::log("rustynes: browser netplay needs a loaded ROM first");
                     return;
@@ -8195,6 +8221,19 @@ impl App {
                 if self.emu.lock().nes.is_none() =>
             {
                 eprintln!("rustynes: netplay needs a loaded ROM first");
+            }
+            // v3.7.0 (#646 review) — no session over live ROM edits: the
+            // identity names the clean ROM, the console runs the edited one.
+            NetplayRequest::Host { .. }
+            | NetplayRequest::Join { .. }
+            | NetplayRequest::Spectate { .. }
+            | NetplayRequest::EdgeSpectate { .. }
+                if self.emu.lock().session_refusal().is_some() =>
+            {
+                let why = self.emu.lock().session_refusal().unwrap_or_default();
+                eprintln!("rustynes: netplay refused: {why}");
+                self.ui
+                    .set_status(StatusMessage::error(format!("Netplay refused: {why}")));
             }
             NetplayRequest::Host { .. }
             | NetplayRequest::Join { .. }
@@ -13115,6 +13154,56 @@ mod tests {
         for known in [
             "handle_movie_record_toggle_wasm",
             "handle_movie_branch_wasm",
+        ] {
+            assert!(
+                sites.iter().any(|s| s == known),
+                "{known} left the sweep: {sites:?}"
+            );
+        }
+    }
+
+    /// v3.7.0 (#646 review) — every production site that starts movie
+    /// playback or a netplay session asks `EmuCore::session_refusal` first:
+    /// both run the console as it stands under the clean ROM's hash, so a
+    /// live ROM edit would replay a movie against the wrong bytes or desync a
+    /// peer. The rule itself is tested in `emu::tests`.
+    #[test]
+    fn every_playback_and_netplay_entry_point_refuses_live_rom_edits() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]\nmod tests {")
+            .map_or(APP_SRC, |(before, _)| before);
+        let starts = [
+            "movie.start_playback(",
+            "BrowserNetplay::new(",
+            "self.start_edge_spectate(",
+            "self.netplay.start_host(",
+            "self.netplay.start_join(",
+            "self.netplay.start_spectate(",
+        ];
+        let mut sites = Vec::new();
+        for chunk in production.split("\n    fn ").skip(1) {
+            let name = chunk.split('(').next().unwrap_or_default().to_string();
+            // `start_edge_spectate` is reached only through the guarded
+            // `handle_netplay_request`; its own body starts the session.
+            if name == "start_edge_spectate" {
+                continue;
+            }
+            let Some(first) = starts.iter().filter_map(|s| chunk.find(s)).min() else {
+                continue;
+            };
+            let check = chunk
+                .find("session_refusal()")
+                .unwrap_or_else(|| panic!("{name} starts a session without session_refusal"));
+            assert!(check < first, "{name}: session_refusal must come first");
+            sites.push(name);
+        }
+        for known in [
+            "handle_movie_play_toggle",
+            "handle_movie_import",
+            "start_movie_from_bytes",
+            "handle_lobby_request",
+            "handle_netplay_request",
         ] {
             assert!(
                 sites.iter().any(|s| s == known),
