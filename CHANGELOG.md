@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
+
 ### Breaking
 
 - **Netplay protocol 10** (handshake magic `"RN10"`): desync forensics and
@@ -69,7 +71,9 @@ cycle-accurate core later replaced.
   branch, the menu and replay-panel buttons) or a TAStudio session cannot
   start while an edit exists, since the movie would name the clean ROM:
   save the patch and load the patched ROM, or use **Reset edits**, which puts
-  the clean bytes back. RAM pins alone do not block recording. Supported on
+  the clean bytes back. Switching RetroAchievements hardcore on is refused the
+  same way, because the power cycle hardcore makes keeps the edited ROM. RAM
+  pins alone do not block either. Supported on
   204 mapper numbers for PRG and 175 for CHR;
   CHR-RAM boards, self-flashing boards (GTROM, flashable UNROM 512), the FFE
   copiers, FDS and NSF are not. Save states carry no ROM, so loading one on
@@ -86,8 +90,14 @@ cycle-accurate core later replaced.
   pause; a viewer over a direct link can also join from a state checkpoint.
   The relay carries inputs only, never frames or states, with per-address and
   daily limits and a kill switch (`SPECTATE_ENABLED`). Native client
-  (`EdgeRelayClient`, `EdgeSpectator`, `EdgePublisher`) in `rustynes-netplay`;
-  the desktop and mobile UI for it is not written yet. Specs:
+  (`EdgeRelayClient`, `EdgeSpectator`, `EdgePublisher`) in `rustynes-netplay`.
+  On the desktop the netplay panel publishes a hosted match under a relay
+  match id and watches one by that id; it has no seek or rewind buttons yet,
+  though the client supports both. The publish key is minted once and kept
+  (`[netplay] edge_publish_key`), so a host can re-host its own match id, and
+  a refused or dropped publish is reported in the panel while the match
+  carries on. The mobile apps have no spectating UI
+  yet. The relay needs the hosted services deployed. Specs:
   `docs/netplay-session.md` section 5 and `services/hosted/README.md`.
 
 - **`cargo full-native`**: the `cargo full-build` binary (every native
@@ -127,8 +137,15 @@ cycle-accurate core later replaced.
   - **iOS:** box art from libretro-thumbnails on request, the same matching
     rules as Android; a home-screen widget that reopens the last game; and the
     game on an external display (iOS 16-26), with the phone as the controller.
-    None of the new Swift has been compiled yet: the iOS CI build is its first
-    compile, and the widget needs an App ID and App Group before a signed build.
+    The new Swift compiles: the iOS workflow's Simulator build on this branch
+    (run 42950085751, 2026-11-11) built the app and the widget extension
+    unsigned. No device has run any of it, and the widget needs an App ID and
+    App Group before a signed build.
+- **`nes_golden_export --bios <path>`** (`rustynes-cosim`): exports goldens
+  of a Famicom Disk System image booted with a given 8 KiB BIOS, through a
+  new `Oracle::new_disk`. The MiSTer core's FDS gates compare against it,
+  on stimuli whose synthetic BIOS is the test program, so Nintendo's BIOS is
+  never needed. Every existing manifest is byte-identical.
 - **The per-game picture corrections can be switched off on Android and iOS**
   (`T-MOBILE-GAME-CORRECTIONS`, ADR 0051): Settings, "Per-game picture
   corrections", as on the desktop and in libretro. A movie or netplay session
