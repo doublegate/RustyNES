@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -e
-cd /home/parobek/Code/Commercial_Private-Projects/RustyNES
+cd "$(dirname "$0")/../.."  # the repository root
 G=/usr/bin/git
 $G reset --soft HEAD~1
 $G restore --staged .

@@ -46,6 +46,7 @@ appends a colored "Examples" + "Keyboard" footer (`color-print`'s `cstr!`).
 | `rustynes dump-check <ROM> [--dat F] [--nes20db F] [--frames N]` | v3.5.0: a dump's verification report (`docs/dump-check.md`); exit 0 clean, 4 findings, 1 error. |
 | `rustynes stems <ROM> [--out DIR] [--frames N \| --movie M] [--rate HZ] [--filter M] [--bios F]` | v3.6.0: one WAV per channel, the expansion chip and the mixer's interaction term, beside the mix they sum to (`docs/audio-stems.md`); exit 0 written, 4 the mix check failed, 1 error. |
 | `rustynes nsf-rip <ROM> [--out F.nsf] [--frames N \| --movie M] [--name T] [--artist T] [--copyright T]` | v3.6.0: propose a game's music driver and write a verified NSF (`docs/audio-stems.md`); exit 0 done, 4 no driver / not imageable / not verified, 1 error. |
+| `rustynes patch-regress <ROM> <PATCH> <MOVIE> [--pins TOML]` | v3.7.0: replay a movie recorded on the clean ROM on it and on the BPS-patched ROM, and report the first frame after which they differ and why: a RAM address with both values, else a pixel, else the cycle count (`docs/live-patch-recorder.md`); `--pins` checks the RAM-pin sidecar against the patch's metadata and applies it on the patched side, and a patch that names a sidecar is refused without it; exit 0 no divergence, 4 a divergence reported, 1 an error. |
 
 Help topics (`controls`, `hotkeys`, `gamepad`, `features`, `mappers`, `config`,
 `scripting`, `netplay`, `about`) come from a single structured registry
@@ -2054,6 +2055,30 @@ workstream rides on.
   work-RAM poke/freeze (applied like a cheat), so the no-edit path is
   byte-identical and determinism holds.
 
+  **v3.7.0 (`T-HACK-BPS-RECORDER`): live ROM editing.** Two more domains,
+  **PRG-ROM** and **CHR-ROM**, list the cartridge's ROM by offset within that
+  section of the image (six hex digits; not a CPU / PPU address) and are
+  editable. An edit is not written by the panel: it is queued as
+  `DebugPoke::Rom` and applied after the next frame in the gated post-frame
+  stage, through `Nes::debug_poke_rom`, which writes the board's own ROM buffer
+  in place (the CPU / PPU see the byte from the next access). Its gate,
+  `emu::rom_write_refusal`, refuses it under RA hardcore, while a movie records
+  or plays or TAStudio is open (read from the movie state, not only from
+  `writes_locked`), and
+  while `writes_locked` (netplay, TAS replay); a refused write is drained, not
+  deferred, and its reason shows in the panel. Each write that lands is fed to
+  the session's `PatchRecorder` (`EmuCore::rom_patch`, started from the clean
+  image at every ROM load), and **Save patch...** writes its BPS patch and,
+  with RAM pins (the enabled raw cheats and freezes), the `.pins.toml`
+  sidecar. The button only raises a request
+  (`DebuggerOverlay::take_save_patch_request`); `App::save_live_patch` clones
+  the recorder under a brief lock after the egui pass, drops the lock, and
+  writes the files (desktop only). Boards that do not offer a section (CHR-RAM,
+  self-flashing boards, the FFE copiers, FDS, NSF) show why instead of a list.
+  Save states carry no ROM, so a rewind keeps an edit and a state loaded on the
+  clean image runs the clean ROM. Spec: `docs/live-patch-recorder.md`
+  section 5.
+
 - **RAM Search + RAM Watch (C3)** — the **Memory Compare** panel (Debug → Memory
   Compare) is upgraded from the v1.3.0 changed/unchanged search into the
   BizHawk/FCEUX-class tool. **RAM Search** now has an **operator × compare-to
@@ -2769,6 +2794,13 @@ overclock is recorded as set and replayed with it.
 - **Raw RAM cheats are suspended while a movie records or plays.** They are
   frontend pokes after each frame that a `.rnm` cannot carry. Game Genie codes
   are core state and are recorded.
+- **No recording over live ROM edits (v3.7.0).** While the debugger's
+  live-patch recorder holds a PRG / CHR edit, F6 / F8 (and the menu and
+  replay-panel buttons that call them) and opening TAStudio are refused with
+  the reason on the status bar (`EmuCore::recording_refusal`): a movie stamps
+  the clean ROM's identity and would replay as another game on it. Save the
+  patch and load the patched ROM, or use the memory panel's **Reset edits**.
+  RAM pins alone do not refuse it. `docs/live-patch-recorder.md` section 5.
 - **Power-on movies keep the options through their power cycle.**
   `power_on_for_movie` captures the options, power-cycles, and re-applies the
   live ones. Until v2.9.8 `Nes::power_cycle` rebuilt the PPU and dropped OAM
@@ -2910,6 +2942,7 @@ compared.
 | `set_disk_write_protected` | yes: `$4032` bit 2 and dropped writes | not recorded: a property of the medium the host sets at load, never during play |
 | Reset / Power Cycle (`reset`, `power_cycle`) | yes | not recorded; refused while a movie records or plays (`session_policy`) |
 | Raw RAM cheats (frontend) | yes: post-frame pokes | suspended while a movie records or plays |
+| Live ROM edits (`Nes::debug_poke_rom`, debugger) | yes: the program and patterns | not recorded; refused while a movie records or plays or TAStudio is open, and a recording cannot start while one exists (v3.7.0) |
 | `set_fast_dotloop` | no: byte-identical by proof (`fast_dotloop_diff`) | preserved across `power_on_for_movie`, not recorded |
 | `set_custom_palette` | no: presentation (the RGBA LUT) | not recorded |
 | `set_apu_channel_mask` / `set_apu_channel_gain` / `set_apu_filter_model` | no: applied to the mix after synthesis, never fed back | not recorded |
@@ -3201,8 +3234,14 @@ skips the step if hardcore is switched on while the sheet is open
 no debugger. Android's auto-resume of the on-background state goes through
 `load_state`, so in hardcore it is refused and the game starts from power-on.
 RA asks a resumed session to drop to casual instead; refusing the resume keeps
-hardcore honest but differs from the letter, which is left to the maintainer as
-`T-RA-HARDCORE-RESUME`.
+hardcore honest but differs from the letter, which was left to the maintainer as
+`T-RA-HARDCORE-RESUME`. **Decided 2026-11-08: keep the refusal.** v3.7.0 found
+that the refusal was not where this paragraph put it: the RA session is created
+after the controller is prepared, so `load_state` succeeded and the hardcore
+switch then power-cycled the console. The app now refuses the auto-resume itself
+when RA and hardcore are both on (`AutoResume.decide`, under JVM test) and says
+in one line why the game started from power-on (`docs/android.md`, "The mobile
+extras").
 
 Allowed in hardcore: saving a state, recording a movie, fast forward, reset and
 power cycle, run-ahead and netplay (RA lists neither), and pausing, which

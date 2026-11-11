@@ -62,6 +62,25 @@ Android and iOS room codes, in builds that point at the hosted lobby).
   created, and when the lobby is idle, the counters are discarded as the
   service is unloaded from memory.
 
+### Spectate relay (v3.7.0)
+
+Used when a host publishes a match for spectators, and when you watch one
+through the relay, in builds that point at the hosted services.
+
+- **It receives:** your IP address; the match id; from the host, the match's
+  identity (fingerprints of the game file and of the emulation settings, and
+  the emulator version) and every player's confirmed controller input, frame
+  by frame, and a key the host's app chose at random to claim the match.
+- **It passes on:** the identity and the inputs, to everyone who connects to
+  the same match id as a viewer. Anyone who knows or guesses the match id can
+  watch. Never video, audio or a save state: the relay carries inputs only.
+- **It keeps:** the match's identity and input log, and a SHA-256 hash of the
+  host's key (never the key), until the host has been gone for an hour, when
+  the whole match is deleted. A pseudonymous key derived from your IP address
+  (a salted SHA-256 hash) limits connections per address: in memory for one
+  minute per match; and, for a host claiming a new match, in the services'
+  budget counter for one hour (deleted within two), as for TURN credentials.
+
 ### TURN relay credentials and the relay itself
 
 Used when your device asks the hosted service for relay credentials, which

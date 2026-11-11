@@ -39,6 +39,11 @@ pub trait Mapper: Send {
     // the bus caches the answer and skips the dispatch for every other board).
     fn snoops_ppu_reads(&self) -> bool { false }
     fn notify_ppu_read(&mut self, addr: u16) {}
+
+    // v3.7.0 (`T-HACK-BPS-RECORDER`): the board's own ROM buffer, in image
+    // order, for the debugger's live ROM editor; `None` = not supported.
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> { None }
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> { None }
 }
 
 // `#[non_exhaustive]` since v3.0.0: outside `rustynes-mappers`, build one with
@@ -64,6 +69,21 @@ pub struct Cartridge {
 
 pub enum Mirroring { Horizontal, Vertical, SingleScreenA, SingleScreenB, FourScreen, MapperControlled }
 ```
+
+**`debug_prg_rom_mut` / `debug_chr_rom_mut` (v3.7.0).** The debugger's live
+ROM editor (`Nes::debug_poke_rom`, `debug-hooks`) writes through these. An
+override returns the buffer the board's `cpu_read` / `ppu_read` reads, equal to
+the parsed cartridge's `prg_rom` / `chr_rom` byte for byte (no padding, no
+mirrored copy), and only when it holds ROM: a CHR-RAM board, a self-flashing
+board's PRG (GTROM, flashable UNROM 512) and the FFE copiers keep the default.
+Boards share no ROM storage type, so each overrides them with a one-line
+`debug_rom_slice(&mut self.<field>, <is ROM>)`; wrappers forward to their
+inner board. **A new board with ROM in a plain buffer should override them.**
+`every_rom_buffer_a_board_offers_is_the_image_and_the_live_one` (in
+`mapper.rs`) checks both promises for every mapper number the parser accepts
+and pins the numbers that do not offer each section (the list is in
+`docs/live-patch-recorder.md` section 5). Nothing in the emulation calls
+them.
 
 **`chr_reads_are_pure` (v3.1.0).** The PPU's "disable sprite limit" option
 makes extra, display-only pattern reads, and only on boards that report

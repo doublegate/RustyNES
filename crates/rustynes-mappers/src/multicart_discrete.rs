@@ -188,6 +188,10 @@ impl Multicart15 {
 }
 
 impl Mapper for Multicart15 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     // Battery save: the 8 KiB PRG-RAM at `$6000-$7FFF` (core audit 5.1e).
     fn sram(&self) -> &[u8] {
         &self.prg_ram
@@ -403,6 +407,10 @@ impl Multicart61 {
 }
 
 impl Mapper for Multicart61 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -573,6 +581,14 @@ impl Multicart62 {
 }
 
 impl Mapper for Multicart62 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -731,6 +747,14 @@ impl Multicart200 {
 }
 
 impl Mapper for Multicart200 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -914,6 +938,14 @@ impl Multicart201 {
 }
 
 impl Mapper for Multicart201 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -1097,6 +1129,14 @@ impl Multicart202 {
 }
 
 impl Mapper for Multicart202 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -1296,6 +1336,14 @@ impl Multicart203 {
 }
 
 impl Mapper for Multicart203 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -1479,6 +1527,14 @@ impl Multicart212 {
 }
 
 impl Mapper for Multicart212 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -1681,6 +1737,14 @@ impl Multicart213 {
 }
 
 impl Mapper for Multicart213 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -1856,6 +1920,14 @@ impl Multicart214 {
 }
 
 impl Mapper for Multicart214 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -2014,6 +2086,14 @@ impl Multicart58 {
 }
 
 impl Mapper for Multicart58 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -2172,6 +2252,14 @@ impl Multicart60 {
 }
 
 impl Mapper for Multicart60 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -2312,6 +2400,10 @@ impl Multicart231 {
 }
 
 impl Mapper for Multicart231 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -2489,6 +2581,14 @@ impl Maxi15M234 {
 }
 
 impl Mapper for Maxi15M234 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -2639,6 +2739,14 @@ impl Multicart225 {
 }
 
 impl Mapper for Multicart225 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -2847,6 +2955,10 @@ impl Multicart226 {
 }
 
 impl Mapper for Multicart226 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -3058,6 +3170,10 @@ impl Multicart227 {
 }
 
 impl Mapper for Multicart227 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -3250,6 +3366,14 @@ impl Multicart229 {
 }
 
 impl Mapper for Multicart229 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -3411,6 +3535,10 @@ impl Multicart233 {
 }
 
 impl Mapper for Multicart233 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -3636,6 +3764,14 @@ impl DiscreteMapper {
 }
 
 impl Mapper for DiscreteMapper {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -4052,6 +4188,14 @@ impl Bmc204 {
 }
 
 impl Mapper for Bmc204 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -4250,6 +4394,14 @@ impl Bmc11160 {
 }
 
 impl Mapper for Bmc11160 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

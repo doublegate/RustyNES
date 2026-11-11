@@ -8,7 +8,7 @@ point.
 
 > **Developer-local tooling.** This operates on a No-Intro / GoodNES NES set the
 > developer owns (default root
-> `~/Dropbox/ROMs/Nintendo Entertainment System - Famicom (2020)/`) and only ever
+> `$RUSTYNES_ROM_LIBRARY`, else `~/roms/nes`) and only ever
 > writes into the **gitignored** `tests/roms/external/` tree. **No commercial
 > Nintendo ROM is ever committed** — only the emulator's *output* (screenshots
 > and `.snap` hashes) is, and that is done by the Rust harness, not this tool.

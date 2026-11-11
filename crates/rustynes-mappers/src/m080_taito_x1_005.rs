@@ -188,6 +188,14 @@ impl TaitoX1005 {
 }
 
 impl Mapper for TaitoX1005 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     // Battery save: the 128-byte on-chip RAM at `$7F00-$7FFF` (core audit
     // IMP-09). Exposed whatever the `$7EF8/$7EF9 = $A3` enable says -- the
     // enable gates CPU access, not the battery-backed contents.

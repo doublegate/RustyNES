@@ -935,6 +935,53 @@ pub trait Mapper: Send {
             ..Default::default()
         }
     }
+
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`, live ROM writes) — the board's PRG-ROM
+    /// as one mutable buffer whose byte `i` is byte `i` of the image's PRG-ROM
+    /// section, or `None` when this board cannot offer that.
+    ///
+    /// The debugger's live ROM editor writes through this, one byte at a time,
+    /// between frames (`SystemBus::debug_poke_prg_rom`, `debug-hooks`-gated);
+    /// nothing in the emulation calls it, so a board's behaviour is unchanged
+    /// whether or not it overrides it. The contract an override promises:
+    ///
+    /// - **Image offsets.** The slice is the cartridge's `prg_rom` exactly as
+    ///   parsed: same length, same order, no padding, no mirrored copy. That
+    ///   is what lets one offset mean the same byte in the core, in the
+    ///   frontend's `PatchRecorder` and in the BPS patch it writes.
+    /// - **The live buffer.** It is the buffer [`Self::cpu_read`] reads, so a
+    ///   byte written here is the byte the CPU fetches at whatever address the
+    ///   current banking maps it to, from the next access on. No board caches
+    ///   a decoded copy of PRG, so there is nothing to invalidate.
+    /// - **ROM only.** A board whose PRG is writable by the game itself (the
+    ///   self-flashing GTROM and UNROM 512 boards, a copier's DRAM) keeps the
+    ///   default: an edit there would land in the battery save the board
+    ///   writes, which is the game's data, not the ROM's.
+    ///
+    /// `every_rom_buffer_a_board_offers_is_the_image_and_the_live_one` checks
+    /// the first two promises for every mapper number the parser builds, and
+    /// pins the set of numbers that keep the default.
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        None
+    }
+
+    /// v3.7.0 — the CHR-ROM counterpart of [`Self::debug_prg_rom_mut`]:
+    /// `Some` only when the board's pattern data IS ROM from the image
+    /// (`None` on a CHR-RAM board, where `ppu_write` already edits it and the
+    /// image holds no CHR to patch), and the slice is the buffer
+    /// [`Self::ppu_read`] reads, so the edited tile is drawn from the next
+    /// fetch on.
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        None
+    }
+}
+
+/// The shape every [`Mapper::debug_prg_rom_mut`] / [`Mapper::debug_chr_rom_mut`]
+/// override shares: the buffer when it holds ROM from the image (`is_rom`) and
+/// is not empty, else `None` (a CHR-RAM board, or a board built with no CHR).
+#[must_use]
+pub(crate) fn debug_rom_slice(buf: &mut [u8], is_rom: bool) -> Option<&mut [u8]> {
+    (is_rom && !buf.is_empty()).then_some(buf)
 }
 
 /// The default [`Mapper::load_save_data`].
@@ -1096,6 +1143,171 @@ mod caps_tests {
         }
         assert!(checked > 150, "only {checked} boards were checked");
         assert_eq!(declared, vec![228, 235], "the declared set moved");
+    }
+
+    /// v3.7.0 (live ROM writes): every buffer a board offers through
+    /// `debug_prg_rom_mut` / `debug_chr_rom_mut` keeps the two promises the
+    /// debugger's ROM editor and the BPS recorder rely on.
+    ///
+    /// 1. **Image offsets:** the slice equals the parsed cartridge's
+    ///    `prg_rom` / `chr_rom`, byte for byte and length for length, filled
+    ///    with a position-dependent pattern so a shifted, padded or mirrored
+    ///    copy cannot pass.
+    /// 2. **The live buffer:** complementing every byte of it changes what
+    ///    `cpu_peek` (`$8000-$FFFF`) / `ppu_peek` (`$0000-$1FFF`) returns, at
+    ///    one address at least, and every address that changed now reads the
+    ///    complement of its old byte. A board that handed out a copy it does
+    ///    not read would change nothing.
+    ///
+    /// Every iNES and NES 2.0 mapper number is tried at several ROM shapes,
+    /// the first the parser accepts being used, and again with CHR-RAM, where
+    /// no board may offer a CHR buffer. The numbers that offer no PRG buffer,
+    /// and those that load CHR-ROM but offer no CHR buffer, are pinned, so a
+    /// board that gains or loses support is a visible change.
+    #[test]
+    #[allow(clippy::too_many_lines)] // one sweep, two checks, two pinned sets
+    fn every_rom_buffer_a_board_offers_is_the_image_and_the_live_one() {
+        fn rom_of(id: u16, prg_16k: u8, chr_8k: u8) -> Vec<u8> {
+            let [lo, hi] = id.to_le_bytes();
+            let mut rom = vec![b'N', b'E', b'S', 0x1A, prg_16k, chr_8k, lo << 4, lo & 0xF0];
+            if hi != 0 {
+                rom[7] = (rom[7] & 0xF0) | 0x08; // NES 2.0
+                rom.push(hi & 0x0F);
+            }
+            rom.resize(16, 0);
+            let prg = usize::from(prg_16k) * 16 * 1024;
+            let chr = usize::from(chr_8k) * 8 * 1024;
+            // Position-dependent, so a shifted or mirrored copy differs.
+            for i in 0..prg + chr {
+                #[allow(clippy::cast_possible_truncation)]
+                rom.push((i ^ (i >> 8) ^ (i >> 13).wrapping_mul(0x5B)) as u8);
+            }
+            rom
+        }
+        /// Whether complementing the buffer changes what `peek` returns, with
+        /// every changed byte the complement of its old one. Tried at the
+        /// power-on banking and, if that maps none of the buffer in (a mixed
+        /// CHR-ROM / CHR-RAM MMC3 starts on its RAM banks), after each of a
+        /// spread of register writes. The buffer is restored after each try.
+        fn proves_live(
+            mapper: &mut dyn Mapper,
+            id: u16,
+            chr: bool,
+            range: core::ops::Range<u32>,
+        ) -> bool {
+            let peek = |m: &mut dyn Mapper, a: u32| {
+                #[allow(clippy::cast_possible_truncation)]
+                let a = a as u16;
+                if chr { m.ppu_peek(a) } else { m.cpu_peek(a) }
+            };
+            let flip = |m: &mut dyn Mapper| {
+                let buf = if chr {
+                    m.debug_chr_rom_mut()
+                } else {
+                    m.debug_prg_rom_mut()
+                };
+                buf.expect("offered").iter_mut().for_each(|b| *b = !*b);
+            };
+            // Each page's even address with every register index, then its
+            // odd address with a spread of values (an MMC3's bank select and
+            // bank data; a latch board takes either as its one register).
+            let writes = (0x8000u16..=0xFF00).step_by(0x100).flat_map(|page| {
+                (0..8u8)
+                    .flat_map(move |sel| [0x04u8, 0x08, 0x5A, 0xFF].map(move |v| (page, sel, v)))
+            });
+            for write in core::iter::once(None).chain(writes.map(Some)) {
+                if let Some((page, sel, value)) = write {
+                    mapper.cpu_write(page, sel);
+                    mapper.cpu_write(page + 1, value);
+                }
+                let before: Vec<u8> = range.clone().map(|a| peek(mapper, a)).collect();
+                flip(mapper);
+                let mut changed = 0usize;
+                for (a, &old) in range.clone().zip(&before) {
+                    let new = peek(mapper, a);
+                    if new != old {
+                        assert_eq!(new, !old, "mapper {id}: ${a:04X} changed to something else");
+                        changed += 1;
+                    }
+                }
+                flip(mapper);
+                if changed > 0 {
+                    return true;
+                }
+            }
+            false
+        }
+        let mut prg_ok = 0usize;
+        let mut chr_ok = 0usize;
+        let mut prg_none = Vec::new();
+        let mut chr_none = Vec::new();
+        for id in 0u16..4096 {
+            // CHR-ROM shapes, smallest first, then CHR-RAM ones for the boards
+            // (GTROM among them) that refuse CHR-ROM.
+            let built = [(2u8, 1u8), (8, 16), (32, 32), (2, 0), (32, 0)]
+                .into_iter()
+                .find_map(|(p, c)| parse(&rom_of(id, p, c)).ok());
+            let Some((cart, mut mapper)) = built else {
+                continue;
+            };
+            match mapper.debug_prg_rom_mut() {
+                None => prg_none.push(id),
+                Some(prg) => {
+                    assert_eq!(
+                        *prg, *cart.prg_rom,
+                        "mapper {id}: PRG buffer is not the image"
+                    );
+                    assert!(
+                        proves_live(mapper.as_mut(), id, false, 0x8000..0x1_0000),
+                        "mapper {id}: the PRG buffer is not the one the CPU reads"
+                    );
+                    prg_ok += 1;
+                }
+            }
+            match mapper.debug_chr_rom_mut() {
+                None if !cart.chr_rom.is_empty() => chr_none.push(id),
+                None => {}
+                Some(chr) => {
+                    assert_eq!(
+                        *chr, *cart.chr_rom,
+                        "mapper {id}: CHR buffer is not the image"
+                    );
+                    assert!(
+                        proves_live(mapper.as_mut(), id, true, 0..0x2000),
+                        "mapper {id}: the CHR buffer is not the one the PPU reads"
+                    );
+                    chr_ok += 1;
+                }
+            }
+            // CHR-RAM: no board may offer CHR as ROM.
+            if let Ok((_cart, mut mapper)) = parse(&rom_of(id, 2, 0)) {
+                assert!(
+                    mapper.debug_chr_rom_mut().is_none(),
+                    "mapper {id} offers CHR-RAM as CHR-ROM"
+                );
+            }
+        }
+        assert!(
+            prg_ok > 200 && chr_ok > 170,
+            "only {prg_ok} / {chr_ok} boards were checked"
+        );
+        // No PRG buffer: the FFE copier boards (6, 8, 17), whose PRG is the
+        // copier's DRAM, and GTROM (111), whose PRG is self-flashable and is
+        // its battery save. (UNROM 512, 30, offers it only when it is not
+        // flashable; this test's header asks for no battery.)
+        assert_eq!(prg_none, vec![6, 8, 17, 111], "the no-PRG set moved");
+        // No CHR buffer although the image carried CHR: boards whose pattern
+        // memory is RAM the program writes (an image's CHR, when the parser
+        // accepts one, is ignored or loaded into that RAM), plus the FFE
+        // copiers. Writing CHR there is `debug_poke_ppu`'s job.
+        assert_eq!(
+            chr_none,
+            vec![
+                6, 8, 13, 17, 28, 29, 31, 40, 50, 63, 71, 73, 93, 94, 105, 162, 163, 177, 178, 179,
+                226, 227, 231, 232, 233, 242, 513
+            ],
+            "the no-CHR set moved"
+        );
     }
 
     /// v3.2.0: `ppu_peek` returns exactly the byte `ppu_read` would, without

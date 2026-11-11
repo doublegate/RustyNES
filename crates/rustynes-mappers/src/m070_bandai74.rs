@@ -98,6 +98,14 @@ impl Bandai74 {
 }
 
 impl Mapper for Bandai74 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     /// Fixed mirroring (v2.7.2, core audit §5.6): `nesdev_wiki/INES_Mapper_070`
     /// gives mapper 70 no mirroring control, the 1-screen variant being mapper
     /// 152. Except for a FOUR-SCREEN header: that is how the 152 variant was

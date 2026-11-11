@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import os, zipfile, glob, collections
 
-LIB = os.path.expanduser("~/Dropbox/ROMs/Nintendo Entertainment System - Famicom (2020)")
-EXT = "/home/parobek/Code/OSS_Public-Projects/RustyNES/tests/roms/external"
+LIB = os.path.expanduser(os.environ.get("RUSTYNES_ROM_LIBRARY", "~/roms/nes"))
+EXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tests", "roms", "external")
 
 BEST_EFFORT = [15,28,29,30,31,35,36,39,40,42,44,46,49,50,51,52,56,57,58,60,61,62,63,72,76,77,81,90,92,94,95,96,97,101,104,107,111,112,115,120,132,133,134,136,137,138,139,141,142,143,145,146,147,148,149,150,156,162,164,174,176,177,178,179,180,185,189,193,200,201,202,203,204,205,209,211,212,213,214,218,221,225,226,227,229,231,233,234,238,242,244,245,246,250,253,261,268,286,289,290,299,301,303,305,306,312,320,336,348,349,366,513]
 BE_SET = set(BEST_EFFORT)

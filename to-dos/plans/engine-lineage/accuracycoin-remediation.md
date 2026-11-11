@@ -2,7 +2,7 @@
 
 ## Context
 
-`feat/v2.0-from-main` (worktree `/home/parobek/Code/Commercial_Private-Projects/RustyNES_v2-from-main`)
+`feat/v2.0-from-main` (worktree `~/Code/Commercial_Private-Projects/RustyNES_v2-from-main`)
 is the "additive pivot" off `main` (v1.7.0): it keeps main's **working lockstep DMA cluster**
 (which the abandoned `refactor/v2.0-master-clock` rewrite regressed) and has reached **93.53%
 AccuracyCoin (9 fail)** via two oracle-validated PPU features. The goal now is to remediate
@@ -108,7 +108,7 @@ the DMA, the recognition-model port (T1.3, already separable per the research) +
 VBL/NMI/$2002" PPU-event timing close NMI Overlap IRQ + flag latency. The recognition logic is
 CPU-only; R2's PPU-event dots ride the master-clock sub-dot substrate (the integer-dot ceiling that
 blocks them on pure lockstep — memory §18). References: the branch's R1/R2 commits (`git -C
-/home/parobek/Code/Commercial_Private-Projects/RustyNES_v2 log main..refactor/v2.0-master-clock`),
+~/Code/Commercial_Private-Projects/RustyNES_v2 log main..refactor/v2.0-master-clock`),
 `project_c1_trace_loop_ceiling.md`.
 
 **T2.2 — Implied Dummy Reads + APU Register Activation.** With cycle-exact DMC-DMA: enable
@@ -163,7 +163,7 @@ D-latch). **Decision: chase anyway**, with eyes open to the 166/170 ceiling.
 
 - TriCNES `/tmp/TriCNES/Emulator.cs` (answer-key spec: interrupts 4183-4488, $2002 9181-9192 +
   `EmulateUntilEndOfRead` 939-947, DMC L/M/N 9504-9548, DMA/OAM 9500-9548).
-- Mesen2 `/home/parobek/Code/OSS_Public-Projects/RustyNES/ref-proj/Mesen2/Core/NES/` (`NesCpu.cpp`
+- Mesen2 `~/Code/OSS_Public-Projects/RustyNES/ref-proj/Mesen2/Core/NES/` (`NesCpu.cpp`
   IRQ/BRK/EndCpuCycle/ProcessPendingDma; `NesPpu.cpp` status/$2007/shifters; `APU/DeltaModulationChannel.h`).
 - ares `.../ref-proj/ares/ares/fc/` (`apu/dmc.cpp`, `cpu/timing.cpp::dma()`, `ppu/`).
 - TetaNES `.../ref-proj/tetanes/tetanes-core/src/` (`cpu.rs`, `apu/`, `ppu.rs`).
@@ -178,7 +178,7 @@ promoted. After each change:
    --features test-roms[,FEATURE] accuracycoin_pass_rate_meets_floor -- --nocapture`; confirm no
    DMA/Open Bus/DMC/SH* in the fail list and the AccuracyCoin fail count is **non-increasing**.
 2. **60-ROM commercial oracle byte-identical** (the masking guard) — symlink the ROMs
-   (`ln -s /home/parobek/Code/Commercial_Private-Projects/RustyNES_v2/tests/roms/external
+   (`ln -s ~/Code/Commercial_Private-Projects/RustyNES_v2/tests/roms/external
    tests/roms/external`), run `--features test-roms,commercial-roms[,FEATURE] --test
    external_real_games` → must be **60/60**; remove the symlink after.
 3. **Canaries:** `cpu_interrupts_v2` (1–5; Tier-1/2 must not regress), `ppu_vbl_nmi` 10/10,

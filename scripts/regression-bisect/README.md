@@ -140,7 +140,7 @@ COMMIT=$(git rev-parse HEAD)
     --feature 'test-roms = []' <<'OVERLAY_CMDS'
 cd /tmp/rustynes-bisect-$$
 HARNESS_TEST=audio_tests HARNESS_FEATURE=test-roms \
-    /home/parobek/Code/RustyNES/scripts/regression-bisect/bisect_runner.sh
+    <repo>/scripts/regression-bisect/bisect_runner.sh
 exit $?
 OVERLAY_CMDS
 ```
@@ -254,7 +254,7 @@ to AT THAT MOMENT, then `> file` reassigns stdout. The fix is to do the
 - `tests/mmc1_a12.rs` — MMC1 A12-transition control, committed.
 - `tests/visual_regression.rs` — small-ROM framebuffer baselines,
   committed.
-- `~/.claude/projects/-home-parobek-Code-RustyNES-v2/memory/feedback_emulator_fsm_mid_cycle_clobber.md` —
+- `~/.claude/projects/-home-<user>-Code-RustyNES-v2/memory/feedback_emulator_fsm_mid_cycle_clobber.md` —
   bug-pattern lesson that motivated this entire infrastructure.
 - `docs/testing/baselines-audit.md` — the static record of every baseline
   hash committed in the harness, for future-Claude / future-human

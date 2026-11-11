@@ -322,7 +322,7 @@ absent until first written:
 | Section / key | Purpose |
 |---------------|---------|
 | `[fds] bios_path` | Path to your user-supplied `disksys.rom` Famicom Disk System BIOS. Set once via the in-app prompt the first time you open a `.fds` image. RustyNES never ships a BIOS |
-| `[netplay]` | Defaults for the netplay lobby — listen port, signaling URL, STUN servers. See [Compatibility](./compatibility.md) for the netplay overview |
+| `[netplay]` | Defaults for the netplay lobby — listen port, signaling URL, STUN servers, and `hosted_base_url` (the hosted services: browser lobby, TURN, and since v3.7.0 the spectate relay). v3.7.0 adds `desync_forensics` (opt in to the desync report; off by default, because it sends parts of this machine's state to the peer), `edge_match` (the relay match id to watch or publish under; viewers need no key, so anyone with the id can watch: leave it empty when hosting and a random, unguessable one is minted and shown in the status bar), `edge_publish` (publish the matches you host to the relay; off by default) and `edge_publish_key` (minted on the first publish and kept, so you can re-host your own match id; keep it private). See [Compatibility](./compatibility.md) for the netplay overview |
 | `[retroachievements]` | Login state for the opt-in, native-only RetroAchievements integration (built only with the `retroachievements` feature). The issued token is persisted here after you log in once |
 
 ## Reload behavior

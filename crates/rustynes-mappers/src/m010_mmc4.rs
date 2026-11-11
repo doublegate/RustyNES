@@ -166,6 +166,14 @@ impl Mmc4 {
 }
 
 impl Mapper for Mmc4 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, !self.chr_is_ram)
+    }
+
     /// v3.1.0: not pure -- a read of tile $FD/$FE switches its CHR latch, so the PPU's display-only
     /// "disable sprite limit" reads are not made on this board.
     fn chr_reads_are_pure(&self) -> bool {

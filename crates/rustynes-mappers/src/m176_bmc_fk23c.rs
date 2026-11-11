@@ -478,6 +478,14 @@ impl Fk23c {
 }
 
 impl Mapper for Fk23c {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     // Battery save: the whole 32 KiB WRAM (four 8 KiB `$6000` banks, the FS005
     // register window included -- it lives in this array on the board). Until
     // v2.7.1 the trait default returned an empty slice here, so FK23C and

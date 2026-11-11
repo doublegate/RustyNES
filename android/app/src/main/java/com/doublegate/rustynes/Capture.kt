@@ -30,7 +30,7 @@ import java.io.OutputStream
  * - **Clip** -> an H.264 MP4 in shared storage `Movies/RustyNES`, encoded from a
  *   rolling ring buffer of the last N seconds of gameplay frames with
  *   [MediaCodec] + [MediaMuxer] (gameplay-only, video-only for this first version;
- *   muxing the APU PCM is a TODO below). Encoding runs entirely off the emulation
+ *   muxing the APU PCM is recorded below as not done). Encoding runs entirely off the emulation
  *   loop (the ring buffer holds cheap bitmap copies; encode happens on Stop).
  *
  * Both then offer an `ACTION_SEND` share-sheet. Presentation-only — the core and
@@ -169,7 +169,8 @@ object Capture {
      * `Movies/RustyNES` and return the content [Uri]. Video-only for this first
      * version. Runs off the emulation loop (call from a background coroutine).
      *
-     * TODO(v1.8.x WS F follow-up): mux the APU PCM. The bridge exposes the f32
+     * Not done (v3.7.0 MOB-08: needs a device to verify, no JVM reach; docs/android.md):
+     * mux the APU PCM. The bridge exposes the f32
      * stream via `NesController.drainAudioBytes`; a parallel audio ring captured in
      * lockstep with the video ring, AAC-encoded through a second MediaCodec track,
      * would give a sound clip. Deferred to keep this increment video-only + simple.

@@ -203,6 +203,39 @@ emulator B; they were dismissed and are not the app's.
 | T13 | iOS | Save a state, change a per-game override, record a movie, then force a hard power-off (hold the buttons) within a second of each; reopen | Each file is either the new one or the previous one, never empty or truncated (`DurableWrite`) | | |
 | T14 | iOS | In an FDS game, save in game (a disk write); within two seconds kill the app from the debugger or the app switcher **while it is still in the foreground**; reopen | The in-game save is there (the once-a-second disk check; before v3.6.0 only backgrounding or a game switch wrote the disk) | | |
 
+## Rows added for v3.7.0 (the mobile extras and the mobile carry-overs)
+
+v3.7.0 (D24, `T-MOBILE-EXTRAS`) brings the desktop's 20-band equalizer, its
+Game Genie code database and the per-game picture-correction switch (ADR
+0051, `T-MOBILE-GAME-CORRECTIONS`) to both apps through the bridge
+(`rustynes-mobile`'s `extras` module, host-tested there, the *Rad Racer*
+correction against a real dump under `commercial-roms`). iOS gains box art,
+a WidgetKit home-screen widget and external-display output. Android gains a
+Game Genie sheet, a one-line notice when RetroAchievements hardcore refuses
+the auto-resume (`T-RA-HARDCORE-RESUME`), and skips the CPU frame pack on
+the GPU path when nothing reads it (`T-ANDROID-GPU-FRAMESKIP`); the Android
+decisions are under JVM test (`MobileExtrasTest`, `CpuFrameTest`,
+`Mob08Test`). The v3.7.0 Swift was written on a Linux host with no Swift toolchain;
+`ios_source_audit.rs` pins its wiring, and its first compile was the iOS
+workflow's Simulator build (run 42950085751, 2026-11-11: app and widget
+extension, unsigned, `BUILD SUCCEEDED`). No device has run it yet. The widget
+also needs signing work before any signed build (row W1).
+
+| # | Platform | Step | Expect | Emulator | Device |
+| --- | --- | --- | --- | --- | --- |
+| X1 | both | Settings: move a 20-band EQ slider to +12 dB during a game with music, then Flat | The sound changes with the slider; Flat sounds exactly as before (the bridge installs no filter when every band is 0 dB) | | |
+| X2 | both | Open *Super Mario Bros.*, then the cheats sheet | The code database lists its codes by category; ticking one changes the game; reopening the game keeps it ticked (Android: per-game `CheatStore`); with RetroAchievements hardcore on, ticking is refused with a message | | |
+| X3 | both | *Rad Racer* (USA): race with "Per-game picture corrections" on, then off | On: no 8-pixel dash right of the road on line 139. Off: the dash appears on about one race frame in eleven (the hardware's picture). Recording a movie with it off and replaying with it on replays the recorded (off) picture | | |
+| H1 | Android | RetroAchievements on, hardcore on; play a game, background the app (the auto-resume state is saved), reopen the game | The game starts from power-on and the status line says "started from power-on: RetroAchievements hardcore does not allow resuming a saved state"; with hardcore off it resumes | | |
+| F1 | Android | GPU renderer on: play for a minute, take a screenshot, record a clip, cast to an external display | The screenshot and the clip show the current frame (never a stale one); the external display mirrors live. Then measure frame time against v3.6.2 on the same device (`T-ANDROID-GPU-FRAMESKIP`: no throughput is claimed until this row is run) | | |
+| W1 | iOS | **Maintainer, before any signed build:** register the App ID `com.doublegate.rustynes.widget`, the App Group `group.com.doublegate.rustynes` on both App IDs, and a provisioning profile for the extension in fastlane match | A signed archive builds and the widget appears in the widget gallery | | |
+| W2 | iOS | Open a game, go Home, add the RustyNES "Resume" widget (small and medium) | It shows the game's name, when it was played, and its box art if one was found; tapping it reopens that game (`rustynes://resume`) | | |
+| W3 | iOS | Library: long-press a tile, "Find box art" for a no-intro-named ROM (for example `Mega Man 2 (USA).nes`) and for one with no match | The cover appears on the tile and in the widget; the miss says "No box art found for this game"; "Remove" deletes the cached cover | | |
+| E1 | iOS 17-26 | Connect an external display (cable or AirPlay) during a game | The game's picture fills the external display, letterboxed at 8:7; the phone shows "Playing on the external display" with the on-screen controls working | | |
+| E2 | iOS 17-26 | Disconnect the display mid-game | The picture returns to the phone at once; the game keeps running | | |
+| E3 | iOS 17-26 | Connect with no game open, then open one | The display shows black until the game opens, then the game | | |
+| E4 | iOS 27 | Connect an external display | Mirrors the phone (the iOS 27 `UISceneAccessory` registration is not written: CI builds with the iOS 26 SDK, which lacks it). Carried to the first release built with the iOS 27 SDK | | |
+
 ## Rows folded in from the v1.8.x Android checklist (v3.1.0, decision D25)
 
 `to-dos/v1.8.x-on-device-verification.md` was the standing Android checklist

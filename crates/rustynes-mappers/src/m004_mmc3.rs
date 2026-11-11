@@ -622,6 +622,14 @@ impl Mmc3 {
 }
 
 impl Mapper for Mmc3 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     /// v3.1.0 (`T-MMC3-NEC-OVERRIDE`): `Some` forces the IRQ revision, `None`
     /// returns to the header's. Applies to mapper 4 itself; the MMC3-derived
     /// boards that embed this core keep their own revision.

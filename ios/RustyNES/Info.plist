@@ -244,5 +244,17 @@
 	<true/>
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<!-- v3.7.0 (D24 row 1): the home-screen widget opens rustynes://resume. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.doublegate.rustynes</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>rustynes</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

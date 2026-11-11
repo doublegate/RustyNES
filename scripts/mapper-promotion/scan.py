@@ -2,9 +2,9 @@
 import os, sys, zipfile, re
 
 DIRS = [
-    os.path.expanduser("~/Dropbox/ROMs/Nintendo Entertainment System - Famicom (2020)/GoodNES [v3.23b]/"),
-    os.path.expanduser("~/Dropbox/ROMs/Nintendo Entertainment System - Famicom (2020)/Homebrew & Unlicensed/"),
-    os.path.expanduser("~/Dropbox/ROMs/Nintendo Entertainment System - Famicom (2020)/NES-on-a-chip/"),
+    os.path.join(os.path.expanduser(os.environ.get("RUSTYNES_ROM_LIBRARY", "~/roms/nes")), "GoodNES [v3.23b]/"),
+    os.path.join(os.path.expanduser(os.environ.get("RUSTYNES_ROM_LIBRARY", "~/roms/nes")), "Homebrew & Unlicensed/"),
+    os.path.join(os.path.expanduser(os.environ.get("RUSTYNES_ROM_LIBRARY", "~/roms/nes")), "NES-on-a-chip/"),
 ]
 
 TARGETS = {29,35,39,42,44,46,49,50,51,52,56,57,81,90,104,115,120,134,136,138,139,141,142,164,174,176,179,189,193,204,205,209,211,221,238,245,253,261,268,286,289,290,299,301,303,305,306,312,320,336,348,349,366,513}

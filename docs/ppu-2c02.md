@@ -547,6 +547,31 @@ Section 1. That record was missing from v2.1.4 until v2.9.4.
   counter on load, so a run-ahead / netplay `snapshot`→`restore` stays byte-identical
   even though the free-running `dot_counter` itself is not serialized. The enable
   flag is a frontend/config knob re-applied on load (not serialized), like `region`.
+- **The decay clock's phase (v3.7.0, `T-CABINET-OVERCLOCK-DECAY-STATE`)** — the
+  clock is `(dot_counter − oam_decay_phase_shift) / 3`, and the snapshot carries
+  its phase (`0..=2`) in the top two bits of the first age (every age is masked to
+  62 bits; an age never approaches 2^62).
+  - **Why:** the age reconstruction is exact only when the restored counter is a
+    whole number of CPU cycles away from the saved one, and at CPU overclock x2 a
+    frame is not a whole number of 3-dot cycles. Every age then came out one cycle
+    larger after a restore, and a Vs. `DualSystem` state differed from the straight
+    run in 64 bytes: inert with decay off, but a desync to a frontend comparing
+    state CRCs.
+  - **The fix:** a restore sets the shift so the live clock has the saved phase. A
+    run that is never restored keeps shift 0, so decay behaviour and output are
+    unchanged.
+  - **Compatibility:** no format break. `PPU_SNAPSHOT_VERSION` stays 13, and a
+    v3.6.x state, whose phase bits are zero, still loads. Its unrecorded phase is
+    taken as 0, out by at most the one cycle v3.6.x's own restore could be. A
+    version bump would have refused every older state for every game; the
+    maintainer chose compatibility.
+  - **Tests:**
+    - `snapshot::tests::decay_ages_round_trip_across_a_counter_rebase_of_any_phase`
+      (every phase pairing);
+    - `a_v3_6_state_without_phase_bits_still_loads`;
+    - the libretro `a_cabinet_state_round_trips_byte_for_byte_under_the_overclock`.
+
+    The first and the last fail with the shift forced to 0.
 
 ### PPU die revision (optional, opt-in, default-OFF) (v2.1.7, P5)
 

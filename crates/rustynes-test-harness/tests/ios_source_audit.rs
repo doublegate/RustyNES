@@ -249,3 +249,177 @@ fn the_fds_disk_is_checked_once_a_second_while_a_game_runs() {
         "{w}"
     );
 }
+
+// --- v3.7.0 (D24, `T-MOBILE-EXTRAS` rows 1-3, `T-MOBILE-GAME-CORRECTIONS`) ------
+//
+// The same kind of check for the mobile extras' Swift: it pins that each piece is
+// WIRED where the design says, not that it compiles (the iOS CI Simulator build)
+// or works (the run sheet's rows W1-W3, E1-E4, X1-X3).
+
+/// A file under `ios/` other than `ios/RustyNES/`, line endings normalised.
+fn ios_file(rel: &str) -> String {
+    let p = ios_dir().join("..").join(rel);
+    fs::read_to_string(&p)
+        .unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+        .replace("\r\n", "\n")
+}
+
+/// Row 2: the external-display scene gets its own delegate (by role, the iOS 16-26
+/// mechanism), the app adopts the delegate that answers, the phone covers its
+/// picture while the display is connected, and the display's frames come from the
+/// running core and stop with it.
+#[test]
+fn the_external_display_is_wired_by_role_and_fed_from_the_core() {
+    let ext = swift("ExternalDisplay.swift");
+    let cfg = body(
+        &ext,
+        "func application(\n        _ application: UIApplication,\n        configurationForConnecting",
+        "\n    }\n",
+    );
+    assert!(
+        cfg.contains("connectingSceneSession.role == .windowExternalDisplayNonInteractive"),
+        "{cfg}"
+    );
+    assert!(
+        cfg.contains("config.delegateClass = ExternalDisplaySceneDelegate.self"),
+        "{cfg}"
+    );
+    assert!(
+        ext.contains("func sceneDidDisconnect(_ scene: UIScene)")
+            && ext.contains("ExternalDisplayHub.shared.disconnected()"),
+        "a disconnect must hand the picture back to the phone"
+    );
+    let app = swift("RustyNESApp.swift");
+    assert!(
+        app.contains("@UIApplicationDelegateAdaptor(RustyNESAppDelegate.self)"),
+        "{app}"
+    );
+    let game = swift("GameView.swift");
+    let metal = at(&game, "MetalGameView(emulator: emulator)", "GameView");
+    let card = at(
+        &game,
+        "ExternalDisplayCard(hub: ExternalDisplayHub.shared)",
+        "GameView",
+    );
+    let pad = at(&game, "MultiTouchControlPad(", "GameView");
+    assert!(
+        metal < card && card < pad,
+        "the card covers the picture (which keeps driving tick()) and the pad stays on top"
+    );
+    let model = swift("AppModel.swift");
+    let open = body(
+        &model,
+        "func openGame(_ entry: LibraryEntry) async {",
+        "\n    }\n",
+    );
+    assert!(
+        open.contains("ExternalDisplayHub.shared.frameSource = { [weak core] in core?.lastFrame }"),
+        "{open}"
+    );
+    let close = body(&model, "func closeGame() {", "\n    }\n");
+    assert!(
+        close.contains("ExternalDisplayHub.shared.frameSource = nil"),
+        "{close}"
+    );
+}
+
+/// Row 1: the widget target exists and is embedded, both targets share the App
+/// Group and the shared file, the widget's link is a scheme the app declares and
+/// handles, and opening a game publishes it. Box art is fetched only through the
+/// bridge's candidate list, capped, and cached with `DurableWrite` (the banned-writer
+/// check above covers every other writer).
+#[test]
+fn the_widget_and_box_art_are_wired() {
+    let yml = ios_file("project.yml");
+    assert!(
+        yml.contains("  RustyNESWidget:\n    type: app-extension"),
+        "widget target"
+    );
+    assert!(
+        yml.contains("      - target: RustyNESWidget\n        embed: true"),
+        "the app embeds the widget"
+    );
+    assert_eq!(
+        yml.matches("      - path: Shared\n").count(),
+        2,
+        "the shared file is in both targets"
+    );
+    let group = "group.com.doublegate.rustynes";
+    assert!(swift("RustyNES.entitlements").contains(group));
+    assert!(ios_file("RustyNESWidget/RustyNESWidget.entitlements").contains(group));
+    let shared = ios_file("Shared/ResumeWidgetShared.swift");
+    assert!(shared.contains(&format!("static let appGroup = \"{group}\"")));
+    assert!(shared.contains("URL(string: \"rustynes://resume\")!"));
+    let plist = swift("Info.plist");
+    assert!(
+        plist.contains(
+            "<key>CFBundleURLSchemes</key>\n\t\t\t<array>\n\t\t\t\t<string>rustynes</string>"
+        ),
+        "the app declares the widget's scheme"
+    );
+    let widget = ios_file("RustyNESWidget/RustyNESWidget.swift");
+    assert!(widget.contains(".widgetURL(ResumeWidgetLink.url)"));
+    assert!(widget.contains("StaticConfiguration(kind: ResumeWidgetShared.kind"));
+    let app = swift("RustyNESApp.swift");
+    assert!(app.contains("if ResumeWidgetLink.isResume(url)"), "{app}");
+    let model = swift("AppModel.swift");
+    let open = body(
+        &model,
+        "func openGame(_ entry: LibraryEntry) async {",
+        "\n    }\n",
+    );
+    assert!(
+        open.contains("ResumeWidgetStore.publish(name: entry.name, sha: entry.sha)"),
+        "{open}"
+    );
+
+    let art = swift("BoxArt.swift");
+    let fetch = body(
+        &art,
+        "static func fetch(displayName: String, sha: String)",
+        "\n    }\n",
+    );
+    assert!(
+        fetch.contains("boxArtCandidateUrls(displayName: displayName)"),
+        "{fetch}"
+    );
+    assert!(fetch.contains("data.count <= maxBytes"), "{fetch}");
+    assert!(
+        fetch.contains("try DurableWrite.write(data, to: cacheURL(forSha: sha))"),
+        "{fetch}"
+    );
+    assert!(art.contains("static let maxBytes = 2 * 1024 * 1024"));
+}
+
+/// Row 3 and the correction switch: the 20-band EQ, the code database and the
+/// switch reach the bridge, and a newly opened game gets the player's setting.
+#[test]
+fn the_eq_cheat_database_and_corrections_reach_the_bridge() {
+    let core = swift("EmulatorCore.swift");
+    for call in [
+        "controller.setEqualizerGains(gainsDb: gains)",
+        "controller.cheatDatabaseCodes()",
+        "controller.setGameCorrectionsEnabled(enabled: on)",
+    ] {
+        assert!(core.contains(call), "EmulatorCore does not call {call}");
+    }
+    let depth = swift("AudioDepth.swift");
+    let apply = body(&depth, "func apply(to core: EmulatorCore?) {", "\n    }");
+    assert!(
+        apply.contains("core?.setEqualizerGains(graphicEqDb)"),
+        "{apply}"
+    );
+    let cheats = swift("CheatsView.swift");
+    assert!(cheats.contains("model.emulator?.cheatDatabaseCodes()"));
+    let model = swift("AppModel.swift");
+    let open = body(
+        &model,
+        "func openGame(_ entry: LibraryEntry) async {",
+        "\n    }\n",
+    );
+    assert!(
+        open.contains("core.setGameCorrectionsEnabled(gameCorrections)"),
+        "{open}"
+    );
+    assert!(model.contains("emulator?.setGameCorrectionsEnabled(gameCorrections)"));
+}

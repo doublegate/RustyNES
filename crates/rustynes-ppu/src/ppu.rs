@@ -658,6 +658,27 @@ pub struct Ppu {
     /// produced a reproducible change on any workload. `Ppu` is ~2.8 KB and stays
     /// L1-resident across a frame, so layout has little left to buy.
     pub(crate) oam_decay_cycles: [u64; 32],
+    /// v3.7.0 (`T-CABINET-OVERCLOCK-DECAY-STATE`): the decay clock's offset, in
+    /// dots, `0..=2`. The clock is `(dot_counter - shift) / 3`
+    /// ([`Self::oam_decay_now`]), not `dot_counter / 3`.
+    ///
+    /// WHY IT EXISTS. `dot_counter` is not serialized, so a restore keeps the
+    /// LIVE counter and rebuilds each timestamp as `now - age`. That is exact
+    /// only when the live counter and the saved one share a phase modulo 3:
+    /// `floor((x + D) / 3) - floor(x / 3)` is constant in `x` only when `D` is a
+    /// multiple of 3. At CPU overclock x2 a frame stops being a whole number of
+    /// 3-dot cycles, the phases drift apart, and every age came out one larger
+    /// after a restore. A Vs. `DualSystem` state then differed from the straight
+    /// run in 64 bytes, inert with decay off but a desync to anything comparing
+    /// state CRCs, such as `RetroArch` netplay.
+    ///
+    /// The snapshot now records the clock's phase, and a restore picks the shift
+    /// that puts the live clock in that phase, so the rebase becomes a whole
+    /// number of CPU cycles. A run that is never restored keeps shift 0 and
+    /// computes exactly what it did before, so decay behaviour is unchanged.
+    /// Like the timestamps it adjusts, this is bookkeeping around the derived
+    /// decay model (see the module's `Provenance:` header), not a change to it.
+    pub(crate) oam_decay_phase_shift: u8,
     /// Master enable for the OAM-decay model. **`false` by default** — a frontend /
     /// config knob (re-applied on load like `region` / `active_palette`), NOT part
     /// of the save-state. While `false`, every decay hook early-returns, so OAM
@@ -1594,6 +1615,9 @@ impl Ppu {
             // and `set_oam_decay(true)` re-bases them to the current cycle so
             // enabling mid-run does not instantly decay every row.
             oam_decay_cycles: [0; 32],
+            // v3.7.0: no restore has happened yet, so the decay clock is
+            // `dot_counter / 3` exactly.
+            oam_decay_phase_shift: 0,
             oam_decay_enabled: false,
             open_bus: 0,
             open_bus_decay: [0; 3],
@@ -2035,7 +2059,7 @@ impl Ppu {
             // post-enable reads don't spuriously report a multi-second-old row as
             // decayed. Idempotent re-enables (already on) skip this so a long
             // rendering-disabled span already in progress keeps decaying.
-            let now = self.dot_counter / 3;
+            let now = self.oam_decay_now();
             let mut i = 0;
             while i < self.oam_decay_cycles.len() {
                 self.oam_decay_cycles[i] = now;
@@ -2172,7 +2196,7 @@ impl Ppu {
             return;
         }
         let row = (addr >> 3) as usize;
-        let now = self.dot_counter / 3;
+        let now = self.oam_decay_now();
         // Saturating (wrapping) subtraction: `now` is monotone ≥ the stored
         // timestamp in practice, but `wrapping_sub` keeps this total even across a
         // (astronomically unlikely) u64 counter wrap.
@@ -2203,7 +2227,19 @@ impl Ppu {
         if !self.oam_decay_active() {
             return;
         }
-        self.oam_decay_cycles[(addr >> 3) as usize] = self.dot_counter / 3;
+        self.oam_decay_cycles[(addr >> 3) as usize] = self.oam_decay_now();
+    }
+
+    /// The OAM-decay clock in CPU cycles: `(dot_counter - shift) / 3`, where
+    /// the shift (`0..=2`, see [`Self::oam_decay_phase_shift`]) is 0 until a
+    /// restore aligns the clock's phase with the saved one. Every decay
+    /// timestamp is written and read against this, never against
+    /// `dot_counter / 3` directly, or a restore would not round-trip.
+    #[inline]
+    pub(crate) const fn oam_decay_now(&self) -> u64 {
+        self.dot_counter
+            .wrapping_sub(self.oam_decay_phase_shift as u64)
+            / 3
     }
 
     /// Rebuild [`Self::rgba_lut`] from the custom palette when one is loaded,
@@ -2285,9 +2321,10 @@ impl Ppu {
         // Mesen2's `NesPpu::Reset` (which stamps `_oamDecayCycles` with the current
         // clock unconditionally). Doing this regardless of the enable flag keeps the
         // timestamps sane if decay is toggled on after a reset, and is inert while
-        // decay is off (the array is never read). `dot_counter / 3` is the current
-        // CPU cycle (NTSC/Dendy have 3 dots per CPU cycle).
-        let now = self.dot_counter / 3;
+        // decay is off (the array is never read). `oam_decay_now()` is the current
+        // CPU cycle (NTSC/Dendy have 3 dots per CPU cycle), on the decay clock's
+        // phase (see `oam_decay_phase_shift`).
+        let now = self.oam_decay_now();
         let mut i = 0;
         while i < self.oam_decay_cycles.len() {
             self.oam_decay_cycles[i] = now;

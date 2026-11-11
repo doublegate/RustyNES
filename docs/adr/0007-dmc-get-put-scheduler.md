@@ -13,7 +13,7 @@ along with the rest of the legacy scheduler. Retained as a historical record.
 - [ADR 0003 — Save-State Migration](0003-save-state-migration.md) (no version
   bump in v1.2; flag is default-off so the snapshot wire format is unchanged)
 - The v2.0.0 release plan
-  (`/home/parobek/.claude/plans/generate-a-new-plan-snug-starlight.md`)
+  (`~/.claude/plans/generate-a-new-plan-snug-starlight.md`)
   Sprint A (master-clock-precise scheduling refactor) which the get/put model
   is a foundation for.
 

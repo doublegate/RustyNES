@@ -31,7 +31,7 @@ rustynes-script = { workspace = true }
 # The official Rust MCP SDK (modelcontextprotocol/rust-sdk), Apache-2.0.
 # Server role and the stdio transport only: no HTTP client or server, no auth
 # stack, no child-process transport is compiled in.
-rmcp = { version = "3.8.0", default-features = false, features = ["server", "transport-io"] }
+rmcp = { version = "3.9.0", default-features = false, features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["rt", "macros", "io-std"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

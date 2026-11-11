@@ -1,4 +1,5 @@
-mem="/home/parobek/.claude/projects/-home-parobek-Code-Commercial-Private-Projects-RustyNES-v2/memory/project_r4_oam_dma_oracle.md"
+import sys
+mem = sys.argv[1]  # path to the agent memory note project_r4_oam_dma_oracle.md
 txt=open(mem).read()
 marker="## §159 — FINAL (2026-05-30 session 5 end): 5th test is the r4-DMA cycle-position residual"
 if marker not in txt:

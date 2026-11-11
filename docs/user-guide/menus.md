@@ -98,7 +98,7 @@ Grouped by task since **v2.3.6**; the menu had grown to twenty flat entries.
 | Game Data ▸ | | ROM Info (read-only browser), ROM Database (per-game override editor) |
 | Analysis ▸ | | Latency Oracle, Pixel Provenance, RAM Atlas, Divergence Lens, BasicBot — see [Analysis tools](./analysis-tools.md) |
 | HD Pack ▸ | | Load / unload an HD pack, Pixel Inspector, Build HD Pack (native, opt-in feature) |
-| Netplay… | | Host or join a rollback session (native only) |
+| Netplay… | | Host or join a rollback session (native only). Since v3.7.0 the panel can also publish a match to the hosted relay, so spectators can watch from any point by match ID. It also has an opt-in desync report, which both peers must enable, naming the frame and byte where the two consoles first differed ([`netplay-session.md`](../netplay-session.md)) |
 | RetroAchievements… | | Login, achievements, leaderboards (native only, opt-in feature) |
 
 Netplay and RetroAchievements sit below a separator at the top level rather than

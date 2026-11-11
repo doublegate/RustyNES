@@ -457,7 +457,7 @@ to non-ignored and delete this probe" message). At that point:
 
 - CHANGELOG `[Unreleased]` → "Investigated and rolled back"
   (CHANGELOG.md lines 137-141 + 150-152).
-- Track C1 of `/home/parobek/.claude/plans/linked-puzzling-sutherland.md`.
+- Track C1 of `~/.claude/plans/linked-puzzling-sutherland.md`.
 - `docs/STATUS.md` → "Known residuals (v0.9.0 → v1.0.0)".
 - nesdev wiki §IRQ-and-NMI timing, §MMC3 IRQ filter:
   - <https://www.nesdev.org/wiki/CPU_interrupts>

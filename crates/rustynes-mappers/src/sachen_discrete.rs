@@ -109,6 +109,14 @@ impl Sachen133 {
 }
 
 impl Mapper for Sachen133 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -252,6 +260,14 @@ impl Sachen145 {
 }
 
 impl Mapper for Sachen145 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -398,6 +414,14 @@ impl Sachen146 {
 }
 
 impl Mapper for Sachen146 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -626,6 +650,14 @@ impl Sachen3018M147 {
 }
 
 impl Mapper for Sachen3018M147 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -841,6 +873,14 @@ impl Sachen148 {
 }
 
 impl Mapper for Sachen148 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -1006,6 +1046,14 @@ impl Sachen149 {
 }
 
 impl Mapper for Sachen149 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -1270,6 +1318,14 @@ impl Sachen150 {
 }
 
 impl Mapper for Sachen150 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -1486,6 +1542,14 @@ impl SachenTca01M143 {
 }
 
 impl Mapper for SachenTca01M143 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

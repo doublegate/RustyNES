@@ -98,6 +98,13 @@
 // The portable session core: transport-agnostic, no `std::net`, compiles on
 // `wasm32-unknown-unknown` (the v2.5.0 Phase C wasm-compile gate).
 pub mod diagnostics;
+// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — the edge-relayed spectator: a viewer
+// that runs the core from the confirmed input stream a relay fans out, with
+// seek / rewind / pause, and the publisher that feeds the relay.
+pub mod edge;
+// v3.7.0 (`T-NETPLAY-DESYNC-FORENSICS`) — opt-in desync forensics: per-frame
+// section digests, the first diverging frame, and a byte-level report.
+pub mod forensics;
 pub mod message;
 pub mod rng;
 pub mod session;
@@ -142,6 +149,11 @@ pub mod relay;
 pub mod nat_connect;
 #[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
 pub mod signaling_client;
+// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — the blocking WebSocket client for the
+// hosted spectate relay (publisher and viewer), on the signalling client's
+// bounded-connect worker.
+#[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
+pub mod edge_client;
 
 // The WebRTC signaling room/relay protocol (v2.6.0) — the pure, async-free core
 // of the reference signaling server (`examples/signaling_server.rs`, behind the
@@ -166,6 +178,13 @@ pub use connection::{
     ConnectionState, DisconnectReason, NetplayConnection, PeerLink, UdpTransport,
 };
 pub use diagnostics::{CrcCompare, DesyncDiagnostics, DesyncStatus};
+pub use edge::{EdgeConfig, EdgePublisher, EdgeSpectator, SeekError, View, checkpoint_messages};
+#[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
+pub use edge_client::{EdgeEvent, EdgeRelayClient, spectate_url};
+pub use forensics::{
+    ForensicReport, ForensicsConfig, ForensicsStatus, SECTION_ORDER, SectionDiff, SectionDigests,
+    StateLocation, section_digests,
+};
 #[cfg(not(target_arch = "wasm32"))]
 pub use mesh_net::{MeshError, MeshHost, MeshJoiner, UdpMeshTransport};
 pub use message::{

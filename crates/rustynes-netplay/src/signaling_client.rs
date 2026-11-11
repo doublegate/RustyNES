@@ -127,7 +127,7 @@ impl Drop for SignalingClient {
 /// MOB-04). An idle or already-closed worker notices the closed channel within
 /// one `READ_TIMEOUT` (20 ms), so this covers the normal case; only a worker
 /// blocked on the network outlives it.
-const DROP_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
+pub(crate) const DROP_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// Join `worker` if it finishes within `grace`; otherwise let it go.
 ///
@@ -138,7 +138,7 @@ const DROP_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
 /// socket and its half of the two channels), both channels are already closed
 /// from this side, so it exits by itself when the network call returns, and it
 /// never calls back into anything the caller frees. Returns whether it joined.
-fn join_or_detach(worker: JoinHandle<()>, grace: std::time::Duration) -> bool {
+pub(crate) fn join_or_detach(worker: JoinHandle<()>, grace: std::time::Duration) -> bool {
     let deadline = std::time::Instant::now() + grace;
     while !worker.is_finished() {
         if std::time::Instant::now() >= deadline {
@@ -236,11 +236,11 @@ fn worker_loop(url: &str, out_rx: &Receiver<SignalMessage>, event_tx: &Sender<Si
 
 /// How long to wait for the TCP connect to the relay before giving up. Bounds
 /// the otherwise-indefinite block when the relay is offline/unreachable.
-const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub(crate) const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The read timeout that lets the worker loop interleave the outbound drain and
 /// notice a disconnect (set on the raw `TcpStream`, so it holds for `wss://`).
-const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(20);
+pub(crate) const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// Where a signaling URL points, as [`parse_signaling_url`] reads it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -373,7 +373,7 @@ fn authority_port_text(authority: &str) -> Result<Option<&str>, String> {
 /// The handshake MUST run with the generous timeout, not the 20 ms loop timeout:
 /// a slow loopback handshake (observed on macOS CI) otherwise hits the short read
 /// timeout and tungstenite aborts with `Interrupted handshake (WouldBlock)`.
-fn connect_bounded(
+pub(crate) fn connect_bounded(
     url: &str,
     connect_timeout: std::time::Duration,
 ) -> Result<tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>, String>
@@ -420,7 +420,7 @@ fn connect_bounded(
 /// the worker can set a short read timeout for either transport (without it,
 /// `socket.read()` blocks and the loop can't interleave the outbound drain or
 /// notice a disconnect). Returns `None` only for the unused native-tls variant.
-fn stream_of(
+pub(crate) fn stream_of(
     socket: &tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
 ) -> Option<&std::net::TcpStream> {
     match socket.get_ref() {

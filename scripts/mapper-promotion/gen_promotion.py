@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Generate external_extended.rs test blocks + new tier id-lists for the 58 promotions."""
-import os, re, zipfile
+import os, re, tempfile, zipfile
 
-EXT = "/home/parobek/Code/OSS_Public-Projects/RustyNES/tests/roms/external"
+EXT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tests", "roms", "external")
 PROMOTE = [15,28,30,31,36,40,58,60,61,62,63,72,76,77,92,94,95,96,97,101,107,111,112,132,133,137,143,145,146,147,148,149,150,156,162,177,178,180,185,200,201,202,203,212,213,214,218,225,226,227,229,231,233,234,242,244,246,250]
 EXISTING_CURATED = [38, 41, 79, 86, 113, 140, 232, 240, 241]
 ALL_BEST_EFFORT = [15,28,29,30,31,35,36,39,40,42,44,46,49,50,51,52,56,57,58,60,61,62,63,72,76,77,81,90,92,94,95,96,97,101,104,107,111,112,115,120,132,133,134,136,137,138,139,141,142,143,145,146,147,148,149,150,156,162,164,174,176,177,178,179,180,185,189,193,200,201,202,203,204,205,209,211,212,213,214,218,221,225,226,227,229,231,233,234,238,242,244,245,246,250,253,261,268,286,289,290,299,301,303,305,306,312,320,336,348,349,366,513]
@@ -56,7 +56,7 @@ out.append("// ============================================================\n")
 for mid,name,rel in blocks:
     rel_esc=rel.replace('"','\\"')
     out.append(f"#[test]\nfn {name}() {{\n    check(\n        \"{rel_esc}\",\n        DEFAULT_IDLE,\n        \"{name}\",\n    );\n}}\n")
-open("/tmp/claude-1000/-home-parobek-Code-OSS-Public-Projects-RustyNES/6112789e-19c9-4d7b-9638-b241cdbc833d/scratchpad/promo_tests.rs","w").write("\n".join(out))
+open(os.path.join(tempfile.gettempdir(), "promo_tests.rs"),"w").write("\n".join(out))
 
 new_curated=sorted(EXISTING_CURATED+PROMOTE)
 new_be=sorted(set(ALL_BEST_EFFORT)-set(PROMOTE))

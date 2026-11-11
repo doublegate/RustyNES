@@ -48,6 +48,14 @@ impl KonamiVs {
 }
 
 impl Mapper for KonamiVs {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        self.inner.debug_prg_rom_mut()
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        self.inner.debug_chr_rom_mut()
+    }
+
     // v2.8.0 Phase 4 — no per-cycle hooks (no IRQ, no audio): the bus
     // skips all four per-CPU-cycle dispatches for this board.
     fn caps(&self) -> MapperCaps {

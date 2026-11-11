@@ -53,6 +53,19 @@ struct SettingsView: View {
                 // Host audio-depth DSP (v1.9.9): EQ / pan / reverb / crossfeed.
                 AudioDepthSection(depth: model.audioDepth)
 
+                // v3.7.0 (D24 row 3): the desktop's 20-band graphic EQ, run by
+                // the bridge. UNCOMPILED at v3.7.0.
+                GraphicEqSection(depth: model.audioDepth)
+
+                // v3.7.0 (`T-MOBILE-GAME-CORRECTIONS`, ADR 0051).
+                Section {
+                    Toggle("Per-game picture corrections", isOn: $model.gameCorrections)
+                } header: {
+                    Text("Picture")
+                } footer: {
+                    Text("On hides a listed game's authentic hardware glitch (Rad Racer's dash right of the road). Off draws the hardware's own picture. A movie or netplay session keeps its recorded choice.")
+                }
+
                 Section {
                     Toggle("Haptic feedback", isOn: $model.hapticsEnabled)
                         .disabled(!model.hapticsSupported)
@@ -275,6 +288,54 @@ private struct AudioDepthSection: View {
         Binding(
             get: { i < depth.eqDb.count ? depth.eqDb[i] : 0 },
             set: { var copy = depth.eqDb; if i < copy.count { copy[i] = $0; depth.eqDb = copy } }
+        )
+    }
+}
+
+// MARK: - Graphic EQ (v3.7.0)
+
+/// The 20-band graphic equalizer (the desktop's, run by the bridge on the drained
+/// audio). Flat is off and bit-identical; the band labels come from the bridge.
+private struct GraphicEqSection: View {
+    @ObservedObject var depth: AudioDepthModel
+    @State private var open = false
+    private let frequencies: [Float] = equalizerBandFrequencies()
+
+    var body: some View {
+        Section {
+            Toggle("Show the 20-band EQ", isOn: $open)
+            if open {
+                ForEach(0..<min(frequencies.count, AudioDepthModel.graphicBandCount), id: \.self) { i in
+                    ParamSlider(
+                        LocalizedStringKey(Self.label(frequencies[i])),
+                        value: binding(i),
+                        range: -12...12
+                    )
+                }
+                Button("Flat (off)") {
+                    depth.graphicEqDb = Array(repeating: 0, count: AudioDepthModel.graphicBandCount)
+                }
+            }
+        } header: {
+            Text("Equalizer")
+        } footer: {
+            Text("The desktop's 20-band EQ. Flat (every band at 0 dB) is off and leaves the sound unchanged.")
+        }
+    }
+
+    /// "25 Hz", "1.6 kHz" (the Android app's labels).
+    static func label(_ hz: Float) -> String {
+        if hz >= 1000 {
+            let k = hz / 1000
+            return k == k.rounded() ? "\(Int(k)) kHz" : String(format: "%.1f kHz", k)
+        }
+        return "\(Int(hz)) Hz"
+    }
+
+    private func binding(_ i: Int) -> Binding<Float> {
+        Binding(
+            get: { i < depth.graphicEqDb.count ? depth.graphicEqDb[i] : 0 },
+            set: { var copy = depth.graphicEqDb; if i < copy.count { copy[i] = $0; depth.graphicEqDb = copy } }
         )
     }
 }

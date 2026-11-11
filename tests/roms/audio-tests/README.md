@@ -70,7 +70,7 @@ These exercise behaviour the blargg / kevtris suites do **not** cover:
 
 These ROMs are committed but **not yet wired into a dedicated
 integration test**. They are primary inputs for future audio
-regression work (see Track C of `/home/parobek/.claude/plans/`). For
+regression work (see Track C of `~/.claude/plans/`). For
 the time being they serve as:
 
 1. Reference recordings the user can run interactively via

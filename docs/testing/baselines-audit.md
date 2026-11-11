@@ -14,7 +14,7 @@ the baselines they enforce.
 
 For the bug-pattern context that motivates this entire infrastructure,
 see
-`~/.claude/projects/-home-parobek-Code-RustyNES-v2/memory/feedback_emulator_fsm_mid_cycle_clobber.md`
+`~/.claude/projects/-home-<user>-Code-RustyNES-v2/memory/feedback_emulator_fsm_mid_cycle_clobber.md`
 and ADR-0002 §"Empirical refinement (2026-05-14)".
 
 ---

@@ -129,6 +129,10 @@ impl ResetMulticart230 {
 }
 
 impl Mapper for ResetMulticart230 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

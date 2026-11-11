@@ -421,7 +421,7 @@ assign ppu_access = ppu_ce && (cpu_acc == ACCESS_MC[$clog2(CPU_DIV)-1:0]);
 
 ### 6.1 Fix 1: Audio DC Blocker 32-Bit Arithmetic Overflow & Rail Clamping
 
-- **Target File**: `/home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/audio_dc_block.sv`
+- **Target File**: `~/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/audio_dc_block.sv`
 - **Line Numbers**: 94, 121–125
 - **Severity**: Critical (High-priority audio popping and distortion fix)
 - **Problem**: When `FRAC` was increased to 15, `W = 32` left only 65,535 headroom before signed integer overflow. Transient volume increases wrap to large negative values and slam output to `SAT_LO` ($-32,768$).
@@ -455,7 +455,7 @@ assign ppu_access = ppu_ce && (cpu_acc == ACCESS_MC[$clog2(CPU_DIV)-1:0]);
 
 ### 6.2 Fix 2: SDRAM Controller CKE Power-Up Command Registration Violation
 
-- **Target File**: `/home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/sdram.sv`
+- **Target File**: `~/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/sdram.sv`
 - **Line Numbers**: 316, 478–487
 - **Severity**: Critical (Physical SDRAM silicon initialization failure)
 - **Problem**: Asserting `C_PRECHARGE` concurrently with `sdram_cke <= 1'b1` violates JEDEC Note 11, causing physical SDRAM to treat edge $n$ as clock suspend exit and miss PRECHARGE ALL.
@@ -510,7 +510,7 @@ assign ppu_access = ppu_ce && (cpu_acc == ACCESS_MC[$clog2(CPU_DIV)-1:0]);
 
 ### 6.3 Fix 3: SDRAM Controller DQM Read Masking High-Z Violation
 
-- **Target File**: `/home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/sdram.sv`
+- **Target File**: `~/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/sdram.sv`
 - **Line Numbers**: 455, 674–711
 - **Severity**: Critical (High-Z floating data bus at CAS Latency 3)
 - **Problem**: Defaulting `sdram_dqm <= 2'b11` forces DQM high during `S_RW` and `S_READ_WAIT`. Because DQM has a 2-cycle read latency, the SDRAM data bus floats to High-Z during read data capture.
@@ -569,7 +569,7 @@ assign ppu_access = ppu_ce && (cpu_acc == ACCESS_MC[$clog2(CPU_DIV)-1:0]);
 
 ### 6.4 Fix 4: SDRAM Arbiter Byte-Lane Address Corruption
 
-- **Target File**: `/home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/sdram_arbiter.sv`
+- **Target File**: `~/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/sdram_arbiter.sv`
 - **Line Numbers**: 202–206, 338–367
 - **Severity**: Critical (Single-byte address aliasing under pending traffic)
 - **Problem**: Arbiter captures only the word address in `serve_addr` and slices `dout` using `xxx_hold[0]`. Overwriting `xxx_hold` with a new request causes the serving request to return the wrong byte.
@@ -676,7 +676,7 @@ assign ppu_access = ppu_ce && (cpu_acc == ACCESS_MC[$clog2(CPU_DIV)-1:0]);
 
 ### 6.5 Fix 5: MMC1 Shift Register Reset Bypassing Consecutive Write Filter
 
-- **Target File**: `/home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/cart/cart.sv`
+- **Target File**: `~/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/cart/cart.sv`
 - **Line Numbers**: 386–412
 - **Severity**: Major (Hardware write filter compliance)
 - **Problem**: Writing with bit 7 set bypasses `!mmc1_wrote_last_cycle`, erroneously resetting the MMC1 shift register on back-to-back write cycles of 6502 double-write instructions.
@@ -740,7 +740,7 @@ assign ppu_access = ppu_ce && (cpu_acc == ACCESS_MC[$clog2(CPU_DIV)-1:0]);
 
 ### 6.6 Fix 6: MMC3 IRQ Race Between \$E000 Acknowledge and Counter Decrement
 
-- **Target File**: `/home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/cart/cart.sv`
+- **Target File**: `~/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/cart/cart.sv`
 - **Line Numbers**: 455–469, 504–509
 - **Severity**: Major (Permanent `/IRQ` assertion lockup)
 - **Problem**: When a write to `$E000` coincides with `a12_clock`, the counter decrement sets `mmc3_irq_pending`, overwriting the acknowledge while `mmc3_irq_enable` transitions to 0. `mmc3_irq_out` remains permanently asserted because it ignores `mmc3_irq_enable`.
@@ -800,7 +800,7 @@ assign ppu_access = ppu_ce && (cpu_acc == ACCESS_MC[$clog2(CPU_DIV)-1:0]);
 
 ### 6.7 Fix 7: Pulse 1 Sweep Unit Underflow Mute Bug
 
-- **Target File**: `/home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/apu2a03.sv`
+- **Target File**: `~/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/apu2a03.sv`
 - **Line Numbers**: 228–233
 - **Severity**: Medium (Parity bug on Pulse 1 downward sweep)
 - **Problem**: `!neg && sweep_target(...) > 12'd2047` suppresses the target period limit check when `neg == 1`, failing to mute Pulse 1 when 1's complement negation with `shift == 0` causes an underflow borrow.
@@ -834,7 +834,7 @@ assign ppu_access = ppu_ce && (cpu_acc == ACCESS_MC[$clog2(CPU_DIV)-1:0]);
 
 ### 6.8 Fix 8: Dual-Domain Synchronous Reset Deassertion Synchronizers
 
-- **Target File**: `/home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/emu.sv`
+- **Target File**: `~/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/emu.sv`
 - **Line Numbers**: 670–673, 850
 - **Severity**: Critical (Hardware non-deterministic boot failure across 16,633 flip-flops)
 - **Problem**: Raw combinational reset without synchronizers causes recovery/removal timing violations across fabric routing, corrupting console power-on phase lock.
@@ -889,7 +889,7 @@ assign ppu_access = ppu_ce && (cpu_acc == ACCESS_MC[$clog2(CPU_DIV)-1:0]);
 
 ### 6.9 Fix 9: SDRAM Interface I/O SDC Timing Constraints
 
-- **Target File**: `/home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/RustyNES.sdc`
+- **Target File**: `~/Code/OSS_Public-Projects/RustyNES_MiSTer/RustyNES.sdc`
 - **Line Numbers**: 37–39
 - **Severity**: Critical (Unconstrained SDRAM I/O interface on physical FPGA board)
 - **Problem**: All 39 physical SDRAM pins are unconstrained because `sys/sys_top.sdc` omits SDRAM constraints.
@@ -931,7 +931,7 @@ set_false_path -to [get_registers {emu|rst_sdram_sync[0]}]
 
 ### 6.10 Fix 10: Replacement of Runtime Modulo Dividers with Bitwise Bank Masking
 
-- **Target File**: `/home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/cart/cart.sv`
+- **Target File**: `~/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/cart/cart.sv`
 - **Line Numbers**: 675–683, 695–701
 - **Severity**: Major / Performance (Eliminates ~480 ALMs and ~12 ns path delay)
 - **Problem**: Runtime `% prg_8k_count` and `% chr_1k_count` synthesize 3 slow LPM division blocks in the critical address path.
@@ -992,7 +992,7 @@ set_false_path -to [get_registers {emu|rst_sdram_sync[0]}]
 
 ### 6.11 Fix 11: CPU Branch `last_cycle` Spurious Assertion at `tcyc == 0`
 
-- **Target File**: `/home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/cpu6502.sv`
+- **Target File**: `~/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/cpu6502.sv`
 - **Line Numbers**: 1284–1287
 - **Severity**: Medium (Latent timing / DMA stall hazard)
 - **Problem**: Default in `last_cycle` returns 1 when `tcyc == 0` for branch opcodes, spuriously clearing `sh_rdy_low`.
@@ -1019,7 +1019,7 @@ set_false_path -to [get_registers {emu|rst_sdram_sync[0]}]
 
 ### 6.12 Fix 12: PPU `vblank_now` Suppression Parity on Scanline 241 Dot 1
 
-- **Target File**: `/home/parobek/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/ppu2c02.sv`
+- **Target File**: `~/Code/OSS_Public-Projects/RustyNES_MiSTer/rtl/ppu2c02.sv`
 - **Line Number**: 3171
 - **Severity**: Medium (VBlank race condition accuracy violation)
 - **Problem**: When `$2002` is read on dot 0, `suppress_vbl` is set, but `vblank_now` is unconditionally true at dot 1, returning VBlank = 1 on consecutive reads.

@@ -2240,6 +2240,9 @@ impl App {
             {
                 emu.set_nes(nes);
             }
+            // v3.7.0 — the live-patch recorder records against this image
+            // (none for a cabinet, an FDS disk or an NSF).
+            emu.start_rom_patch(&self.rom_bytes);
             // v2.9.8 — the two settings that live on `EmuCore` rather than on
             // the console, set under the install lock for the same reason the
             // console was configured before it: the emulation thread cannot
@@ -3289,6 +3292,15 @@ impl App {
                 eprintln!("rustynes: movie record: no ROM loaded");
                 return;
             }
+            // v3.7.0 — no recording over live ROM edits
+            // (`EmuCore::recording_refusal`).
+            if let Some(why) = guard.recording_refusal() {
+                drop(guard);
+                eprintln!("rustynes: movie record refused: {why}");
+                self.ui
+                    .set_status(StatusMessage::error(format!("Recording refused: {why}")));
+                return;
+            }
             // v2.3.2 "Lucid" — arm a replay attestation unless run-ahead is on.
             // Run-ahead presents the frame N ahead of the persistent timeline
             // while a verification replay re-derives persistent frames, so an
@@ -3387,6 +3399,14 @@ impl App {
             eprintln!("rustynes: movie play: no ROM loaded");
             return;
         }
+        // v3.7.0 (#646 review) — no playback over live ROM edits.
+        if let Some(why) = guard.session_refusal() {
+            drop(guard);
+            eprintln!("rustynes: movie play refused: {why}");
+            self.ui
+                .set_status(StatusMessage::error(format!("Playback refused: {why}")));
+            return;
+        }
         let total = movie.len();
         // v2.9.0 — the seek replaces the save RAM with the movie's, which
         // must not reach the `.sav` (`EmuCore::start_sandboxed_session`).
@@ -3430,7 +3450,7 @@ impl App {
     /// the user can diverge from a replayed run and record their own
     /// continuation. No-op if no ROM is loaded.
     #[cfg(not(target_arch = "wasm32"))]
-    fn handle_movie_branch(&self) {
+    fn handle_movie_branch(&mut self) {
         // v2.9.9 (NF-11) — movies and netplay are mutually exclusive (v2.3.0);
         // record, play and import refused already, the branch did not.
         if self.netplay.is_active() {
@@ -3438,6 +3458,15 @@ impl App {
             return;
         }
         let mut guard = self.emu.lock();
+        // v3.7.0 — no recording over live ROM edits
+        // (`EmuCore::recording_refusal`).
+        if let Some(why) = guard.recording_refusal() {
+            drop(guard);
+            eprintln!("rustynes: movie branch refused: {why}");
+            self.ui
+                .set_status(StatusMessage::error(format!("Recording refused: {why}")));
+            return;
+        }
         let emu = &mut *guard;
         // v3.6.2 (Antigravity on #640) — from idle, the options configured
         // now; under playback the movie's own (`sync_idle_player_options`).
@@ -3586,6 +3615,14 @@ impl App {
         let total = movie.len();
         {
             let mut guard = self.emu.lock();
+            // v3.7.0 (#646 review) — no playback over live ROM edits.
+            if let Some(why) = guard.session_refusal() {
+                drop(guard);
+                eprintln!("rustynes: movie import refused: {why}");
+                self.ui
+                    .set_status(StatusMessage::error(format!("Playback refused: {why}")));
+                return;
+            }
             // v2.9.0 — see `EmuCore::start_sandboxed_session`.
             let mut seek_error = None;
             let began = guard.start_sandboxed_session(|emu| {
@@ -4032,6 +4069,15 @@ impl App {
             self.ui.set_status(StatusMessage::info(format!(
                 "TAStudio restarts the game from power-on; {what} first"
             )));
+            return;
+        }
+        // v3.7.0 — a TAStudio project exports a power-on movie of the clean
+        // image's identity, so it is a recording: none over live ROM edits
+        // (`EmuCore::recording_refusal`).
+        let refused = self.emu.lock().recording_refusal();
+        if let Some(why) = refused {
+            self.ui
+                .set_status(StatusMessage::error(format!("TAStudio refused: {why}")));
             return;
         }
         let channel_mask = self.config.audio.channel_mask;
@@ -4503,6 +4549,12 @@ impl App {
                 crate::wasm_io::log("leave netplay before recording a movie");
                 return;
             }
+            // v3.7.0 — no recording over live ROM edits
+            // (`EmuCore::recording_refusal`).
+            if let Some(why) = emu.recording_refusal() {
+                crate::wasm_io::log(&format!("movie record refused: {why}"));
+                return;
+            }
             // v3.6.2 — the options configured now, not the ones the last
             // produced frame applied (`EmuCore::prepare_power_on_recording`).
             emu.prepare_power_on_recording();
@@ -4567,6 +4619,12 @@ impl App {
         }
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
+        // v3.7.0 — no recording over live ROM edits
+        // (`EmuCore::recording_refusal`).
+        if let Some(why) = emu.recording_refusal() {
+            crate::wasm_io::log(&format!("movie branch refused: {why}"));
+            return;
+        }
         // v3.6.2 (Antigravity on #640) — from idle, the options configured
         // now; under playback the movie's own (`sync_idle_player_options`).
         emu.sync_idle_player_options();
@@ -4594,6 +4652,11 @@ impl App {
         };
         let mut guard = self.emu.lock();
         let emu = &mut *guard;
+        // v3.7.0 (#646 review) — no playback over live ROM edits.
+        if let Some(why) = emu.session_refusal() {
+            crate::wasm_io::log(&format!("movie playback refused: {why}"));
+            return;
+        }
         // Review round 9 on #640: see `handle_movie_play_toggle`.
         emu.sync_idle_player_options();
         let Some(nes) = emu.nes.as_mut() else {
@@ -5575,6 +5638,17 @@ impl App {
             if crate::session_policy::refusal(TimelineAction::PowerCycle, owners).is_some() {
                 self.ui.set_status(StatusMessage::info(
                     "Stop the movie or netplay session before enabling hardcore",
+                ));
+                return;
+            }
+            // v3.7.0 (security review): live ROM edits are refused WHILE
+            // hardcore is on, but enabling it only power-cycles, and
+            // `Nes::power_cycle` keeps the mapper and its edited buffers. So a
+            // ROM patched before the switch would run in hardcore. Refuse
+            // rather than revert: reverting would discard unsaved edits.
+            if self.emu.lock().has_rom_edits() {
+                self.ui.set_status(StatusMessage::info(
+                    "Save the patch and load the patched ROM, or Reset edits, before enabling hardcore",
                 ));
                 return;
             }
@@ -8030,6 +8104,11 @@ impl App {
                 host: _,
                 num_players,
             } => {
+                let refused = self.emu.lock().session_refusal();
+                if let Some(why) = refused {
+                    crate::wasm_io::log(&format!("rustynes: netplay refused: {why}"));
+                    return;
+                }
                 let Some(identity) = self.emu.lock().netplay_identity() else {
                     crate::wasm_io::log("rustynes: browser netplay needs a loaded ROM first");
                     return;
@@ -8054,6 +8133,62 @@ impl App {
         }
     }
 
+    /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — the spectate-relay publish URL
+    /// for the next hosted session, when `[netplay] edge_publish` is on and a
+    /// hosted base and a valid match id are set. The key is this peer's kept
+    /// `edge_publish_key` (minted and saved on first use), not a fresh one:
+    /// the relay keeps a match id for its first key, so a fresh key per
+    /// session locked a host out of its own match id after a restart. An
+    /// empty match id is minted random and shown in the status bar.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn edge_publish_url(&mut self) -> Option<String> {
+        let np = &self.config.netplay;
+        let base = np.edge_publish.then(|| np.hosted_base()).flatten()?;
+        let (key, minted_key) = self.config.netplay.edge_publish_key_or_mint();
+        // Viewers present no key, so an empty match id is minted random
+        // (unguessable) rather than refused, and announced so the host can
+        // pass it on.
+        let (match_id, minted_id) = self.config.netplay.edge_match_or_mint();
+        if minted_key || minted_id {
+            let _ = self.config.save();
+        }
+        if minted_id {
+            self.ui.set_status(StatusMessage::info(format!(
+                "Spectators can watch this match through the relay with id {match_id}"
+            )));
+        }
+        rustynes_netplay::spectate_url(&base, &match_id, Some(&key))
+    }
+
+    /// v3.7.0 — watch `match_id` through the hosted relay: the same ROM,
+    /// emu-thread and cold-boot plumbing as a direct spectate.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn start_edge_spectate(&mut self, match_id: &str) {
+        let Some(identity) = self.emu.lock().netplay_identity() else {
+            return;
+        };
+        let Some(url) = self
+            .config
+            .netplay
+            .hosted_base()
+            .and_then(|base| rustynes_netplay::spectate_url(&base, match_id, None))
+        else {
+            eprintln!(
+                "rustynes: watching via the relay needs a hosted base \
+                 ([netplay] hosted_base_url) and a match id of 1-32 of A-Z a-z 0-9 _ -"
+            );
+            return;
+        };
+        #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
+        self.pause_emu_thread_for_netplay();
+        self.netplay.start_edge_spectate(&url, identity);
+        self.emu.lock().start_sandboxed_session(|emu| {
+            emu.nes.as_mut().is_some_and(|nes| {
+                rustynes_core::power_on_for_movie(nes);
+                true
+            })
+        });
+    }
     /// v2.3.0 — act on a netplay panel request (host / join / leave).
     ///
     /// Host = player 0 (P1); joiner = player 1 (P2). A host/join is rejected
@@ -8082,13 +8217,28 @@ impl App {
             NetplayRequest::Host { .. }
             | NetplayRequest::Join { .. }
             | NetplayRequest::Spectate { .. }
+            | NetplayRequest::EdgeSpectate { .. }
                 if self.emu.lock().nes.is_none() =>
             {
                 eprintln!("rustynes: netplay needs a loaded ROM first");
             }
+            // v3.7.0 (#646 review) — no session over live ROM edits: the
+            // identity names the clean ROM, the console runs the edited one.
             NetplayRequest::Host { .. }
             | NetplayRequest::Join { .. }
             | NetplayRequest::Spectate { .. }
+            | NetplayRequest::EdgeSpectate { .. }
+                if self.emu.lock().session_refusal().is_some() =>
+            {
+                let why = self.emu.lock().session_refusal().unwrap_or_default();
+                eprintln!("rustynes: netplay refused: {why}");
+                self.ui
+                    .set_status(StatusMessage::error(format!("Netplay refused: {why}")));
+            }
+            NetplayRequest::Host { .. }
+            | NetplayRequest::Join { .. }
+            | NetplayRequest::Spectate { .. }
+            | NetplayRequest::EdgeSpectate { .. }
                 if {
                     let emu = self.emu.lock();
                     emu.movie.is_recording() || emu.movie.is_playing()
@@ -8111,6 +8261,11 @@ impl App {
                 self.pause_emu_thread_for_netplay();
                 // Host "listen" mode: bind the local port and learn the joiner's
                 // address from its first Sync — no remote to pre-enter or parse.
+                self.netplay
+                    .set_desync_forensics(self.config.netplay.desync_forensics);
+                // v3.7.0 — publish to the spectate relay, with the kept key.
+                let publish = self.edge_publish_url();
+                self.netplay.set_edge_publish(publish);
                 self.netplay.start_host(port, num_players, identity);
             }
             NetplayRequest::Join { remote } => {
@@ -8121,11 +8276,17 @@ impl App {
                     Ok(addr) => {
                         #[cfg(all(not(target_arch = "wasm32"), feature = "emu-thread"))]
                         self.pause_emu_thread_for_netplay();
+                        self.netplay
+                            .set_desync_forensics(self.config.netplay.desync_forensics);
                         self.netplay.start_join(addr, identity);
                     }
                     Err(e) => eprintln!("rustynes: bad host address {remote:?}: {e}"),
                 }
             }
+            // v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — watch through the hosted
+            // relay: the same ROM, emu-thread and cold-boot plumbing as a
+            // direct spectate.
+            NetplayRequest::EdgeSpectate { match_id } => self.start_edge_spectate(&match_id),
             // v1.7.0 H8 — read-only spectator: same ROM + emu-thread plumbing as
             // Join, but the spectator never authors input (see `start_spectate`).
             NetplayRequest::Spectate { remote } => {
@@ -8667,6 +8828,9 @@ impl App {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    // One per-frame pump, read top to bottom; v3.7.0's recorder status and
+    // save request took it past the limit.
+    #[allow(clippy::too_many_lines)]
     fn post_produce_housekeeping(&mut self) {
         // v2.3.0 "Datum II" — refresh detached tool windows once per produced
         // frame, but only those whose content actually changes: `Live` panels
@@ -8834,6 +8998,12 @@ impl App {
             // by the editing panels. They land in the SAME gated post-frame
             // poke stage as the raw cheats, under the SAME `emu.write` gate.
             let debug_pokes = debugger.take_debug_pokes();
+            // v3.7.0 (`T-HACK-BPS-RECORDER`) — "Save patch..." from the memory
+            // panel: the recorder is cloned under the brief lock below and the
+            // files are written after it drops, never inside the egui closure.
+            let save_patch = debugger.take_save_patch_request();
+            // v3.7.0 — ROM writes are refused while a TAStudio session is open.
+            let tas_active = debugger.tas_active();
             // Republish the combined write gate (netplay / RA-hardcore / TAS
             // replay or record) computed from the EXACT same condition
             // `emu.write` uses, so the produce path drops the edits when
@@ -8843,11 +9013,61 @@ impl App {
             let movie_locked = guard.movie.is_playing() || guard.movie.is_recording();
             let locked = netplay_locked || movie_locked;
             guard.writes_locked = locked;
+            guard.tas_session_active = tas_active;
+            let patch_to_save = save_patch
+                .then(|| guard.rom_patch.clone())
+                .flatten()
+                .map(|rec| (rec, raw_cheats.clone()));
             guard.raw_cheats = raw_cheats;
             guard.debug_pokes.extend(debug_pokes);
+            let patch_info = crate::debugger::RomPatchInfo {
+                recording: guard.rom_patch.is_some(),
+                writes: guard.rom_writes,
+                last: guard.rom_write_status.clone(),
+            };
             drop(guard);
+            if let Some(d) = self.debugger.as_mut() {
+                d.set_rom_patch_info(patch_info);
+            }
             self.publish_debugger_write_gate(locked);
+            if let Some((rec, pins)) = patch_to_save {
+                self.save_live_patch(&rec, &pins);
+            }
         }
+    }
+
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`) — ask where to save the live-patch
+    /// recorder's BPS patch and write it (and its RAM-pin sidecar when `pins`
+    /// are enabled) with `patch_recorder::write_patch_files`, reporting the
+    /// outcome on the status bar. Runs with no emu lock held.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_live_patch(
+        &mut self,
+        rec: &crate::patch_recorder::PatchRecorder,
+        pins: &[crate::cheats::RawCheat],
+    ) {
+        let stem = std::path::Path::new(&self.rom_label)
+            .file_stem()
+            .map_or_else(|| "patch".to_string(), |s| s.to_string_lossy().into_owned());
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("BPS patch", &["bps"])
+            .set_file_name(format!("{stem}.bps"))
+            .save_file()
+        else {
+            return;
+        };
+        let msg = match crate::patch_recorder::write_patch_files(rec, pins, &path) {
+            Ok(written) => StatusMessage::info(format!(
+                "Saved {}",
+                written
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            )),
+            Err(e) => StatusMessage::error(format!("Save patch failed: {e}")),
+        };
+        self.ui.set_status(msg);
     }
 
     /// v2.3.6 — mirror the combined write gate onto the debugger overlay.
@@ -9575,6 +9795,9 @@ impl App {
     /// delta (not one-frame-per-rAF unconditionally) keeps wall-clock
     /// NTSC speed correct on non-60 Hz panels.
     #[cfg(target_arch = "wasm32")]
+    // One per-frame browser pump; v3.7.0's recorder status took it one line
+    // past the limit.
+    #[allow(clippy::too_many_lines)]
     fn pace_and_produce_wasm(&mut self) {
         // Produce the due frames only when a ROM is loaded; the
         // `request_redraw()` re-arm at the end runs UNCONDITIONALLY (even
@@ -9716,6 +9939,17 @@ impl App {
                     guard.writes_locked = locked;
                     guard.raw_cheats = raw_cheats;
                     guard.debug_pokes.extend(debug_pokes);
+                    // v3.7.0 — the ROM views' recorder status. ROM edits work
+                    // in the browser; "Save patch..." is desktop-only (the
+                    // request is dropped here), recorded as such in
+                    // `docs/live-patch-recorder.md`.
+                    let _ = debugger.take_save_patch_request();
+                    guard.tas_session_active = debugger.tas_active();
+                    debugger.set_rom_patch_info(crate::debugger::RomPatchInfo {
+                        recording: guard.rom_patch.is_some(),
+                        writes: guard.rom_writes,
+                        last: guard.rom_write_status.clone(),
+                    });
                     // v2.3.6 — the RAM Atlas needs the same gate: it advances the
                     // live `Nes` and pokes work RAM, which would diverge a TAS
                     // timeline being recorded or replayed. Mirrored here as well as
@@ -10002,6 +10236,8 @@ impl App {
             } else {
                 emu.set_nes(nes);
             }
+            // v3.7.0 — the live-patch recorder's clean image.
+            emu.start_rom_patch(&self.rom_bytes);
             emu.begin_web_battery()
         };
         // v2.9.9 (NF-12) — every browser load lands here; a recording the
@@ -10217,6 +10453,8 @@ impl App {
             } else {
                 guard.set_nes(nes);
             }
+            // v3.7.0 — the live-patch recorder's clean image.
+            guard.start_rom_patch(&self.rom_bytes);
             if let Some(raw) = raw_cheats {
                 guard.raw_cheats = raw;
             }
@@ -10312,6 +10550,7 @@ fn netplay_status_view(s: &crate::netplay_ui::NetplayStatus) -> crate::debugger:
         stalled: s.stalled,
         spectator_pending: s.spectator_pending,
         message: s.message.clone(),
+        relay_note: s.relay_note.clone(),
         diagnostics: s.diagnostics.clone(),
     }
 }
@@ -12869,6 +13108,110 @@ mod tests {
         assert!(at < after, "{name}: `{needle}` must come before `{later}`");
     }
 
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`) — every production site in this file
+    /// that starts a movie recording or a `TAStudio` session asks
+    /// `EmuCore::recording_refusal` first, so none records over live ROM
+    /// edits. The sites are found, not listed: every `fn` whose body calls
+    /// `start_recording_power_on` / `start_recording_branch` /
+    /// `TasEditor::new_from_power_on` must contain the check before that call,
+    /// and the four known ones must be among them (so a renamed entry point
+    /// cannot drop out of the sweep). The refusal itself is tested in
+    /// `emu::tests`.
+    #[test]
+    fn every_recording_entry_point_refuses_live_rom_edits() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]\nmod tests {")
+            .map_or(APP_SRC, |(before, _)| before);
+        let starts = [
+            "start_recording_power_on(",
+            "start_recording_branch(",
+            "TasEditor::new_from_power_on(",
+        ];
+        let mut sites = Vec::new();
+        for chunk in production.split("\n    fn ").skip(1) {
+            let name = chunk.split('(').next().unwrap_or_default().to_string();
+            let Some(first) = starts.iter().filter_map(|s| chunk.find(s)).min() else {
+                continue;
+            };
+            let check = chunk
+                .find("recording_refusal()")
+                .unwrap_or_else(|| panic!("{name} starts a recording without recording_refusal"));
+            assert!(check < first, "{name}: recording_refusal must come first");
+            sites.push(name);
+        }
+        for known in [
+            "handle_movie_record_toggle",
+            "handle_movie_branch",
+            "ensure_tas_editor",
+        ] {
+            assert!(
+                sites.iter().any(|s| s == known),
+                "{known} left the sweep: {sites:?}"
+            );
+        }
+        // The browser handlers (cfg wasm32) are in the same file.
+        for known in [
+            "handle_movie_record_toggle_wasm",
+            "handle_movie_branch_wasm",
+        ] {
+            assert!(
+                sites.iter().any(|s| s == known),
+                "{known} left the sweep: {sites:?}"
+            );
+        }
+    }
+
+    /// v3.7.0 (#646 review) — every production site that starts movie
+    /// playback or a netplay session asks `EmuCore::session_refusal` first:
+    /// both run the console as it stands under the clean ROM's hash, so a
+    /// live ROM edit would replay a movie against the wrong bytes or desync a
+    /// peer. The rule itself is tested in `emu::tests`.
+    #[test]
+    fn every_playback_and_netplay_entry_point_refuses_live_rom_edits() {
+        const APP_SRC: &str = include_str!("app.rs");
+        let production = APP_SRC
+            .split_once("\n#[cfg(test)]\nmod tests {")
+            .map_or(APP_SRC, |(before, _)| before);
+        let starts = [
+            "movie.start_playback(",
+            "BrowserNetplay::new(",
+            "self.start_edge_spectate(",
+            "self.netplay.start_host(",
+            "self.netplay.start_join(",
+            "self.netplay.start_spectate(",
+        ];
+        let mut sites = Vec::new();
+        for chunk in production.split("\n    fn ").skip(1) {
+            let name = chunk.split('(').next().unwrap_or_default().to_string();
+            // `start_edge_spectate` is reached only through the guarded
+            // `handle_netplay_request`; its own body starts the session.
+            if name == "start_edge_spectate" {
+                continue;
+            }
+            let Some(first) = starts.iter().filter_map(|s| chunk.find(s)).min() else {
+                continue;
+            };
+            let check = chunk
+                .find("session_refusal()")
+                .unwrap_or_else(|| panic!("{name} starts a session without session_refusal"));
+            assert!(check < first, "{name}: session_refusal must come first");
+            sites.push(name);
+        }
+        for known in [
+            "handle_movie_play_toggle",
+            "handle_movie_import",
+            "start_movie_from_bytes",
+            "handle_lobby_request",
+            "handle_netplay_request",
+        ] {
+            assert!(
+                sites.iter().any(|s| s == known),
+                "{known} left the sweep: {sites:?}"
+            );
+        }
+    }
+
     /// v3.4.0 (`T-RA-HARDCORE`) — every start site of a feature RA hardcore
     /// forbids asks the one rule (`session_policy::hardcore`) before it does
     /// anything. `App` needs a window and the emulation thread, so this pins
@@ -12966,6 +13309,13 @@ mod tests {
         assert_before(
             "set_ra_hardcore",
             "crate::session_policy::refusal(TimelineAction::PowerCycle, owners).is_some()",
+            "ra.set_hardcore(on)",
+        );
+        // v3.7.0 — live ROM edits block the switch: the power cycle below
+        // keeps the mapper's edited buffers, so the refusal must come first.
+        assert_before(
+            "set_ra_hardcore",
+            "if self.emu.lock().has_rom_edits() {",
             "ra.set_hardcore(on)",
         );
         assert_before(
@@ -13806,7 +14156,7 @@ mod tests {
         );
         // The F8 branch refuses netplay, as record / play / import do.
         let body = prod
-            .split_once("fn handle_movie_branch(&self) {")
+            .split_once("fn handle_movie_branch(&mut self) {")
             .map(|(_, rest)| rest.split_once(" fn ").map_or(rest, |(b, _)| b))
             .expect("handle_movie_branch exists");
         assert!(

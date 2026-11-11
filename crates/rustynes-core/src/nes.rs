@@ -2259,6 +2259,40 @@ impl Nes {
         self.bus.debug_poke_oam(idx, value);
     }
 
+    /// v3.7.0 — the length of one ROM section as the debugger can edit it
+    /// (`None`: the board does not offer it). See [`crate::RomSpace`].
+    #[cfg(feature = "debug-hooks")]
+    pub fn debug_rom_len(&mut self, space: crate::RomSpace) -> Option<usize> {
+        self.bus.debug_rom_len(space)
+    }
+
+    /// v3.7.0 — one ROM byte by image offset, side-effect-free (`None`:
+    /// unsupported section or past its end).
+    #[cfg(feature = "debug-hooks")]
+    pub fn debug_peek_rom(&mut self, space: crate::RomSpace, offset: usize) -> Option<u8> {
+        self.bus.debug_peek_rom(space, offset)
+    }
+
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`) — write one PRG-ROM or CHR-ROM byte in
+    /// place by image offset, visible to the next CPU fetch / PPU pattern
+    /// fetch. The live ROM editor's write; reached only through the
+    /// frontend's gated post-frame poke path. See
+    /// `SystemBus::debug_poke_rom`.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::RomWriteError`] when the board does not offer the section or
+    /// the offset is past its end; nothing changes then.
+    #[cfg(feature = "debug-hooks")]
+    pub fn debug_poke_rom(
+        &mut self,
+        space: crate::RomSpace,
+        offset: usize,
+        value: u8,
+    ) -> Result<(), crate::RomWriteError> {
+        self.bus.debug_poke_rom(space, offset, value)
+    }
+
     /// v1.7.0 "Forge" Workstream B (Lua API parity) — debugger/scripted
     /// writeback of the CPU register file (`a`/`x`/`y`/`s`/`p` bits/`pc`). The
     /// structured-state counterpart of [`Self::poke_ram`], backing the Lua
@@ -6816,6 +6850,140 @@ mod tests {
             fresh.timeline_generation(),
             1,
             "the fresh instance must count its own restores, not inherit a stored value"
+        );
+    }
+
+    /// A `UxROM` (mapper 2) image written for the live-ROM-write tests
+    /// (public-domain by construction): 64 KiB PRG in four 16 KiB banks, the
+    /// last fixed at `$C000`, and 8 KiB of CHR-ROM. The program, in the fixed
+    /// bank, selects bank 1 at `$8000` (storing `$01` over a ROM byte that
+    /// holds `$01`, so a bus conflict changes nothing), then every pass loads
+    /// `$8010` into `$10` and, through `$2006` / `$2007`, the PPU's byte at
+    /// `$0010` into `$11`. Gated like its two callers: without `debug-hooks`
+    /// (e.g. `-p rustynes-core --features cpu-boot-trace`) it is dead code.
+    #[cfg(feature = "debug-hooks")]
+    fn romwrite_uxrom() -> Vec<u8> {
+        const FIXED: usize = 3 * 0x4000; // PRG offset of `$C000`.
+        const PROGRAM: [u8; 34] = [
+            0x78, // SEI
+            0xA9, 0x01, 0x8D, 0x40, 0xC0, // LDA #$01 ; STA $C040 (select bank 1)
+            0xAD, 0x10, 0x80, 0x85, 0x10, // loop: LDA $8010 ; STA $10
+            0xAD, 0x02, 0x20, // LDA $2002 (reset the address latch)
+            0xA9, 0x00, 0x8D, 0x06, 0x20, // LDA #$00 ; STA $2006
+            0xA9, 0x10, 0x8D, 0x06, 0x20, // LDA #$10 ; STA $2006
+            0xAD, 0x07, 0x20, // LDA $2007 (fills the read buffer)
+            0xAD, 0x07, 0x20, 0x85, 0x11, // LDA $2007 ; STA $11
+            0x4C, 0x06, // JMP loop ($C006), low byte ...
+        ];
+        let mut rom = b"NES\x1A\x04\x01\x20\x00\x00\x00\x00\x00\x00\x00\x00\x00".to_vec();
+        let mut prg = vec![0u8; 0x10000];
+        prg[FIXED..FIXED + PROGRAM.len()].copy_from_slice(&PROGRAM);
+        prg[FIXED + PROGRAM.len()] = 0xC0; // ... and high byte.
+        prg[FIXED + 0x40] = 0x01;
+        // Bank 0 and bank 1 hold different bytes at offset $10.
+        prg[0x0010] = 0x11;
+        prg[0x4010] = 0x22;
+        for v in [0xFFFA, 0xFFFC, 0xFFFE] {
+            prg[v] = 0x00;
+            prg[v + 1] = 0xC0;
+        }
+        rom.extend_from_slice(&prg);
+        let mut chr = vec![0u8; 0x2000];
+        chr[0x10] = 0x33;
+        rom.extend_from_slice(&chr);
+        rom
+    }
+
+    /// v3.7.0 (`T-HACK-BPS-RECORDER`): a PRG-ROM byte written by image offset
+    /// is the byte the CPU fetches at the address the current bank maps it
+    /// to, and only there; a CHR-ROM byte is the byte the PPU reads at its
+    /// pattern address, through a real `$2007` read by the program.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn a_live_rom_write_is_read_through_the_current_banking() {
+        use crate::{RomSpace, RomWriteError};
+        let rom = romwrite_uxrom();
+        let mut nes = Nes::from_rom(&rom).expect("uxrom");
+        assert_eq!(nes.debug_rom_len(RomSpace::Prg), Some(0x10000));
+        assert_eq!(nes.debug_rom_len(RomSpace::Chr), Some(0x2000));
+        nes.run_frame();
+        nes.run_frame();
+        assert_eq!((nes.peek(0x10), nes.peek(0x11)), (0x22, 0x33), "clean");
+        // Bank 0 is not mapped at $8000 (bank 1 is): editing it changes
+        // nothing the program reads.
+        nes.debug_poke_rom(RomSpace::Prg, 0x0010, 0xAA)
+            .expect("in range");
+        nes.run_frame();
+        assert_eq!(nes.peek(0x10), 0x22, "bank 0 is not mapped");
+        assert_eq!(nes.debug_peek_rom(RomSpace::Prg, 0x0010), Some(0xAA));
+        // Bank 1's byte is: the next frame's fetch of $8010 returns it.
+        nes.debug_poke_rom(RomSpace::Prg, 0x4010, 0xBB)
+            .expect("in range");
+        assert_eq!(nes.cpu_bus_peek(0x8010), 0xBB);
+        nes.run_frame();
+        assert_eq!(nes.peek(0x10), 0xBB, "the CPU fetches the edited byte");
+        // CHR: the program's $2007 read of $0010 returns the edit.
+        nes.debug_poke_rom(RomSpace::Chr, 0x0010, 0xCC)
+            .expect("in range");
+        assert_eq!(nes.ppu_bus_peek(0x0010), 0xCC);
+        nes.run_frame();
+        assert_eq!(
+            nes.peek(0x11),
+            0xCC,
+            "the PPU reads the edited pattern byte"
+        );
+        // Past the end: refused, nothing changes.
+        assert_eq!(
+            nes.debug_poke_rom(RomSpace::Prg, 0x10000, 0),
+            Err(RomWriteError::OutOfRange {
+                space: RomSpace::Prg,
+                offset: 0x10000,
+                len: 0x10000
+            })
+        );
+        assert_eq!(nes.debug_peek_rom(RomSpace::Chr, 0x2000), None);
+        // A CHR-RAM board offers no CHR-ROM.
+        let mut ram = rom;
+        ram[5] = 0;
+        ram.truncate(16 + 0x10000);
+        let mut nes = Nes::from_rom(&ram).expect("uxrom, CHR-RAM");
+        assert_eq!(nes.debug_rom_len(RomSpace::Chr), None);
+        assert_eq!(
+            nes.debug_poke_rom(RomSpace::Chr, 0, 1),
+            Err(RomWriteError::Unsupported(RomSpace::Chr))
+        );
+    }
+
+    /// v3.7.0: save states carry no ROM. A state taken on a patched session
+    /// and restored into a console built from the clean image runs the clean
+    /// ROM (the edit is not in the state), and restoring a state into the
+    /// patched console keeps the edit (a rewind does not undo it). The
+    /// state is the same bytes with or without the edit.
+    #[cfg(feature = "debug-hooks")]
+    #[test]
+    fn save_states_carry_no_rom_edit() {
+        use crate::RomSpace;
+        let rom = romwrite_uxrom();
+        let mut clean = Nes::from_rom(&rom).expect("uxrom");
+        let mut patched = Nes::from_rom(&rom).expect("uxrom");
+        clean.run_frame();
+        patched.run_frame();
+        patched
+            .debug_poke_rom(RomSpace::Prg, 0x4010, 0xBB)
+            .expect("in range");
+        let state = patched.snapshot();
+        assert_eq!(state, clean.snapshot(), "the edit is not in the state");
+        let mut fresh = Nes::from_rom(&rom).expect("uxrom");
+        fresh.restore(&state).expect("restores");
+        fresh.run_frame();
+        assert_eq!(fresh.peek(0x10), 0x22, "the clean ROM runs");
+        patched.restore(&state).expect("restores");
+        patched.run_frame();
+        assert_eq!(patched.peek(0x10), 0xBB, "the edit survives a restore");
+        assert_eq!(
+            patched.rom_sha256(),
+            fresh.rom_sha256(),
+            "the identity stays the clean image's"
         );
     }
 }

@@ -167,6 +167,34 @@ impl Oracle {
             .map_err(|e| format!("{e:?}"))
     }
 
+    /// Construct a Famicom Disk System console from a disk image, an 8 KiB
+    /// BIOS and the power-on seed (v3.7.0, for the `MiSTer` core's Phase F4b).
+    ///
+    /// The same seeded power-on work-RAM fill as [`Self::new`]
+    /// (`Nes::set_power_on_ram` with `PowerOnRam::Seeded`, which is what
+    /// `Nes::from_rom_with_power_on_seed` applies to a cartridge), so an FDS
+    /// golden obeys the same "same seed" half of the determinism contract.
+    /// The BIOS is an input, never a default: the real `disksys.rom` is
+    /// Nintendo's and is not in this repository, and the `MiSTer` gates pass
+    /// a synthetic one their own generator writes.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if the disk image does not parse or the BIOS is not
+    /// exactly 8 KiB (`Nes::from_disk`'s own refusal).
+    pub fn new_disk(disk: &[u8], bios: &[u8], seed: u64) -> Result<Self, String> {
+        Nes::from_disk(disk, bios)
+            .map(|mut nes| {
+                nes.set_power_on_ram(rustynes_core::PowerOnRam::Seeded(seed));
+                Self {
+                    nes,
+                    apu_trace: None,
+                    ext_audio_trace: None,
+                }
+            })
+            .map_err(|e| format!("{e:?}"))
+    }
+
     /// The emulator, for the safe Rust callers (the golden-export binary).
     ///
     /// `#[must_use]` because discarding a borrow of the emulator is always a
@@ -1647,5 +1675,40 @@ mod tests {
         let mut o = Oracle::new(&rom, 0).expect("oracle");
         o.enable_apu_trace(400_000);
         assert_eq!(o.apu_trace.as_ref().expect("armed").cap, 400_000);
+    }
+
+    /// v3.7.0: an FDS image boots from the BIOS it is given, with the same
+    /// seeded work-RAM fill as a cartridge, and a BIOS that is not 8 KiB is
+    /// refused rather than padded.
+    #[test]
+    fn a_disk_image_boots_from_the_bios_it_is_given() {
+        // One side: a disk-info block and an empty file-amount block.
+        let mut side = vec![0u8; 65_500];
+        side[0] = 0x01;
+        side[1..15].copy_from_slice(b"*NINTENDO-HVC*");
+        side[56] = 0x02;
+        let mut disk = b"FDS\x1a\x01".to_vec();
+        disk.resize(16, 0);
+        disk.extend_from_slice(&side);
+        // `INC $00` / `JMP $E000` at the reset vector.
+        let mut bios = vec![0u8; 0x2000];
+        bios[..5].copy_from_slice(&[0xE6, 0x00, 0x4C, 0x00, 0xE0]);
+        bios[0x1FFC] = 0x00;
+        bios[0x1FFD] = 0xE0;
+        let mut o = Oracle::new_disk(&disk, &bios, 7).expect("an FDS console");
+        let seeded = Oracle::new_disk(&disk, &bios, 7).expect("again");
+        assert_eq!(
+            o.nes().bus().ram_bytes(),
+            seeded.nes().bus().ram_bytes(),
+            "seeded fill"
+        );
+        let before = o.nes().bus().ram_bytes()[0];
+        o.nes_mut().run_frame();
+        o.nes_mut().run_frame();
+        assert_ne!(o.nes().bus().ram_bytes()[0], before, "the BIOS program ran");
+        assert!(
+            Oracle::new_disk(&disk, &bios[..0x1000], 7).is_err(),
+            "a 4 KiB BIOS"
+        );
     }
 }

@@ -29,7 +29,7 @@ remain the canonical reference implementations. Mesen2 itself vendors
 `emu2413.cpp` verbatim from upstream.
 
 The v2.0.0 release plan
-(`/home/parobek/.claude/plans/generate-a-new-plan-snug-starlight.md`)
+(`~/.claude/plans/generate-a-new-plan-snug-starlight.md`)
 budgets 2-3 weeks for a clean-room Rust port of `emu2413`, landing as
 **v1.1.0** — the first SemVer-additive milestone after v1.0.0 final
 (released 2026-05-23). This ADR documents what landed.

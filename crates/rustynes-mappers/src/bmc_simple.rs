@@ -266,6 +266,14 @@ impl SimpleBmc {
 }
 
 impl Mapper for SimpleBmc {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

@@ -4,8 +4,11 @@ This is the spec for `rustynes-netplay`'s session layer: how
 `RollbackSession` keeps and uses its rollback window (v3.4.0,
 `T-NETPLAY-ROLLBACK-WINDOW`, section 1), and how every native datagram is
 authenticated (v3.4.0, `T-NETPLAY-DATAGRAM-AUTH`, protocol 9, section 2,
-[ADR 0046](adr/0046-a-per-session-secret-authenticates-every-netplay-datagram.md)).
-Transport, NAT traversal, WebRTC and the lobby are in
+[ADR 0046](adr/0046-a-per-session-secret-authenticates-every-netplay-datagram.md)),
+and the two protocol-10 additions of v3.7.0 (Sync magic `"RN10"`): desync
+forensics (section 4) and edge-relayed spectating (section 5). Protocol 10
+changes nothing in sections 1 to 3; it adds messages, so a protocol-9 peer is
+refused at the handshake. Transport, NAT traversal, WebRTC and the lobby are in
 [`netplay-webrtc.md`](netplay-webrtc.md).
 
 Netplay is on the frontend side of the determinism contract: nothing here
@@ -79,7 +82,7 @@ Nothing in netplay reads the framebuffer as input. A Zapper would (it senses
 light from the picture), but netplay carries only standard controllers and
 the Four Score.
 
-### 1.4 The digest (protocol 9)
+### 1.4 The digest (since protocol 9)
 
 `gameplay_digest` is `framebuffer_digest(framebuffer) ^ cycle * 0x100_0000_01b3`.
 Until v3.4.0 the framebuffer term was FNV-1a 64 over every byte. Since
@@ -237,7 +240,14 @@ session already ignores an input or ack naming its own, so it needs no check.
 - An attacker who observes the handshake can derive the key (the shares are
   in the clear). X25519 plus an authenticated fingerprint is the follow-up.
 - The handshake itself is first-come, as before.
-- Spectators carry no key; no host-side spectator broadcast exists yet.
+- Spectators carry no key. A direct-link spectator is unauthenticated, and so
+  is a viewer of the edge relay (section 5), which receives only the
+  identity and confirmed inputs; a relay publisher proves ownership of its
+  match with its publish key, not the session secret. The relay match id is
+  therefore a viewer's whole credential. The desktop mints a random 128-bit
+  id when a host publishes with none, and warns when a typed one is shorter
+  than 22 characters (`NetplayConfig::edge_match_or_mint`,
+  `edge_match_is_guessable`).
 - The browser (WebRTC) path does not seal: its data channel is DTLS.
 
 ### 2.5 Gates
@@ -274,7 +284,7 @@ mesh (`docs/netplay-webrtc.md` section 2.4): `NetplayUi::start_host` with 3 or
 its roster index against a mesh host. Every session runs over a sealed
 transport boxed as `Box<dyn Transport>` (`impl Transport for Box<T>`).
 
-**Acks are per player (protocol 9).** `InputAck { player, frame }`; the
+**Acks are per player (since protocol 9).** `InputAck { player, frame }`; the
 session keeps one ack per remote player and resends from the least of them.
 Before, the highest ack from any peer stood for all of them: found when the
 3-player UI test's host stalled at frame 9 with nothing confirmed, because it
@@ -306,3 +316,167 @@ capped at 1.
 
 **Not done.** Live play across machines (the maintainer's run); NAT traversal
 or TURN for more than two players (direct IP only); mobile (`MOB-09`).
+
+## 4. Desync forensics (v3.7.0, protocol 10)
+
+`T-NETPLAY-DESYNC-FORENSICS`, `crates/rustynes-netplay/src/forensics.rs`.
+
+The checksum (section 1.4) says THAT two peers diverged, at a checkpoint, and
+whether the picture or only the cycle term differs. It cannot say where: it
+covers the framebuffer and the cycle counter only, so a wrong RAM byte stays
+invisible until it reaches the picture, often many frames after its cause.
+Forensics names the first frame whose state differs, the `.rns` section, and
+the byte.
+
+### 4.1 Opt-in
+
+Forensics sends parts of the machine state to the peer, so it is off unless
+each peer turns it on: `RollbackSession::enable_forensics` (the desktop's
+`[netplay] desync_forensics` setting and the netplay panel's checkbox, the
+mobile bridge's `np_set_desync_forensics`). A peer that has not opted in
+ignores every forensics message and sends no state; the other side reports
+"no digest from the peer yet".
+
+### 4.2 What travels
+
+| Message (tag) | Carries | When |
+|---|---|---|
+| `StateDigest` (7) | up to 8 frames of per-section digests: one 64-bit digest of each of the `CPU`, `BUS`, `MAP`, `PPU`, `APU` section bodies of the machine entering the frame | every tick: every frame not sent yet, and the newest 4 again, so a burst of confirmations skips nothing and a lost datagram is covered |
+| `ForensicChunk` (8) | up to 1,024 bytes of one differing section body, at an offset, with the body's length | while the bodies are exchanged: up to 32 a tick, from where the peer's acknowledgement stands (go-back-N) |
+| `ForensicAck` (9) | how much of one body has arrived contiguously | every tick of the exchange |
+
+The digests are `framebuffer_digest` of each section body, taken from the
+rollback window entry of each frame as it confirms: the same canonical
+snapshot every peer reaches byte for byte (section 1.1). Only the sections
+whose digests differ travel: one wrong RAM byte costs one `BUS` body, about
+2.4 KiB. A peer keeps the snapshots of its last 64 confirmed frames (about
+16 MiB) so the divergence frame's bytes are still at hand when the peer's
+digests reveal it; a divergence found later than that reports the sections
+from the digests alone.
+
+### 4.3 The report
+
+`RollbackSession::forensics_report` returns a `ForensicReport`:
+
+- **`frame`**: the first frame whose ENTERING state differs. Whatever
+  diverged did so while the frame before it ran (or, for a write from outside
+  the core such as a RAM cheat, between the two).
+- **`sections`**: every differing section, in the order CPU, BUS, MAP, PPU,
+  APU (from the state a game's code reads most directly to the one it reads
+  least), each with its first differing byte, both peers' values there, and
+  how many bytes differ. `primary()` is the first.
+- **Locations**: a `BUS` byte at offsets 8 to `0x807` is CPU RAM `$0000` to
+  `$07FF` (the section's 2 KiB image follows its 8-byte cycle counter);
+  offsets 0 to 7 are that counter. Any other byte is reported as its offset
+  in the section body.
+
+A report is about bytes, not causes: two sections can differ at one frame
+because one wrote the other. The `APU` section also holds the host audio
+resampler's state and output rate, so peers at different output sample rates
+differ there with no gameplay difference; a report whose only differing
+section is `APU` says so.
+
+### 4.4 After a fatal desync
+
+`NetplayError::Desync` ends the session, but the exchange may still be
+running. `RollbackSession::pump_forensics` polls, folds in only the forensics
+messages and sends this peer's; the desktop keeps an ended session in an
+`Investigating` state, pumping it for up to 10 seconds, and then shows the
+report (or that the peer sent nothing) as the error message. The mobile
+bridge keeps it until `np_forensics` has returned a report or the app leaves.
+
+### 4.5 Limits
+
+- One divergence per session, against the first peer it is found with; a 3-4
+  player mesh reports the first pair.
+- Forensics never writes the emulator, the inputs or the checksum: a session
+  with it on produces every frame, sample and checksum byte-identically to
+  one with it off. Its cost, on an opted-in peer only, is one section-digest
+  pass and one snapshot copy per confirmed frame.
+
+### 4.6 Gates
+
+`tests/desync_forensics.rs`: two peers on a perfect in-memory link (nothing
+mispredicts, so no rollback can replay the planted byte away); after frame
+90, one byte of player 2's CPU RAM at `$0300`, which the fixture ROM never
+reads, is XORed with `$A5`. The gameplay checksum never fires.
+
+- `a_planted_ram_byte_is_found_at_its_frame_and_address`: both peers' reports
+  name frame 91, `BUS`, CPU RAM `$0300`, one differing byte, and each side's
+  own and the other's value.
+- `the_exchange_finishes_after_the_session_stops_advancing`: the same,
+  finished by `pump_forensics` alone once the divergence is found.
+- `a_peer_that_did_not_opt_in_sends_no_state`.
+
+Mutations caught: the RAM image's offset in `BUS` moved to 0 (address
+wrong); the report frame one early; the `BUS` digest comparison skipped (no
+report); forensics on by default (the opt-in test).
+
+## 5. Edge-relayed spectating (v3.7.0, protocol 10)
+
+`T-NETPLAY-EDGE-SPECTATE`: `crates/rustynes-netplay/src/edge.rs` (the viewer
+and the publisher), `edge_client.rs` (the native WebSocket client), and the
+relay, `services/hosted/src/spectate.ts` (its README section "Spectate relay"
+has the limits, the cost, the deploy and the live gates).
+
+### 5.1 The stream
+
+The host's `EdgePublisher` copies each newly confirmed frame out of the
+session and sends them as `ConfirmedInputs` (tag 10) in batches of
+`BATCH_FRAMES` (8): the player count, the first frame, and every port's input
+for up to 64 consecutive frames. Its first message is the match's `Sync`
+(identity: ROM, configuration, emulation epoch), and `flush` sends the last,
+shorter batch when the session ends. At 60 Hz that is 7.5 messages a second,
+a quarter of what the relay admits; one message per tick (v3.7.0 before
+the PR #646 review) was twice it, and the relay stalled two seconds in. The relay
+appends a batch only if it continues the log (storing only its new frames),
+closes a publisher whose batch it must drop for the rate or a gap, keeps the
+log, and gives a new viewer the identity and the whole log from frame 0
+before the live feed. Each publish connection is a session: a new one from
+the owner restarts the match's log. The relay carries nothing else: never a
+frame, a sample or a state.
+
+### 5.2 The viewer
+
+`EdgeSpectator` refuses another identity as `SpectatorSession` does, keeps
+the input log, and runs the core from the deterministic power-on
+(`power_on_for_movie`, the start every session uses). A confirmed frame ran on
+every player's real input, so the viewer reaches the players' confirmed state
+byte for byte at every frame; it predicts nothing and never rolls back.
+
+- **Seek and rewind:** a keyframe (core snapshot) every `keyframe_interval`
+  frames (300 by default; at most `max_keyframes`, the join point always
+  kept). A seek restores the nearest keyframe at or before the target and
+  replays the log to it, then pauses.
+- **Views:** `View::Live` follows the newest confirmed frame;
+  `View::Paused` holds where a seek or pause left it.
+- **Joining from a checkpoint:** over a direct link, a viewer can join from
+  `StateCheckpoint` (tag 11): a core snapshot of the machine entering a frame,
+  in pieces of up to 1,024 bytes, then the inputs from that frame. Any viewer
+  that has caught up holds such a machine (`EdgeSpectator::checkpoint`). The
+  relay refuses tag 11: through the relay a viewer always joins from frame 0.
+
+### 5.3 Gates
+
+`tests/edge_spectate.rs` (two players on an in-memory link with latency and
+jitter, so they roll back; the host's published frames go through the wire
+encoding):
+
+- `a_viewer_joining_mid_session_matches_the_players`: a viewer that joins
+  after 300 confirmed frames gets the log from frame 0 and matches the
+  players' confirmed entering digest at every frame it shows for 300 more.
+- `a_viewer_joining_from_a_checkpoint_matches_the_players`: a second viewer
+  joins from a checkpoint the first serves, and matches for 200 frames.
+- `seek_and_rewind_land_on_the_players_frames`.
+- `hosted_spectate_vectors_match_the_encoder`: pins the byte layouts the
+  Worker classifies (`services/hosted/test/vectors/spectate-vectors.json`,
+  which `spectate.test.ts` replays).
+
+`services/hosted/test/spectate.test.ts` (vitest in workerd): the classifier;
+a mid-session viewer gets the backlog then the live feed; inputs only (a
+checkpoint, a checksum, a per-player input, a text frame and a second identity
+are dropped, five in all, and only the next valid batch is forwarded); the log
+survives eviction; only the claiming key may publish, one at a time; the
+per-IP viewer and match limits; the kill switch at the Worker and in the
+object. `tests/edge_live.rs` is the same mid-session join against a running
+relay (`#[ignore]`d; the deploy's live gate).

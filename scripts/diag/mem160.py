@@ -1,4 +1,5 @@
-mem="/home/parobek/.claude/projects/-home-parobek-Code-Commercial-Private-Projects-RustyNES-v2/memory/project_r4_oam_dma_oracle.md"
+import sys
+mem = sys.argv[1]  # path to the agent memory note project_r4_oam_dma_oracle.md
 txt=open(mem).read()
 m="## §160 — r4 $2002 residual: CUMULATIVE DMA DRIFT confirmed (2026-05-30 session 6)"
 if m not in txt:

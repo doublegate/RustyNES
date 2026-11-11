@@ -171,6 +171,14 @@ set of debugging and authoring tools, reachable from the **Tools** and
 - **Breakpoints and watchpoints** — execute / read / write breakpoints,
   with full expression and conditional support.
 - **Hex editor** — the Memory panel's write mode, for editing RAM live.
+  Since v3.7.0 its PRG-ROM and CHR-ROM views (by offset in the ROM image)
+  edit the cartridge's ROM while the game runs. Each edit is recorded, and
+  **Save patch...** writes them as a `.bps` patch, plus a `.pins.toml`
+  sidecar for any RAM pins. **Reset edits** puts the clean bytes back. ROM
+  edits are refused during netplay, movie playback or recording, TAStudio
+  and RetroAchievements hardcore, and a movie cannot start recording while
+  the ROM has unsaved edits. See
+  [`docs/live-patch-recorder.md`](../live-patch-recorder.md).
 - **RAM search** — Cheat-Engine-style value search to find variables.
 - **Trace logger** — log executed instructions to a file.
 - **Event viewer** — a per-dot PPU event heatmap and per-scanline trace.

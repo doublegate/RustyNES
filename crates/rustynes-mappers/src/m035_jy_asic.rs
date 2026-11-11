@@ -596,6 +596,14 @@ impl JyAsic {
 }
 
 impl Mapper for JyAsic {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     /// v3.1.0: not pure -- PPU reads clock its IRQ counter, and mapper 209 latches CHR on reads, so the PPU's display-only
     /// "disable sprite limit" reads are not made on this board.
     fn chr_reads_are_pure(&self) -> bool {

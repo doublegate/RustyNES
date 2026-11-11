@@ -7,10 +7,12 @@
 
 import type { Budget } from "./budget";
 import type { Lobby } from "./lobby";
+import type { Spectate } from "./spectate";
 
 export interface Env {
   LOBBY: DurableObjectNamespace<Lobby>;
   BUDGET: DurableObjectNamespace<Budget>;
+  SPECTATE: DurableObjectNamespace<Spectate>;
 
   ALLOWED_ORIGINS?: string;
   ALLOW_LOCALHOST?: string;
@@ -28,6 +30,15 @@ export interface Env {
   LOBBY_MAX_CONNECTIONS_PER_IP?: string;
   LOBBY_CONNECTS_PER_IP_PER_MINUTE?: string;
   LOBBY_ROOMS_PER_IP_PER_MINUTE?: string;
+
+  SPECTATE_ENABLED?: string;
+  SPECTATE_MAX_VIEWERS?: string;
+  SPECTATE_MAX_VIEWERS_PER_IP?: string;
+  SPECTATE_CONNECTS_PER_IP_PER_MINUTE?: string;
+  SPECTATE_MATCHES_PER_IP_PER_HOUR?: string;
+  SPECTATE_DAILY_MATCHES?: string;
+  SPECTATE_MAX_FRAMES?: string;
+  SPECTATE_IDLE_SECONDS?: string;
 
   RA_ENABLED?: string;
   RA_UPSTREAM?: string;

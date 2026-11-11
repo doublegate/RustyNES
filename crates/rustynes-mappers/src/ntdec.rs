@@ -132,6 +132,10 @@ impl Ntdec63 {
 }
 
 impl Mapper for Ntdec63 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -290,6 +294,14 @@ impl Ntdec174 {
 }
 
 impl Mapper for Ntdec174 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -448,6 +460,10 @@ impl Ntdec2722M40 {
 }
 
 impl Mapper for Ntdec2722M40 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::CYCLE_IRQ
     }
@@ -632,6 +648,14 @@ impl Ntdec81 {
 }
 
 impl Mapper for Ntdec81 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -792,6 +816,14 @@ impl NtdecAsder112 {
 }
 
 impl Mapper for NtdecAsder112 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr_rom, true)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -966,6 +998,14 @@ impl NtdecTc112 {
 }
 
 impl Mapper for NtdecTc112 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }
@@ -1210,6 +1250,14 @@ impl NtdecN625092 {
 }
 
 impl Mapper for NtdecN625092 {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     fn caps(&self) -> MapperCaps {
         MapperCaps::NONE
     }

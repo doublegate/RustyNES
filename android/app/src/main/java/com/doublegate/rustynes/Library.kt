@@ -39,6 +39,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
@@ -234,6 +237,18 @@ private fun GameTile(
         modifier = Modifier
             .fillMaxWidth()
             .onFocusChanged { focused = it.isFocused }
+            // v3.7.0 (MOB-08): a d-pad-only TV has no long-press, so MENU, the
+            // gamepad Y button, or a long press of centre / Enter opens the menu.
+            .onPreviewKeyEvent { e ->
+                if (e.type == KeyEventType.KeyDown &&
+                    TileKeys.opensMenu(e.nativeKeyEvent.keyCode, e.nativeKeyEvent.isLongPress)
+                ) {
+                    menuOpen = true
+                    true
+                } else {
+                    false
+                }
+            }
             .combinedClickable(
                 onClick = onPlay,
                 onLongClick = { menuOpen = true },
@@ -277,11 +292,9 @@ private fun GameTile(
                     modifier = Modifier.size(18.dp),
                 )
             }
-            // The long-press context menu anchors to the tile. TODO(v1.8.8 WS G):
-            // a d-pad-only TV has no long-press, so favorite/box-art/move/remove are
-            // currently touch-only — the d-pad primary action (Enter = play) and the
-            // focusable star (favorite) cover the common cases; a future pass adds a
-            // d-pad context affordance (e.g. a long-press-equivalent menu key handler).
+            // The long-press context menu anchors to the tile. On a d-pad-only TV it
+            // opens from the key handler above (v3.7.0, MOB-08: MENU, Y, or a long
+            // press of centre / Enter; the v1.8.8 WS G TODO).
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
                     text = {

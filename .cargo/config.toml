@@ -73,19 +73,25 @@ incompatible-rust-versions = "fallback"
 # or `CARGO_ENCODED_RUSTFLAGS` environment variable (the latter even when set to
 # an empty value) replaces all of it, and a matching `[target.'cfg(...)']` table
 # in a user config is appended AFTER the triple flags, so a `target-cpu` there
-# wins (measured: `native ... x86-64-v3 ... znver1`). Check
-# with `-v` that the last `-C target-cpu` on the final rustc line is the one you
-# asked for. `full-baseline` and `full-v3` are x86-64 aliases: an Apple Silicon
+# wins (measured: `native ... x86-64-v3 ... znver1`). The alias sets only
+# `target-cpu`, so a user's own `-C target-feature=...` flags stay active on top
+# of it and `full-baseline` can then use features beyond `x86-64`: remove them
+# before comparing (PR #641 review). Check with `-v` that the last
+# `-C target-cpu` on the final rustc line is the one you asked for, and that no
+# `target-feature` follows it. THIS PARAGRAPH IS THE CANONICAL STATEMENT of
+# these rules; `docs/performance.md` and `docs/agents/tooling-traps.md` point
+# here rather than repeating it (v3.7.0, PR #641 review). `full-baseline` and `full-v3` are x86-64 aliases: an Apple Silicon
 # or other ARM host cannot target `x86-64` or `x86-64-v3`. `full-native` is valid
 # everywhere, so it also carries the `aarch64-apple-darwin` and
 # `aarch64-unknown-linux-gnu` keys.
 #
 # The CPU flag changes no emulated output (Rust enables no fast-math / FP
-# contraction under target-cpu), and no speed claim is made: none is measured,
-# and no harness here compares CPU targets yet. `scripts/perf/ab_check.sh`
-# compares two REVISIONS at one CPU configuration (it runs `cargo bench` without
-# these profiles or flags), so a CPU-target comparison means timing the three
-# binaries themselves under its evidence rule (`docs/performance.md`). On a
+# contraction under target-cpu), and a speed claim is only what
+# `docs/performance.md` records. `scripts/perf/ab_check.sh` compares two
+# REVISIONS at one CPU configuration (it runs `cargo bench` without these
+# profiles or flags), so the CPU-target comparison is its own tool,
+# `scripts/perf/cpu_target_ab.sh` (v3.7.0), which times the three built
+# binaries under the same evidence rule. On a
 # machine whose own config already sets `target-cpu=native`, plain `full-build`
 # is ALREADY a native build, so the baseline must pin `target-cpu=x86-64`.
 #

@@ -54,6 +54,8 @@ pub struct NetplayStatusView {
     pub spectator_pending: u32,
     /// Error / disconnect text (Error phase), else empty.
     pub message: String,
+    /// v3.7.0 — why publishing to the spectate relay stopped, else empty.
+    pub relay_note: String,
     /// v1.3.0 Workstream G1 — read-only desync diagnostics + room / input
     /// topology, rendered in the panel's "Diagnostics" section.
     pub diagnostics: NetplayDiagnosticsView,
@@ -89,6 +91,10 @@ pub struct NetplayDiagnosticsView {
     /// The most recent comparisons (oldest first), capped at
     /// [`NetplayDiagnosticsView::HISTORY_SHOWN`] entries for the panel table.
     pub recent: Vec<CrcCompareView>,
+    /// v3.7.0 (`T-NETPLAY-DESYNC-FORENSICS`) — the desync forensics line:
+    /// the report once there is one, else where the investigation stands.
+    /// `None` with forensics off.
+    pub forensics: Option<String>,
 }
 
 impl NetplayDiagnosticsView {
@@ -152,6 +158,12 @@ pub enum NetplayRequest {
     Spectate {
         /// The host's `IP:port`.
         remote: String,
+    },
+    /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — watch a match through the hosted
+    /// spectate relay.
+    EdgeSpectate {
+        /// The match id the host publishes under.
+        match_id: String,
     },
     /// Leave the current session (back to single-player).
     Leave,
@@ -325,6 +337,12 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
                 st.confirmed_frame
                     .map_or_else(|| "-".to_string(), |f| f.to_string()),
             ));
+            // v3.7.0 — a spectate-relay publisher that stopped (refused or
+            // disconnected). Play is unaffected, so this is a note, not an
+            // error state.
+            if !st.relay_note.is_empty() {
+                ui.colored_label(egui::Color32::from_rgb(0xE0, 0xB0, 0x40), &st.relay_note);
+            }
             let mut sync = Vec::new();
             if st.rolled_back {
                 sync.push(crate::tf!(NpRollback, st.resimulated_frames));
@@ -383,6 +401,12 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
             ui.label(egui::RichText::new(crate::t!(NpFourScoreNote)).weak());
         }
         ui.label(egui::RichText::new(crate::t!(NpHostNote)).weak());
+        // v3.7.0 — applies to the session this peer hosts or joins next.
+        ui.checkbox(
+            &mut config.netplay.desync_forensics,
+            crate::t!(NpForensicsOptIn),
+        );
+        ui.checkbox(&mut config.netplay.edge_publish, crate::t!(NpEdgePublish));
         if ui.button(crate::t!(NpHostButton)).clicked()
             && let Ok(port) = state.host_port.trim().parse::<u16>()
         {
@@ -436,6 +460,25 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
                 remote: state.spectate_remote.trim().to_string(),
             });
         }
+        // v3.7.0 — through the hosted relay, by match id.
+        ui.horizontal(|ui| {
+            ui.label(crate::t!(NpEdgeMatch));
+            ui.add(egui::TextEdit::singleline(&mut config.netplay.edge_match).desired_width(120.0));
+            if ui.button(crate::t!(NpEdgeWatch)).clicked()
+                && !config.netplay.edge_match.trim().is_empty()
+            {
+                state.request = Some(NetplayRequest::EdgeSpectate {
+                    match_id: config.netplay.edge_match.trim().to_string(),
+                });
+            }
+        });
+        if config.netplay.edge_publish && config.netplay.edge_match_is_guessable() {
+            ui.colored_label(
+                egui::Color32::from_rgb(0xE0, 0xB0, 0x40),
+                crate::t!(NpEdgeGuessable),
+            );
+        }
+        ui.label(egui::RichText::new(crate::t!(NpEdgeNote)).weak());
     });
 
     ui.separator();
@@ -512,6 +555,10 @@ fn diagnostics_section(ui: &mut egui::Ui, diag: &NetplayDiagnosticsView) {
                         diag.consecutive_mismatches
                     ));
                 }
+            }
+
+            if let Some(text) = &diag.forensics {
+                ui.label(crate::tf!(NpForensics, text));
             }
 
             if let Some(last) = diag.last_compare {
@@ -610,6 +657,7 @@ mod tests {
             local_player: 1,
             in_sync: false,
             first_desync_frame: Some(60),
+            forensics: Some("first divergence entering frame 61".to_string()),
             consecutive_mismatches: 3,
             total_compares: 10,
             mismatches: 3,

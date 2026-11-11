@@ -19,6 +19,16 @@
 //! default (flat) output is byte-identical.
 //!
 //! Reference: Mesen2 `Utilities/Audio/Equalizer.h`; RBJ "Audio EQ Cookbook".
+//!
+//! What that reference line means (maintainer, 2026-11-08, when v3.7.0 began
+//! compiling this file into the Android and iOS apps): Mesen2 is named as a
+//! *behaviour* reference only, the emulator whose user-facing EQ this one
+//! resembles (band layout, dB range). It is not a source of this code. The
+//! filter design is the public RBJ cookbook's peaking biquad, which is also the
+//! only source the original commit (`3fea6567`) cites. So this file carries no
+//! `Provenance` header and no row in `docs/originality-and-provenance.md`
+//! section 1. If that ever turns out to be wrong, the remedy is to attribute
+//! the file, not to reword this note.
 
 // Audio DSP: the FMA-vs-separate-ops rounding difference is inaudible, and the
 // u32->f32 sample-rate cast is exact for any real device rate. Readability of the

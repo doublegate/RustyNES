@@ -16,9 +16,8 @@ Nothing here ever COMMITS ROMs: ``tests/roms/external/**`` is gitignored and the
 (screenshots / .snap hashes) is committed, by the Rust harness, never by this
 tool.
 
-The default ROM-library root is the developer's No-Intro/GoodNES NES set::
-
-    ~/Dropbox/ROMs/Nintendo Entertainment System - Famicom (2020)/
+The default ROM-library root is ``$RUSTYNES_ROM_LIBRARY`` (the developer's own
+No-Intro/GoodNES NES set), else ``~/roms/nes``.
 
 Override or extend it with ``--root PATH`` (repeatable). The 25k-header library
 scan is cached to ``scripts/coverage/.library-index.json`` so ``survey`` /
@@ -79,9 +78,7 @@ def repo_root() -> str:
 
 
 REPO = repo_root()
-DEFAULT_LIB = os.path.expanduser(
-    "~/Dropbox/ROMs/Nintendo Entertainment System - Famicom (2020)"
-)
+DEFAULT_LIB = os.path.expanduser(os.environ.get("RUSTYNES_ROM_LIBRARY", "~/roms/nes"))
 CACHE_PATH = os.path.join(REPO, "scripts", "coverage", ".library-index.json")
 EXTERNAL = os.path.join(REPO, "tests", "roms", "external")
 SCREENSHOTS = os.path.join(REPO, "screenshots")

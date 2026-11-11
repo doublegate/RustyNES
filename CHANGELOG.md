@@ -26,25 +26,197 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
+
+### Breaking
+
+- **Netplay protocol 10** (handshake magic `"RN10"`): desync forensics and
+  edge-relayed spectating add messages an older peer cannot read. A peer on
+  v3.4.x to v3.6.x (protocol 9, `"RNE9"`) is refused at the handshake as
+  another emulator version, naming its emulation epoch, rather than
+  connecting and then waiting for forensics material it would drop. Both
+  players need v3.7.0.
+
 ### Added
+
+- **Desync forensics** (`T-NETPLAY-DESYNC-FORENSICS`, opt-in on each peer:
+  `[netplay] desync_forensics`, the netplay panel's checkbox, or the mobile
+  bridge's `np_set_desync_forensics`). Opted-in peers exchange a digest of
+  each save-state section (CPU, BUS, MAP, PPU, APU) for every confirmed
+  frame; at the first frame they differ, they exchange just the differing
+  sections and the netplay panel names the frame, the section, the first
+  differing byte (a CPU RAM address for RAM), both values and how many bytes
+  differ. It finds a divergence the gameplay checksum cannot see, such as a
+  RAM byte that has not reached the picture yet, and keeps collecting for up
+  to 10 seconds after a fatal desync. A peer that has not opted in sends no
+  state. Spec: `docs/netplay-session.md` section 4.
+
+- **The live-patch recorder** (`T-HACK-BPS-RECORDER`): PRG and CHR edits
+  recorded against a clean ROM are written as a BPS patch (implemented from
+  the format's public specification), and RAM pins go to a `.pins.toml`
+  sidecar in the raw RAM cheat format that the patch's metadata names by file
+  name and SHA-256. `rustynes patch-regress <ROM> <PATCH> <MOVIE> [--pins]`
+  replays a reference movie on the clean and the patched ROM and reports the
+  first frame they differ and why (a RAM address with both values, else a
+  pixel, else the cycle count). A patch recorded with RAM pins needs its
+  sidecar: without `--pins` the command refuses, naming the file. Spec:
+  `docs/live-patch-recorder.md`.
+
+- **Live ROM editing in the debugger** (`T-HACK-BPS-RECORDER`): the Memory
+  panel gains PRG-ROM and CHR-ROM views, by offset in the ROM file, whose
+  bytes can be edited while the game runs; the change is visible from the
+  next frame. Every edit is recorded, and **Save patch...** writes them as a
+  BPS patch of the clean ROM, with the enabled raw RAM cheats and freezes in
+  its `.pins.toml` sidecar (desktop). Edits are refused, with the reason
+  shown, in RetroAchievements hardcore, while a movie records or plays or
+  TAStudio is open, and during netplay. In turn, a movie recording (F6, F8
+  branch, the menu and replay-panel buttons) or a TAStudio session cannot
+  start while an edit exists, since the movie would name the clean ROM:
+  save the patch and load the patched ROM, or use **Reset edits**, which puts
+  the clean bytes back. Switching RetroAchievements hardcore on is refused the
+  same way, because the power cycle hardcore makes keeps the edited ROM, and
+  so are movie playback and netplay (host, join, spectate, the browser lobby):
+  both run the edited console under the clean ROM's hash, so a movie would
+  replay against the wrong bytes and a peer would desync. RAM pins alone
+  block none of these. Supported on
+  204 mapper numbers for PRG and 175 for CHR;
+  CHR-RAM boards, self-flashing boards (GTROM, flashable UNROM 512), the FFE
+  copiers, FDS and NSF are not. Save states carry no ROM, so loading one on
+  the clean ROM runs the clean game. Core: `Nes::debug_poke_rom` /
+  `debug_peek_rom` / `debug_rom_len` (`debug-hooks`) and the `Mapper` methods
+  `debug_prg_rom_mut` / `debug_chr_rom_mut` (default `None`). No emulation
+  change: with no edit, every frame is byte-identical.
+
+- **Edge-relayed spectating** (`T-NETPLAY-EDGE-SPECTATE`): a host
+  publishes its match's confirmed inputs to a relay at the network edge (a
+  Cloudflare Durable Object per match in the hosted service, `/spectate/<id>`)
+  that fans them out to up to 200 viewers. Each viewer runs the game locally
+  from that stream, joins mid-session from frame 0, and can seek, rewind and
+  pause; a viewer over a direct link can also join from a state checkpoint.
+  The relay carries inputs only, never frames or states, with per-address and
+  daily limits and a kill switch (`SPECTATE_ENABLED`). Native client
+  (`EdgeRelayClient`, `EdgeSpectator`, `EdgePublisher`) in `rustynes-netplay`.
+  On the desktop the netplay panel publishes a hosted match under a relay
+  match id and watches one by that id; it has no seek or rewind buttons yet,
+  though the client supports both. The publish key is minted once and kept
+  (`[netplay] edge_publish_key`), so a host can re-host its own match id; a
+  re-hosted match starts a fresh log on the relay, and the previous match's
+  viewers are told it restarted. The host sends inputs in 8-frame batches
+  (7.5 messages a second at 60 Hz, inside the relay's limit), and a refused,
+  dropped or stalled publish is reported in the panel while the match carries
+  on. The relay stores only a batch's new frames, and naming an id nobody
+  claimed stores nothing. Viewers present no key, so anyone with a match id can watch:
+  a host that publishes with the match id empty gets a random 128-bit one,
+  shown in the status bar, and the panel warns when a typed id is short
+  enough to guess. The mobile apps have no spectating UI
+  yet. The relay needs the hosted services deployed. Specs:
+  `docs/netplay-session.md` section 5 and `services/hosted/README.md`.
 
 - **`cargo full-native`**: the `cargo full-build` binary (every native
   feature) built for the building machine's own CPU (`-C target-cpu=native`,
   the `release-native` profile), at `target/release-native/rustynes`. Not
-  portable, so release binaries keep the baseline build. No speed-up over
-  `full-build` is measured yet.
+  portable, so release binaries keep the baseline build. Not measurably
+  faster: on the maintainer's i9-10850K, `cpu_target_ab.sh` found a mixed sign
+  across workloads, with only one workload about 2% faster (see
+  `docs/performance.md`, "CPU-target comparison").
 - **`cargo full-v3`**: the same binary for an x86-64 PC that has the whole
   x86-64-v3 level (`-C target-cpu=x86-64-v3`: AVX, AVX2, BMI1/2, F16C, FMA,
   LZCNT, MOVBE; Intel Core from Haswell and AMD from Excavator / Zen, not
   every Pentium, Celeron or Atom of those years), in the `release-v3`
   profile, at `target/release-v3/rustynes`. It is the one to copy to another
   modern PC; on the machine that built it, `full-native` enables everything it
-  does and more. Not measured yet either.
+  does and more. Not faster on that machine: measured +0.5 to +1.6% slower on
+  five of six readings, so rejected as a gain.
 - **`cargo full-baseline`**: the same binary with `-C target-cpu=x86-64`
   pinned, the target the release binaries use, at
   `target/release-baseline/rustynes`. It is the "before" column for comparing
   the three, and it is needed because a personal cargo configuration that
   sets `target-cpu=native` makes a plain `cargo full-build` a native build.
+- **`scripts/perf/cpu_target_ab.sh`**: times the three builds above against
+  each other on the headless `speedrun` frame loop (nestest, flowing_palette,
+  AccuracyCoin), under the same evidence rule as `ab_check.sh`: two
+  independent runs, a balanced run order, and a mixed-sign result rejects. It
+  refuses to run with `RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` set and checks
+  each build's final rustc line for the CPU it asked for, because either trap
+  makes all three builds the same build.
+- **The mobile extras (D24, `T-MOBILE-EXTRAS`).**
+  - **Both apps:** the desktop's 20-band graphic equalizer and its Game Genie
+    code database (about 10,800 codes for some 520 games), through the bridge,
+    which compiles the desktop's own source for both. A flat EQ (the default)
+    leaves the audio bit-identical. On Android the codes are a new Game Genie
+    sheet (the app had no cheat screen), remembered per game; on iOS they are a
+    "Code database" section of Cheats.
+  - **iOS:** box art from libretro-thumbnails on request, the same matching
+    rules as Android; a home-screen widget that reopens the last game; and the
+    game on an external display (iOS 16-26), with the phone as the controller.
+    The new Swift compiles: the iOS workflow's Simulator build on this branch
+    (run 42950085751, 2026-11-11) built the app and the widget extension
+    unsigned. No device has run any of it, and the widget needs an App ID and
+    App Group before a signed build.
+- **`nes_golden_export --bios <path>`** (`rustynes-cosim`): exports goldens
+  of a Famicom Disk System image booted with a given 8 KiB BIOS, through a
+  new `Oracle::new_disk`. The MiSTer core's FDS gates compare against it,
+  on stimuli whose synthetic BIOS is the test program, so Nintendo's BIOS is
+  never needed. Every existing manifest is byte-identical.
+- **The per-game picture corrections can be switched off on Android and iOS**
+  (`T-MOBILE-GAME-CORRECTIONS`, ADR 0051): Settings, "Per-game picture
+  corrections", as on the desktop and in libretro. A movie or netplay session
+  keeps the choice it recorded.
+
+### Changed
+
+- **Android: when RetroAchievements hardcore stops a game from resuming, the app
+  says so** (`T-RA-HARDCORE-RESUME`, kept as a refusal). The game starts from
+  power-on with one line on the status bar, and the saved state is kept for when
+  hardcore is off. Before, the state loaded and switching hardcore on then
+  restarted the game, with no word why.
+- **Android: with the GPU renderer, the picture is no longer converted for the
+  CPU every frame** (`T-ANDROID-GPU-FRAMESKIP`); a screenshot, a clip and the
+  external display still get the current frame. Any speed-up is unmeasured: it
+  needs a device.
+- **Android: the remaining Kotlin TODOs (MOB-08).** Save-state slots get live
+  thumbnails, the library tile menu opens from a TV remote, and a folder import
+  is bounded at eight levels (it had no bound at all). The rest are recorded with
+  their reasons in `docs/android.md`.
+- **No tracked file names a developer's home directory any more.** Fifty-seven
+  files spelled out the maintainer's absolute paths: one-off scripts, plans,
+  audits, ADRs, the `AGENTS.md` imports, agent scratch directories and a private
+  ROM library's location.
+  - **Docs and plans** now use `~/...`, a repository-relative path, or
+    `<user>` / `<uid>`.
+  - **Scripts** now find the repository from their own location, so they also
+    work on another machine. The nine `scripts/release-automation/` one-offs
+    had `cd`-ed into a directory that no longer existed.
+  - **The ROM-library scripts** (`scripts/coverage/`,
+    `scripts/mapper-promotion/`) read their library root from
+    `RUSTYNES_ROM_LIBRARY` (default `~/roms/nes`). Set it to keep using a
+    library elsewhere.
+  - **A new audit** (`personal_path_audit`) fails on the next such path.
+  - **Not covered:** the immutable `ref-docs/`, the frozen archive trees and
+    git history keep theirs.
+
+### Fixed
+
+- **`rmcp` 3.9.0 for the MCP server** (RUSTSEC-2026-0462, published
+  2026-11-05). Before 3.9.0, rmcp's Streamable HTTP clients read a response
+  body with no size limit, so a hostile server could exhaust memory.
+  `rustynes-mcp` builds only rmcp's server role and stdio transport, so the
+  affected client was never compiled in; the dependency audits still flagged
+  the version, and the upgrade clears them.
+- **A Vs. DualSystem cabinet's save state now round-trips exactly under CPU
+  overclock** (`T-CABINET-OVERCLOCK-DECAY-STATE`).
+  - **The bug:** at x2, a state saved and restored with no other change ran
+    on to a state that differed from the uninterrupted run in 64 bytes. The
+    OAM-decay ages were one CPU cycle out, because the decay clock's phase
+    (which of the three dots of a CPU cycle it stood on) was not saved, and an
+    overclocked frame is not a whole number of cycles.
+  - **The impact:** the ages are inert with OAM decay off (the default), so
+    games ran the same. But anything comparing state checksums, such as
+    RetroArch netplay, saw a desync.
+  - **The fix:** the state now carries the phase, in two bits that were always
+    zero. The save-state format version does not change, so states made by
+    v3.6.x still load. No frame or sample changes, so the emulation epoch does
+    not rise.
 
 ## [3.6.2] - 2026-11-06 - "Latchkey" (the latest AccuracyCoin, 147 of 147, and Rad Racer's stray tiles corrected)
 

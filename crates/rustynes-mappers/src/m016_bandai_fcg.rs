@@ -913,6 +913,14 @@ impl BandaiFcg {
 }
 
 impl Mapper for BandaiFcg {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.prg_rom, true)
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        crate::mapper::debug_rom_slice(&mut self.chr, !self.chr_is_ram)
+    }
+
     // Battery save: the serial EEPROM contents -- 128 bytes (X24C01) or 256
     // (24C02) -- when this variant carries one, and nothing otherwise (core
     // audit IMP-08). The EEPROM is reached through an I2C protocol, not a CPU

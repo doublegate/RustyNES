@@ -27,10 +27,15 @@
   "durable_objects": {
     "bindings": [
       { "name": "LOBBY", "class_name": "Lobby" },
-      { "name": "BUDGET", "class_name": "Budget" }
+      { "name": "BUDGET", "class_name": "Budget" },
+      // v3.7.0 (T-NETPLAY-EDGE-SPECTATE): one object per spectated match.
+      { "name": "SPECTATE", "class_name": "Spectate" }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Lobby", "Budget"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Lobby", "Budget"] },
+    { "tag": "v2", "new_sqlite_classes": ["Spectate"] }
+  ],
   "vars": {
     // Comma-separated page origins allowed to use the services from a
     // browser. `ALLOW_LOCALHOST` additionally admits http://localhost:<port>
@@ -63,6 +68,25 @@
     "LOBBY_CONNECTS_PER_IP_PER_MINUTE": "30",
     "LOBBY_ROOMS_PER_IP_PER_MINUTE": "10",
 
+    // --- Edge-relayed spectating (v3.7.0, README.md "Spectate relay") ---
+    // Kill switch: anything but "true" refuses every /spectate connection at
+    // the Worker, before a Durable Object is touched. The maintainer decided
+    // (2026-11-08) to deploy it live after the v3.7.0 merge.
+    "SPECTATE_ENABLED": "true",
+    // Viewers per match, and per client IP per match.
+    "SPECTATE_MAX_VIEWERS": "200",
+    "SPECTATE_MAX_VIEWERS_PER_IP": "8",
+    // Connection attempts per client IP per minute, per match.
+    "SPECTATE_CONNECTS_PER_IP_PER_MINUTE": "30",
+    // NEW matches one client IP may claim per rolling hour, and all callers
+    // together per UTC day (budget.ts).
+    "SPECTATE_MATCHES_PER_IP_PER_HOUR": "6",
+    "SPECTATE_DAILY_MATCHES": "500",
+    // The longest log relayed, in frames (216,000 = one hour at 60 Hz), and
+    // how long a match with no publisher is kept before it is forgotten.
+    "SPECTATE_MAX_FRAMES": "216000",
+    "SPECTATE_IDLE_SECONDS": "3600",
+
     // --- RetroAchievements proxy ---
     // "false" from the v3.4.1 deploy (maintainer, 2026-10-18): web RA is held
     // until RetroAchievements answers the integration request (D31), and the
@@ -77,7 +101,7 @@
     // leading `RustyNES/` token: RetroAchievements identifies and allowlists
     // the client by it, and src/ra.ts refuses to forward without it. Bump the
     // product and rcheevos versions with each release.
-    "RA_USER_AGENT": "RustyNES/3.6.2 (Web wasm32) rcheevos/12.5.0",
+    "RA_USER_AGENT": "RustyNES/3.7.0 (Web wasm32) rcheevos/12.5.0",
     // Abuse guards (README.md "Spend guards"; src/budget.ts): forwarded calls
     // per client IP per rolling hour, `login2` calls per IP per hour, and
     // forwarded calls per UTC day, all callers together.

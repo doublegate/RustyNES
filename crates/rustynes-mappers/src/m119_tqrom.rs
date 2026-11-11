@@ -103,6 +103,14 @@ impl Tqrom {
 }
 
 impl Mapper for Tqrom {
+    fn debug_prg_rom_mut(&mut self) -> Option<&mut [u8]> {
+        self.inner.debug_prg_rom_mut()
+    }
+
+    fn debug_chr_rom_mut(&mut self) -> Option<&mut [u8]> {
+        self.inner.debug_chr_rom_mut()
+    }
+
     // Battery save lives in the wrapped MMC3's PRG-RAM (core audit IMP-10).
     fn sram(&self) -> &[u8] {
         self.inner.sram()

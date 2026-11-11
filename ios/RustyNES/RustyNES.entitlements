@@ -38,5 +38,12 @@
 	<array>
 		<string>iCloud.$(CFBundleIdentifier)</string>
 	</array>
+	<!-- v3.7.0 (D24 row 1): the App Group the home-screen widget reads (the
+	     last-played game and its box art; ResumeWidgetShared.swift). MAINTAINER
+	     CARRYOVER: register group.com.doublegate.rustynes on both App IDs. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.doublegate.rustynes</string>
+	</array>
 </dict>
 </plist>

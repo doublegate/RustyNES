@@ -8,6 +8,7 @@ gives the RustyNES clients three things they cannot get from a static page:
 | `GET /signal` (or `/`) | The netplay lobby: the reference signalling room protocol over a WebSocket, in one Durable Object with the hibernation API | `src/lobby.ts`, `src/protocol.ts` |
 | `POST /turn-credentials` | Short-lived Cloudflare Realtime TURN credentials, behind the spend guards (GET is refused: see "Spend guards") | `src/turn.ts`, `src/budget.ts` |
 | `POST /ra/dorequest.php` | The browser RetroAchievements proxy (ADR 0015): an allowlisted forward with RustyNES's User-Agent, behind its own abuse guards | `src/ra.ts`, `src/budget.ts` |
+| `GET /spectate/<match>` | The edge spectate relay (v3.7.0): one Durable Object per match fans out the match's confirmed inputs to its viewers, inputs only ([Spectate relay](#spectate-relay-v370)) | `src/spectate.ts` |
 | `GET /healthz` | Liveness | `src/index.ts` |
 
 **The service is public.** It runs at a `*.workers.dev` address that anyone on
@@ -22,6 +23,7 @@ that, and `PRIVACY.md` at the repository root says so to users.
 - [Deploy runbook](#deploy-runbook)
 - [Verifying the live gates](#verifying-the-live-gates)
 - [Rollback and the kill switches](#rollback-and-the-kill-switches)
+- [Spectate relay (v3.7.0)](#spectate-relay-v370)
 
 ## Design notes
 
@@ -389,3 +391,134 @@ each needs the deployed service, real browsers or devices, or a real account.
 - **Take the whole service down:** `npx wrangler delete`. Clients built with a
   hosted base then fail to reach the lobby with a clear error, and users can
   enter their own signalling URL; nothing else in RustyNES depends on it.
+
+## Spectate relay (v3.7.0)
+
+`T-NETPLAY-EDGE-SPECTATE`, `src/spectate.ts`; the client side is
+`crates/rustynes-netplay/src/edge.rs` (the viewer and the publisher) and
+`edge_client.rs` (the WebSocket). The maintainer decided on 2026-11-08 to
+deploy it live after the v3.7.0 merge and to re-run the live gates below.
+
+### What it does
+
+A player (the host) publishes its match to
+`wss://<hosted base>/spectate/<match>?role=publish&key=<32-64 hex>`; any
+number of viewers connect to `.../spectate/<match>?role=view`. The relay is
+one Durable Object per match (`getByName("match:<id>")`), holding every
+socket with the hibernation API.
+
+- **Inputs only.** It carries two netplay wire frames (protocol 10): the
+  match identity (`Sync`, tag 2, 89 bytes, magic `"RN10"`), and
+  `ConfirmedInputs` (tag 10), every player's confirmed input for up to 64
+  consecutive frames. A batch is appended to the match's log only if it
+  continues it (no gap; an overlap that extends the log is fine, and only its
+  new frames are stored and forwarded). A batch the relay must drop for the
+  message rate or a gap closes the publisher (1008, with the reason): the
+  publisher never resends, so every later batch would be a gap, and the
+  netplay panel shows the reason instead of a silent stall. Anything
+  else from the publisher is dropped and counted, never forwarded: a state
+  checkpoint (tag 11), a checksum, a per-player input, a text frame, a frame
+  over 512 bytes, a second identity. Viewers send nothing (`ping` is answered
+  by the runtime without waking the object).
+- **Joining mid-session.** A new viewer receives the identity and the whole
+  log from frame 0, then the live feed, and catches up by running it locally:
+  two to four bytes a frame on the relay, the CPU on the viewer.
+- **Who publishes.** The first publisher of a match id claims it with its
+  key; the object stores only the key's SHA-256. A reconnecting host presents
+  the same key; any other key is refused (403), and a second simultaneous
+  publisher too (409). The desktop keeps its key in
+  `[netplay] edge_publish_key` (minted on the first publish), so a host that
+  restarts inside the idle window can re-host its own match id, and the
+  netplay panel shows a 403 or 409 in words. The claim is checked again after
+  the admission RPC (an RPC to another object lets other requests in), so two
+  first publishers racing for one id cannot both own it (vitest "two first
+  publishers racing for a new match"). The desktop opens one publish
+  connection per hosted session, from frame 0, and never reconnects one, so a
+  new connection from the owner is a new match: the relay drops the previous
+  identity and log and closes that match's viewers with "the match restarted".
+- **Who watches.** Viewers present no key: anyone with the match id can
+  watch. The desktop mints a random 128-bit id (32 hex digits, the longest
+  `MATCH_ID` allows) when a host publishes with none, and warns when a typed
+  id is shorter than 22 characters.
+- **Storage.** The log is one storage row per published message (the native
+  publisher sends 8-frame batches, `EdgePublisher::BATCH_FRAMES`, 7.5 a second
+  at 60 Hz against the 30 a second the bucket admits), so an eviction loses
+  nothing. A match with no publisher for `SPECTATE_IDLE_SECONDS` is forgotten
+  by its alarm: log, key hash and identity, leaving nothing stored. The
+  address salt is written only once the object accepts a connection, so a
+  viewer naming an id nobody claimed (a 404) stores nothing at all.
+
+### Limits and cost
+
+| Var | Default | What it bounds |
+| --- | --- | --- |
+| `SPECTATE_ENABLED` | `true` | the kill switch: anything else refuses every `/spectate` request at the Worker, before a Durable Object is reached (and the object refuses too) |
+| `SPECTATE_MAX_VIEWERS` | 200 | viewers per match |
+| `SPECTATE_MAX_VIEWERS_PER_IP` | 8 | viewers per client address per match |
+| `SPECTATE_CONNECTS_PER_IP_PER_MINUTE` | 30 | connection attempts per address per match (in memory) |
+| `SPECTATE_MATCHES_PER_IP_PER_HOUR` | 6 | NEW matches one address may claim (Budget object, swept like the TURN windows) |
+| `SPECTATE_DAILY_MATCHES` | 500 | NEW matches per UTC day, all callers |
+| `SPECTATE_MAX_FRAMES` | 216,000 | the longest log relayed (one hour at 60 Hz); past it the publisher is closed (1008) |
+| `SPECTATE_IDLE_SECONDS` | 3,600 | how long a match without a publisher is kept |
+
+The publisher also has a message token bucket (60 burst, 30 a second).
+
+**What it costs** (Cloudflare's published Durable Objects pricing, read
+2026-11-08 through the Cloudflare documentation): a WebSocket connection is
+one request; incoming WebSocket messages are billed at 20 to 1; outgoing
+messages (the fan-out to viewers) and the `ping` auto-response are free; with
+the hibernation API, duration is billed only while a handler runs. A match
+whose publisher sends one message a frame is about 216,000 incoming messages
+an hour, 10,800 billed requests, with the 1 million monthly requests included
+on the Workers Paid plan and $0.15 per million beyond; storage writes are one
+row per message. Viewers cost their connection request and nothing per frame.
+Read the Billable Usage page after the first week of real use and record it in
+the release notes.
+
+### Deploy
+
+The class is new, so the deploy carries migration `v2`
+(`new_sqlite_classes: ["Spectate"]`, in `wrangler.jsonc`). Then:
+
+```bash
+cd services/hosted
+npm ci && npm run check
+npx wrangler deploy
+```
+
+No secret is involved. `SPECTATE_ENABLED` is `true` in `wrangler.jsonc`; to
+deploy it dark, set it to `false` first and switch it on in the dashboard.
+
+### Live gates
+
+Run in this order after the deploy (`<base>` is the hosted base):
+
+1. **Health:** `curl https://<base>/healthz` prints `ok`, and
+   `curl -i https://<base>/spectate/x` is a 426 (no upgrade), and
+   `curl -i https://<base>/spectate/bad%20id` a 400.
+2. **A mid-session join against the live endpoint:**
+
+   ```bash
+   RUSTYNES_SPECTATE_BASE=https://<base> \
+     cargo test -p rustynes-netplay --test edge_live -- --ignored
+   ```
+
+   Two players run in the test process; the host publishes through the live
+   relay; a viewer connects after 300 confirmed frames, receives the log from
+   frame 0, and must match the players' confirmed digest for 300 frames.
+   Expect about 15 to 30 s.
+3. **Inputs only, live:** the vitest suite's `forwards inputs only` case is
+   the proof; live, check that a viewer of the test's match received only
+   frames whose first byte is 2 or 10 (the test asserts every frame decodes).
+4. **The kill switch:** set `SPECTATE_ENABLED` to `false` in the dashboard
+   (Workers & Pages > rustynes-hosted > Settings > Variables and Secrets);
+   `curl -i -H 'Upgrade: websocket' https://<base>/spectate/x?role=view`
+   answers 503 `disabled`, and step 2 fails at its first connect. Set it back
+   to `true` and re-run step 2.
+
+### Rollback
+
+Set `SPECTATE_ENABLED` to `false` (immediate, no code change), or
+`npx wrangler rollback <version-id>`. A rollback to a version before `v2`
+leaves the `Spectate` objects' storage in place, unreachable; nothing else
+reads it.
