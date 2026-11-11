@@ -472,6 +472,12 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
                 });
             }
         });
+        if config.netplay.edge_publish && config.netplay.edge_match_is_guessable() {
+            ui.colored_label(
+                egui::Color32::from_rgb(0xE0, 0xB0, 0x40),
+                crate::t!(NpEdgeGuessable),
+            );
+        }
         ui.label(egui::RichText::new(crate::t!(NpEdgeNote)).weak());
     });
 

@@ -8112,16 +8112,26 @@ impl App {
     /// hosted base and a valid match id are set. The key is this peer's kept
     /// `edge_publish_key` (minted and saved on first use), not a fresh one:
     /// the relay keeps a match id for its first key, so a fresh key per
-    /// session locked a host out of its own match id after a restart.
+    /// session locked a host out of its own match id after a restart. An
+    /// empty match id is minted random and shown in the status bar.
     #[cfg(not(target_arch = "wasm32"))]
     fn edge_publish_url(&mut self) -> Option<String> {
         let np = &self.config.netplay;
         let base = np.edge_publish.then(|| np.hosted_base()).flatten()?;
-        let (key, minted) = self.config.netplay.edge_publish_key_or_mint();
-        if minted {
+        let (key, minted_key) = self.config.netplay.edge_publish_key_or_mint();
+        // Viewers present no key, so an empty match id is minted random
+        // (unguessable) rather than refused, and announced so the host can
+        // pass it on.
+        let (match_id, minted_id) = self.config.netplay.edge_match_or_mint();
+        if minted_key || minted_id {
             let _ = self.config.save();
         }
-        rustynes_netplay::spectate_url(&base, self.config.netplay.edge_match.trim(), Some(&key))
+        if minted_id {
+            self.ui.set_status(StatusMessage::info(format!(
+                "Spectators can watch this match through the relay with id {match_id}"
+            )));
+        }
+        rustynes_netplay::spectate_url(&base, &match_id, Some(&key))
     }
 
     /// v3.7.0 — watch `match_id` through the hosted relay: the same ROM,

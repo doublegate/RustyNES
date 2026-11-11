@@ -243,7 +243,11 @@ session already ignores an input or ack naming its own, so it needs no check.
 - Spectators carry no key. A direct-link spectator is unauthenticated, and so
   is a viewer of the edge relay (section 5), which receives only the
   identity and confirmed inputs; a relay publisher proves ownership of its
-  match with its publish key, not the session secret.
+  match with its publish key, not the session secret. The relay match id is
+  therefore a viewer's whole credential. The desktop mints a random 128-bit
+  id when a host publishes with none, and warns when a typed one is shorter
+  than 22 characters (`NetplayConfig::edge_match_or_mint`,
+  `edge_match_is_guessable`).
 - The browser (WebRTC) path does not seal: its data channel is DTLS.
 
 ### 2.5 Gates

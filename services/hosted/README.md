@@ -429,6 +429,10 @@ socket with the hibernation API.
   the admission RPC (an RPC to another object lets other requests in), so two
   first publishers racing for one id cannot both own it (vitest "two first
   publishers racing for a new match").
+- **Who watches.** Viewers present no key: anyone with the match id can
+  watch. The desktop mints a random 128-bit id (32 hex digits, the longest
+  `MATCH_ID` allows) when a host publishes with none, and warns when a typed
+  id is shorter than 22 characters.
 - **Storage.** The log is one storage row per published message (the native
   publisher sends one per tick that confirmed frames; batching more frames per
   message lowers the row count), so an eviction loses nothing. A match with

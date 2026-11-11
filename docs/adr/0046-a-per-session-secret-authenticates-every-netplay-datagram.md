@@ -123,8 +123,15 @@ the spectator can derive". The relay does not:
 - What travels is the match identity (the publisher's `Sync`, with its key
   share zeroed: `EdgePublisher`, `crates/rustynes-netplay/src/edge.rs`) and
   the players' confirmed inputs. That is the record a spectator exists to
-  receive, never frames, states or the session secret. A viewer needs no
-  key: anyone who knows the match id can watch, which is the feature.
+  receive, never frames, states or the session secret. A viewer presents no
+  key, so the match id is a viewer's whole credential: anyone who has it can
+  watch. The maintainer chose (2026-11-11) to keep it that way and make the
+  id hard to guess instead of adding a viewer key: a host that publishes with
+  no match id gets 128 random bits as 32 hex digits
+  (`NetplayConfig::edge_match_or_mint`), shown in the status bar to pass on,
+  and the netplay panel warns when a typed id is shorter than 22 characters
+  (`edge_match_is_guessable`). A typed short id still works; the match is
+  then as private as its name.
 - Writing is authenticated: the first publisher's key (a 32-hex secret,
   stored hashed) owns the match id until it has been idle for
   `SPECTATE_IDLE_SECONDS`. Only that key may publish, and only one connection

@@ -96,7 +96,10 @@ cycle-accurate core later replaced.
   though the client supports both. The publish key is minted once and kept
   (`[netplay] edge_publish_key`), so a host can re-host its own match id, and
   a refused or dropped publish is reported in the panel while the match
-  carries on. The mobile apps have no spectating UI
+  carries on. Viewers present no key, so anyone with a match id can watch:
+  a host that publishes with the match id empty gets a random 128-bit one,
+  shown in the status bar, and the panel warns when a typed id is short
+  enough to guess. The mobile apps have no spectating UI
   yet. The relay needs the hosted services deployed. Specs:
   `docs/netplay-session.md` section 5 and `services/hosted/README.md`.
 

@@ -452,7 +452,10 @@ pub struct NetplayConfig {
     #[serde(default)]
     pub desync_forensics: bool,
     /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — the spectate-relay match id: the
-    /// one to watch, and the one a host publishes under. Empty by default.
+    /// one to watch, and the one a host publishes under. Empty by default; a
+    /// host that publishes with it empty gets a random one
+    /// ([`Self::edge_match_or_mint`]). Viewers present no key, so the id is
+    /// the whole of a viewer's credential: anyone who has it can watch.
     #[serde(default)]
     pub edge_match: String,
     /// v3.7.0 — publish the sessions this peer hosts to the hosted spectate
@@ -475,22 +478,43 @@ impl NetplayConfig {
     /// none is kept or the kept one is not 32 hex digits (the relay accepts
     /// 32 to 64). Returns the key and whether it was minted, so the caller
     /// knows to save the config.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn edge_publish_key_or_mint(&mut self) -> (String, bool) {
-        use std::fmt::Write as _;
         let kept = self.edge_publish_key.trim();
         if kept.len() == 32 && kept.bytes().all(|b| b.is_ascii_hexdigit()) {
             return (kept.to_ascii_lowercase(), false);
         }
-        let key =
-            rustynes_netplay::fresh_key_share()
-                .iter()
-                .take(16)
-                .fold(String::new(), |mut s, b| {
-                    let _ = write!(s, "{b:02x}");
-                    s
-                });
+        let key = random_hex16();
         self.edge_publish_key.clone_from(&key);
         (key, true)
+    }
+
+    /// v3.7.0 — the match id a host publishes under: the typed one, kept as
+    /// is, else 128 random bits as 32 hex digits (the relay's longest id,
+    /// `services/hosted/src/spectate.ts` `MATCH_ID`), stored so the panel
+    /// shows it and the next session re-hosts it. Returns the id and
+    /// whether it was minted now. The relay asks viewers for no key, so the
+    /// id is what keeps a match private; a random one cannot be guessed.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn edge_match_or_mint(&mut self) -> (String, bool) {
+        let typed = self.edge_match.trim();
+        if !typed.is_empty() {
+            return (typed.to_string(), false);
+        }
+        let id = random_hex16();
+        self.edge_match.clone_from(&id);
+        (id, true)
+    }
+
+    /// v3.7.0 — whether a typed match id is short enough to guess. 22
+    /// characters of the relay's 64-symbol alphabet carry 132 bits, the
+    /// least that matches the 128 of a minted id; anything shorter is
+    /// treated as a name someone could try. An empty id is not guessable
+    /// (one is minted on publish).
+    #[must_use]
+    pub fn edge_match_is_guessable(&self) -> bool {
+        let id = self.edge_match.trim();
+        !id.is_empty() && id.len() < GUESSABLE_MATCH_ID_LEN
     }
 
     /// The hosted base in effect: this config's, else the build-time one.
@@ -2547,6 +2571,25 @@ fn canonicalize_pad(pad: &PadBindings) -> PadBindings {
     }
 }
 
+/// v3.7.0 — a typed spectate match id shorter than this is reported as
+/// guessable ([`NetplayConfig::edge_match_is_guessable`]).
+pub const GUESSABLE_MATCH_ID_LEN: usize = 22;
+
+/// 16 bytes of the netplay key generator as 32 lowercase hex digits: the
+/// spectate publish key and a minted match id. Native only, as the key
+/// generator is.
+#[cfg(not(target_arch = "wasm32"))]
+fn random_hex16() -> String {
+    use std::fmt::Write as _;
+    rustynes_netplay::fresh_key_share()
+        .iter()
+        .take(16)
+        .fold(String::new(), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2569,6 +2612,31 @@ mod tests {
         assert!(minted_fresh);
         assert_ne!(fresh, "not-a-key");
         assert_eq!(fresh.len(), 32);
+    }
+
+    /// v3.7.0 — viewers present no key, so a match id is a viewer's whole
+    /// credential. An empty one is minted unguessable (and in the relay's
+    /// alphabet and length) and then kept; a typed one is kept as typed and
+    /// reported guessable when short.
+    #[test]
+    fn an_empty_edge_match_is_minted_unguessable_and_a_typed_one_is_kept() {
+        let mut np = NetplayConfig::default();
+        assert!(!np.edge_match_is_guessable());
+        let (id, minted) = np.edge_match_or_mint();
+        assert!(minted);
+        assert_eq!(id.len(), 32);
+        assert!(id.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!(np.edge_match, id);
+        assert!(!np.edge_match_is_guessable());
+        let (again, minted_again) = np.edge_match_or_mint();
+        assert_eq!((again.as_str(), minted_again), (id.as_str(), false));
+        let (other, _) = NetplayConfig::default().edge_match_or_mint();
+        assert_ne!(other, id, "two mints gave the same id");
+        np.edge_match = " game1 ".into();
+        assert_eq!(np.edge_match_or_mint(), ("game1".to_string(), false));
+        assert!(np.edge_match_is_guessable());
+        np.edge_match = "a".repeat(GUESSABLE_MATCH_ID_LEN);
+        assert!(!np.edge_match_is_guessable());
     }
     use tempfile::TempDir;
 
