@@ -49,7 +49,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { CLIENT_IP_HEADER, type Env } from "./env";
-import { TokenBucket, WindowLimiter, intVar, ipKey, loadSalt } from "./limits";
+import { TokenBucket, WindowLimiter, freshSalt, intVar, ipKey } from "./limits";
 
 /** Tag bytes of the two frames the relay carries. */
 export const TAG_SYNC = 2;
@@ -68,7 +68,8 @@ export const MATCH_ID = /^[A-Za-z0-9_-]{1,32}$/;
 /** A publisher key: 128 to 256 bits, hex. */
 export const PUBLISH_KEY = /^[0-9A-Fa-f]{32,64}$/;
 
-/** Publisher message bucket: an 8-frame batch every 133 ms is 7.5/s. */
+/** Publisher message bucket: the native publisher sends 8-frame batches
+ * (`EdgePublisher::BATCH_FRAMES`), 7.5/s at 60 Hz, a quarter of the rate. */
 const PUB_BURST = 60;
 const PUB_PER_SECOND = 30;
 
@@ -123,6 +124,25 @@ export function classify(bytes: Uint8Array, logFrames: number, numPlayers: numbe
   return { kind: "inputs", start, count, numPlayers: n };
 }
 
+/** The part of an accepted batch from frame `logFrames` on, re-headed to
+ * start there (the batch itself when it already does). */
+export function trimBatch(
+  bytes: Uint8Array,
+  verdict: { start: number; count: number; numPlayers: number },
+  logFrames: number,
+): Uint8Array {
+  const skip = logFrames - verdict.start;
+  if (skip <= 0) return bytes;
+  const count = verdict.count - skip;
+  const out = new Uint8Array(7 + count * verdict.numPlayers);
+  out[0] = TAG_CONFIRMED_INPUTS;
+  out[1] = verdict.numPlayers;
+  new DataView(out.buffer).setUint32(2, logFrames, true);
+  out[6] = count;
+  out.set(bytes.subarray(7 + skip * verdict.numPlayers), 7);
+  return out;
+}
+
 const hex = (b: Uint8Array) => [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
 const unhex = (s: string) => new Uint8Array(s.match(/../g)!.map((h) => Number.parseInt(h, 16)));
 const rowKey = (i: number) => `log:${String(i).padStart(9, "0")}`;
@@ -133,6 +153,9 @@ async function sha256Hex(text: string): Promise<string> {
 
 export class Spectate extends DurableObject<Env> {
   private salt = "";
+  /** Whether `salt` is in storage. It is written only once the object
+   * accepts a connection, so naming an id nobody claimed stores nothing. */
+  private saltStored = false;
   private meta: Meta | undefined;
   private readonly connects: WindowLimiter;
   private bucket: TokenBucket | undefined;
@@ -145,7 +168,9 @@ export class Spectate extends DurableObject<Env> {
     // Answered by the runtime without waking the object (not billed).
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     ctx.blockConcurrencyWhile(async () => {
-      this.salt = await loadSalt(ctx.storage);
+      const stored = await ctx.storage.get<string>("ip-salt");
+      this.salt = stored ?? freshSalt();
+      this.saltStored = stored !== undefined;
       this.meta = await ctx.storage.get<Meta>("meta");
     });
   }
@@ -200,7 +225,30 @@ export class Spectate extends DurableObject<Env> {
       if (this.ctx.getWebSockets("publish").length > 0) {
         return new Response("this match already has a publisher", { status: 409 });
       }
-      return this.accept("publish", key).response;
+      // Accepted before the reset below awaits, so a second connection with
+      // the owner's key already sees a publisher and gets 409.
+      const { response } = this.accept("publish", key);
+      // The desktop opens one publish connection per hosted session, from
+      // frame 0, and never reconnects one, so a new connection is a new
+      // match: drop the previous session's identity and log (the v3.7.0
+      // re-host defect), and tell its viewers.
+      const meta = this.meta;
+      if (meta !== undefined && (meta.sync !== undefined || meta.frames > 0)) {
+        for (const v of this.ctx.getWebSockets("view")) {
+          try {
+            v.close(1000, "the match restarted");
+          } catch {
+            // already closing
+          }
+        }
+        await this.ctx.storage.deleteAll();
+        this.meta = { keyHash: meta.keyHash, frames: 0, rows: 0 };
+        this.saltStored = false;
+        await this.ctx.storage.put("meta", this.meta);
+      }
+      await this.storeSalt();
+      await this.touch(now);
+      return response;
     }
 
     if (role === "view") {
@@ -211,11 +259,33 @@ export class Spectate extends DurableObject<Env> {
       if (this.ctx.getWebSockets(key).length >= intVar(this.env.SPECTATE_MAX_VIEWERS_PER_IP, 8, 1, 1000)) {
         return new Response("too many viewers from this address", { status: 429, headers: { "Retry-After": "60" } });
       }
+      await this.storeSalt();
       const { response, server } = this.accept("view", key);
       await this.sendBacklog(server);
       return response;
     }
     return new Response("role must be publish or view", { status: 400 });
+  }
+
+  /** Store the address salt once a connection is accepted: the viewer and
+   * per-address tags of hibernating sockets are hashed with it. */
+  private async storeSalt(): Promise<void> {
+    if (this.saltStored) return;
+    await this.ctx.storage.put("ip-salt", this.salt);
+    this.saltStored = true;
+  }
+
+  /** Drop a publisher frame; for the two that lose frames the publisher
+   * never resends (the rate limit, a gap), close it so its host is told
+   * rather than leaving every later batch to be dropped as a gap. */
+  private drop(ws: WebSocket, fatal?: string): void {
+    this.dropped++;
+    if (fatal === undefined) return;
+    try {
+      ws.close(1008, fatal);
+    } catch {
+      // already closing
+    }
   }
 
   private accept(role: Role, ip: string): { response: Response; server: WebSocket } {
@@ -250,7 +320,7 @@ export class Spectate extends DurableObject<Env> {
     this.connects.prune(now);
     this.bucket ??= new TokenBucket(PUB_BURST, PUB_PER_SECOND, now);
     if (!this.bucket.take(now)) {
-      this.dropped++;
+      this.drop(ws, "publishing too fast");
       return;
     }
     const meta = this.meta;
@@ -258,7 +328,7 @@ export class Spectate extends DurableObject<Env> {
     const bytes = new Uint8Array(message);
     const verdict = classify(bytes, meta.frames, meta.numPlayers);
     if (verdict.kind === "drop") {
-      this.dropped++;
+      this.drop(ws, verdict.why === "gap" ? "a gap in the inputs" : undefined);
       return;
     }
     if (verdict.kind === "sync") {
@@ -290,13 +360,17 @@ export class Spectate extends DurableObject<Env> {
       }
       return;
     }
+    // Keep only the frames the log lacks: a batch overlapping relayed frames
+    // was stored whole, so one advancing a frame at a time stored up to 64
+    // times the frames (v3.7.0 review). The stored row starts at the log's end.
+    const fresh = trimBatch(bytes, verdict, meta.frames);
     meta.numPlayers = verdict.numPlayers;
     meta.frames = verdict.start + verdict.count;
     const row = meta.rows;
     meta.rows += 1;
-    await this.ctx.storage.put({ meta, [rowKey(row)]: bytes });
+    await this.ctx.storage.put({ meta, [rowKey(row)]: fresh });
     await this.touch(now);
-    this.broadcast(bytes);
+    this.broadcast(fresh);
   }
 
   private broadcast(bytes: Uint8Array): void {
@@ -332,7 +406,9 @@ export class Spectate extends DurableObject<Env> {
     }
     await this.ctx.storage.deleteAll();
     this.meta = undefined;
-    this.salt = await loadSalt(this.ctx.storage);
+    // A new salt in memory only: an expired match leaves nothing stored.
+    this.salt = freshSalt();
+    this.saltStored = false;
   }
 
   async webSocketClose(ws: WebSocket, code: number): Promise<void> {

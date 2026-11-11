@@ -475,13 +475,16 @@ pub struct NetplayConfig {
 
 impl NetplayConfig {
     /// v3.7.0 — the spectate-relay publish key, minting and storing one when
-    /// none is kept or the kept one is not 32 hex digits (the relay accepts
-    /// 32 to 64). Returns the key and whether it was minted, so the caller
+    /// none is kept or the kept one is not 32 to 64 hex digits (what the
+    /// relay accepts; a minted key is 32). Returns the key and whether it was minted, so the caller
     /// knows to save the config.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn edge_publish_key_or_mint(&mut self) -> (String, bool) {
         let kept = self.edge_publish_key.trim();
-        if kept.len() == 32 && kept.bytes().all(|b| b.is_ascii_hexdigit()) {
+        // The relay accepts 32 to 64 hex digits (`PUBLISH_KEY`), so keep any
+        // key it would accept: replacing a valid longer one would lose the
+        // match ids it claimed.
+        if (32..=64).contains(&kept.len()) && kept.bytes().all(|b| b.is_ascii_hexdigit()) {
             return (kept.to_ascii_lowercase(), false);
         }
         let key = random_hex16();
@@ -2607,6 +2610,15 @@ mod tests {
         assert_eq!(np.edge_publish_key, first);
         let (again, minted_again) = np.edge_publish_key_or_mint();
         assert_eq!((again.as_str(), minted_again), (first.as_str(), false));
+        let long = "AbCd".repeat(16);
+        np.edge_publish_key.clone_from(&long);
+        assert_eq!(
+            np.edge_publish_key_or_mint(),
+            (long.to_ascii_lowercase(), false),
+            "a 64-digit key the relay accepts is kept"
+        );
+        np.edge_publish_key = "ab".repeat(33);
+        assert!(np.edge_publish_key_or_mint().1, "66 digits is too long");
         np.edge_publish_key = "not-a-key".into();
         let (fresh, minted_fresh) = np.edge_publish_key_or_mint();
         assert!(minted_fresh);

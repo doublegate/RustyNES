@@ -164,6 +164,70 @@ fn step_and_check(viewer: &mut EdgeSpectator, nes: &mut Nes, m: &Match) -> u32 {
     matched
 }
 
+/// A count from these small tests as a frame number.
+fn n32(x: usize) -> u32 {
+    u32::try_from(x).expect("a small count")
+}
+
+/// v3.7.0 review (#646, Codex P1): the publisher sent a message for every
+/// tick that confirmed a frame, about 60 a second against the relay's 30, and
+/// the relay stalled two seconds in. It now sends one per
+/// `BATCH_FRAMES` frames, contiguous from frame 0, and `flush` sends the tail.
+#[test]
+fn the_publisher_sends_one_message_per_batch_and_flushes_the_tail() {
+    let rom = nestest();
+    let mut m = Match::new(&rom);
+    while m.confirmed() < 300 {
+        m.tick();
+    }
+    let batch = n32(EdgePublisher::BATCH_FRAMES);
+    let mut next = 0u32;
+    let mut inputs_msgs = 0u32;
+    for bytes in m.relay.iter().skip(1) {
+        let Some(NetMessage::ConfirmedInputs {
+            start_frame,
+            inputs,
+            ..
+        }) = NetMessage::from_bytes(bytes)
+        else {
+            panic!("the relay log is the Sync, then confirmed inputs");
+        };
+        assert_eq!(start_frame, next, "batches are contiguous from frame 0");
+        assert!(
+            n32(inputs.len()) >= batch,
+            "no batch shorter than BATCH_FRAMES"
+        );
+        next += n32(inputs.len());
+        inputs_msgs += 1;
+    }
+    let confirmed = m.confirmed() + 1;
+    assert!(
+        next + batch > confirmed && next <= confirmed,
+        "at most a batch waits"
+    );
+    assert!(
+        inputs_msgs <= confirmed / batch,
+        "{inputs_msgs} messages for {confirmed} frames: more than one per batch"
+    );
+    let tail = m.publisher.flush(2).expect("frames were waiting");
+    let NetMessage::ConfirmedInputs {
+        start_frame,
+        inputs,
+        ..
+    } = tail
+    else {
+        panic!("flush sends confirmed inputs");
+    };
+    assert_eq!(
+        (start_frame, start_frame + n32(inputs.len())),
+        (next, confirmed)
+    );
+    assert!(
+        m.publisher.flush(2).is_none(),
+        "nothing is left after a flush"
+    );
+}
+
 #[test]
 fn a_viewer_joining_mid_session_matches_the_players() {
     let rom = nestest();
@@ -176,8 +240,9 @@ fn a_viewer_joining_mid_session_matches_the_players() {
     // The relay's backlog: everything from frame 0.
     deliver(&mut viewer, &m.relay);
     assert!(viewer.is_synced());
+    // Up to `BATCH_FRAMES - 1` confirmed frames wait for their batch.
     assert!(
-        viewer.reachable_through() > 300,
+        viewer.reachable_through() + n32(EdgePublisher::BATCH_FRAMES) > 300,
         "the backlog covers frame 0 on"
     );
     let joined_at = viewer.reachable_through();

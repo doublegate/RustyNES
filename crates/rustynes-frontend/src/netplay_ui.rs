@@ -558,6 +558,15 @@ impl NetplayUi {
 
     /// Tear the session down and return to single-player. No-op if idle.
     pub fn leave(&mut self) {
+        // v3.7.0 — the publisher sends in batches; hand the relay the last,
+        // shorter one so viewers see the match to its end. Dropping the
+        // client then closes the connection after its queue drains.
+        if let (NetplayState::InGame(session), Some((client, publisher))) =
+            (&self.state, self.edge_publisher.as_mut())
+            && let Some(msg) = publisher.flush(session.num_players())
+        {
+            client.send(&msg);
+        }
         self.state = NetplayState::Idle;
         self.edge_publisher = None;
         self.status = NetplayStatus::default();

@@ -122,8 +122,13 @@ export async function ipKey(ip: string, salt: string): Promise<string> {
 export async function loadSalt(storage: DurableObjectStorage): Promise<string> {
   const existing = await storage.get<string>("ip-salt");
   if (existing) return existing;
-  const bytes = crypto.getRandomValues(new Uint8Array(32));
-  const salt = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const salt = freshSalt();
   await storage.put("ip-salt", salt);
   return salt;
+}
+
+/** 32 random bytes as hex: a new address salt, not yet stored. */
+export function freshSalt(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 }

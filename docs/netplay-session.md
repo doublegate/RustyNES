@@ -421,13 +421,20 @@ has the limits, the cost, the deploy and the live gates).
 
 ### 5.1 The stream
 
-The host's `EdgePublisher` turns each tick's newly confirmed frames into
-`ConfirmedInputs` (tag 10): the player count, the first frame, and every
-port's input for up to 64 consecutive frames. Its first message is the
-match's `Sync` (identity: ROM, configuration, emulation epoch). The relay
-appends a batch only if it continues the log, keeps the log, and gives a new
-viewer the identity and the whole log from frame 0 before the live feed. It
-carries nothing else: never a frame, a sample or a state.
+The host's `EdgePublisher` copies each newly confirmed frame out of the
+session and sends them as `ConfirmedInputs` (tag 10) in batches of
+`BATCH_FRAMES` (8): the player count, the first frame, and every port's input
+for up to 64 consecutive frames. Its first message is the match's `Sync`
+(identity: ROM, configuration, emulation epoch), and `flush` sends the last,
+shorter batch when the session ends. At 60 Hz that is 7.5 messages a second,
+a quarter of what the relay admits; one message per tick (v3.7.0 before
+the PR #646 review) was twice it, and the relay stalled two seconds in. The relay
+appends a batch only if it continues the log (storing only its new frames),
+closes a publisher whose batch it must drop for the rate or a gap, keeps the
+log, and gives a new viewer the identity and the whole log from frame 0
+before the live feed. Each publish connection is a session: a new one from
+the owner restarts the match's log. The relay carries nothing else: never a
+frame, a sample or a state.
 
 ### 5.2 The viewer
 

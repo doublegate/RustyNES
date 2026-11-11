@@ -411,7 +411,11 @@ socket with the hibernation API.
   match identity (`Sync`, tag 2, 89 bytes, magic `"RN10"`), and
   `ConfirmedInputs` (tag 10), every player's confirmed input for up to 64
   consecutive frames. A batch is appended to the match's log only if it
-  continues it (no gap; an overlap that extends the log is fine). Anything
+  continues it (no gap; an overlap that extends the log is fine, and only its
+  new frames are stored and forwarded). A batch the relay must drop for the
+  message rate or a gap closes the publisher (1008, with the reason): the
+  publisher never resends, so every later batch would be a gap, and the
+  netplay panel shows the reason instead of a silent stall. Anything
   else from the publisher is dropped and counted, never forwarded: a state
   checkpoint (tag 11), a checksum, a per-player input, a text frame, a frame
   over 512 bytes, a second identity. Viewers send nothing (`ping` is answered
@@ -428,16 +432,21 @@ socket with the hibernation API.
   netplay panel shows a 403 or 409 in words. The claim is checked again after
   the admission RPC (an RPC to another object lets other requests in), so two
   first publishers racing for one id cannot both own it (vitest "two first
-  publishers racing for a new match").
+  publishers racing for a new match"). The desktop opens one publish
+  connection per hosted session, from frame 0, and never reconnects one, so a
+  new connection from the owner is a new match: the relay drops the previous
+  identity and log and closes that match's viewers with "the match restarted".
 - **Who watches.** Viewers present no key: anyone with the match id can
   watch. The desktop mints a random 128-bit id (32 hex digits, the longest
   `MATCH_ID` allows) when a host publishes with none, and warns when a typed
   id is shorter than 22 characters.
 - **Storage.** The log is one storage row per published message (the native
-  publisher sends one per tick that confirmed frames; batching more frames per
-  message lowers the row count), so an eviction loses nothing. A match with
-  no publisher for `SPECTATE_IDLE_SECONDS` is forgotten by its alarm: log,
-  key hash and identity.
+  publisher sends 8-frame batches, `EdgePublisher::BATCH_FRAMES`, 7.5 a second
+  at 60 Hz against the 30 a second the bucket admits), so an eviction loses
+  nothing. A match with no publisher for `SPECTATE_IDLE_SECONDS` is forgotten
+  by its alarm: log, key hash and identity, leaving nothing stored. The
+  address salt is written only once the object accepts a connection, so a
+  viewer naming an id nobody claimed (a 404) stores nothing at all.
 
 ### Limits and cost
 

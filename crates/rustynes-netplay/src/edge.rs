@@ -297,8 +297,10 @@ impl EdgeSpectator {
                     && let Some(done) = self.checkpoint.take()
                 {
                     self.base = done.frame;
-                    // Inputs received before the checkpoint for frames from
-                    // it on are kept; earlier ones are not needed.
+                    // Nothing is in the log yet: `push_input` drops every
+                    // input until the checkpoint is in, and the relay's
+                    // backlog or the sender's resend supplies them. Cleared
+                    // anyway, so the log always starts at `base`.
                     self.log.clear();
                     self.ready_checkpoint = Some((done.frame, done.buf));
                 }
@@ -487,19 +489,34 @@ pub fn checkpoint_messages(frame: u32, snapshot: &[u8]) -> Vec<NetMessage> {
 ///
 /// Call [`Self::poll`] once per tick, after the session's `advance`, and send
 /// what it returns. The first call also returns the identity `Sync`, which
-/// the relay keeps and gives every viewer first.
+/// the relay keeps and gives every viewer first. Frames go out in batches of
+/// [`Self::BATCH_FRAMES`]; call [`Self::flush`] when the session ends to send
+/// the last, shorter one.
 #[derive(Debug)]
 pub struct EdgePublisher {
     identity: SessionIdentity,
     announced: bool,
-    /// The next frame to publish.
+    /// The next frame to read from the session.
     next: u32,
+    /// Confirmed frames read but not yet sent: copied out as soon as they
+    /// are confirmed, so holding them for a batch never depends on the
+    /// session's history window.
+    pending: Vec<[u8; MAX_PLAYERS]>,
     /// Set when a confirmed frame left the session's history before it was
     /// published (poll was not called for too long); publishing stops.
     gap: bool,
 }
 
 impl EdgePublisher {
+    /// Frames per relay message in a normally paced match: 7.5 messages a
+    /// second at 60 Hz. The relay admits 30 a second with a burst of 60
+    /// (`services/hosted/src/spectate.ts`), and drops, then closes, a
+    /// publisher above that. Sending every newly confirmed frame at once
+    /// (v3.7.0 before the #646 review) was about 60 a second and stalled the
+    /// relay two seconds in. The cost is up to 7 frames (117 ms) of extra
+    /// delay for viewers, who run behind the players anyway.
+    pub const BATCH_FRAMES: usize = 8;
+
     /// A publisher for the match `identity` describes.
     #[must_use]
     pub const fn new(identity: SessionIdentity) -> Self {
@@ -507,6 +524,7 @@ impl EdgePublisher {
             identity,
             announced: false,
             next: 0,
+            pending: Vec::new(),
             gap: false,
         }
     }
@@ -519,7 +537,9 @@ impl EdgePublisher {
     }
 
     /// What to send to the relay for the frames `session` has newly
-    /// confirmed.
+    /// confirmed: the identity first, then a batch once
+    /// [`Self::BATCH_FRAMES`] frames are waiting (several, of at most
+    /// `MAX_CONFIRMED_BATCH`, after a catch-up).
     pub fn poll<T: Transport>(&mut self, session: &RollbackSession<T>) -> Vec<NetMessage> {
         let mut out = Vec::new();
         if !self.announced {
@@ -533,29 +553,44 @@ impl EdgePublisher {
         let Some(confirmed) = session.last_confirmed_frame() else {
             return out;
         };
-        let mut batch = Vec::new();
         while !self.gap && self.next <= confirmed {
             let Some(inputs) = session.confirmed_input(self.next) else {
                 self.gap = true;
                 break;
             };
-            batch.push(inputs);
+            self.pending.push(inputs);
             self.next += 1;
-            if batch.len() == NetMessage::MAX_CONFIRMED_BATCH {
-                out.push(self.batch(core::mem::take(&mut batch), session.num_players()));
-            }
         }
-        if !batch.is_empty() {
-            out.push(self.batch(batch, session.num_players()));
+        let n = session.num_players();
+        while self.pending.len() >= NetMessage::MAX_CONFIRMED_BATCH {
+            let rest = self.pending.split_off(NetMessage::MAX_CONFIRMED_BATCH);
+            let batch = core::mem::replace(&mut self.pending, rest);
+            out.push(self.batch(batch, n));
+        }
+        if self.pending.len() >= Self::BATCH_FRAMES {
+            let batch = core::mem::take(&mut self.pending);
+            out.push(self.batch(batch, n));
         }
         out
     }
 
+    /// The frames still waiting for a full batch, as one last message: call
+    /// it when the session ends, so viewers get the match's final frames.
+    pub fn flush(&mut self, num_players: u8) -> Option<NetMessage> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        let batch = core::mem::take(&mut self.pending);
+        Some(self.batch(batch, num_players))
+    }
+
+    /// A message for `inputs`, the oldest frames waiting: they start where
+    /// the rest of `pending` (still to be sent) and `inputs` together end.
     fn batch(&self, inputs: Vec<[u8; MAX_PLAYERS]>, num_players: u8) -> NetMessage {
-        let len = u32::try_from(inputs.len()).unwrap_or(0);
+        let waiting = u32::try_from(inputs.len() + self.pending.len()).unwrap_or(0);
         NetMessage::ConfirmedInputs {
             num_players,
-            start_frame: self.next - len,
+            start_frame: self.next - waiting,
             inputs,
         }
     }

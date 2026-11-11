@@ -8,7 +8,7 @@
 // pinned against the Rust encoder by test/vectors/spectate-vectors.json.
 
 import { env, exports } from "cloudflare:workers";
-import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import worker from "../src/index";
 import type { Env } from "../src/env";
@@ -233,6 +233,99 @@ describe("relay", () => {
     expect(again.status).toBe(101);
     again.webSocket?.accept();
     again.webSocket?.close(1000, "");
+  });
+
+  // v3.7.0 review (#646, Codex P2): the desktop opens one publish connection
+  // per hosted session and starts it at frame 0, and since v3.7.0 it keeps
+  // its key and match id, so a host re-hosts the same id. The relay kept the
+  // old identity and log: a new session's first frames were dropped as
+  // already relayed and its later ones extended the old match's log.
+  it("a re-hosted match starts a fresh log, and the old match's viewers are told", async () => {
+    const match = freshMatch();
+    const stub = env.SPECTATE.getByName(`match:${match}`);
+    const first = await connect(match, `role=publish&key=${KEY}`);
+    first.ws.send(sync());
+    first.ws.send(inputs(0, 16));
+    await waitForStats(stub, (s) => s.frames === 16);
+    const old = await connect(match, "role=view");
+    await waitFor(() => old.frames.length === 2, "the first match's backlog");
+    first.ws.close(1000, "");
+    await sleep(20);
+    const second = await connect(match, `role=publish&key=${KEY}`);
+    await waitFor(() => old.closed(), "the first match's viewer is closed");
+    expect((await stub.stats()).frames).toBe(0);
+    second.ws.send(sync(10, 9)); // the new session may be another game
+    second.ws.send(inputs(0, 8));
+    await waitForStats(stub, (s) => s.frames === 8);
+    const viewer = await connect(match, "role=view");
+    await waitFor(() => viewer.frames.length === 2, "the new match's backlog");
+    expect(same(viewer.frames[0], sync(10, 9))).toBe(true);
+    expect(same(viewer.frames[1], inputs(0, 8))).toBe(true);
+    second.ws.close(1000, "");
+    viewer.ws.close(1000, "");
+  });
+
+  // v3.7.0 review (#646, Codex P1): a batch dropped for the rate limit or a
+  // gap is never resent, so every later batch is a gap and the relay stalled
+  // silently. It now closes the publisher, which the netplay panel reports.
+  it("a publisher whose stream has a gap is closed, not left stalled", async () => {
+    const match = freshMatch();
+    const pub = await connect(match, `role=publish&key=${KEY}`);
+    pub.ws.send(sync());
+    pub.ws.send(inputs(0, 8));
+    pub.ws.send(inputs(16, 8));
+    await waitFor(() => pub.closed(), "the publisher is closed on the gap");
+    expect((await env.SPECTATE.getByName(`match:${match}`).stats()).frames).toBe(8);
+  });
+
+  it("a publisher over the message rate is closed, not left stalled", async () => {
+    const match = freshMatch();
+    const pub = await connect(match, `role=publish&key=${KEY}`);
+    pub.ws.send(sync());
+    for (let f = 0; f < 70; f++) pub.ws.send(inputs(f, 1));
+    await waitFor(() => pub.closed(), "the publisher is closed on the rate");
+  });
+
+  // v3.7.0 review (#646, Cursor security): any id a viewer named built an
+  // object that wrote its address salt to storage and then answered 404, with
+  // no alarm to clear it, so cycling ids grew storage without bound; and an
+  // expired match wrote a new salt right after deleting everything.
+  it("a viewer of an unclaimed id, and an expired match, leave nothing stored", async () => {
+    const unclaimed = freshMatch();
+    expect((await open(unclaimed, "role=view")).status).toBe(404);
+    await runInDurableObject(env.SPECTATE.getByName(`match:${unclaimed}`), async (_i, state) => {
+      expect((await state.storage.list()).size).toBe(0);
+    });
+    const match = freshMatch();
+    const stub = env.SPECTATE.getByName(`match:${match}`);
+    const pub = await connect(match, `role=publish&key=${KEY}`);
+    pub.ws.send(sync());
+    pub.ws.send(inputs(0, 8));
+    await waitForStats(stub, (s) => s.frames === 8);
+    pub.ws.close(1000, "");
+    await sleep(20);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    await runInDurableObject(stub, async (_i, state) => {
+      expect((await state.storage.list()).size).toBe(0);
+    });
+  });
+
+  // v3.7.0 review (#646, Antigravity): a batch overlapping frames already
+  // relayed was stored and forwarded whole, so one advancing the log a frame
+  // at a time stored up to 64 times the frames. Only the new frames are kept.
+  it("stores and forwards only the new frames of an overlapping batch", async () => {
+    const match = freshMatch();
+    const pub = await connect(match, `role=publish&key=${KEY}`);
+    pub.ws.send(sync());
+    pub.ws.send(inputs(0, 8));
+    pub.ws.send(inputs(4, 8));
+    const stub = env.SPECTATE.getByName(`match:${match}`);
+    await waitForStats(stub, (s) => s.frames === 12);
+    const viewer = await connect(match, "role=view");
+    await waitFor(() => viewer.frames.length === 3, "backlog");
+    expect(same(viewer.frames[2], inputs(8, 4))).toBe(true);
+    pub.ws.close(1000, "");
+    viewer.ws.close(1000, "");
   });
 
   it("refuses a viewer of a match nobody published", async () => {
