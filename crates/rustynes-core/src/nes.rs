@@ -6859,7 +6859,9 @@ mod tests {
     /// bank, selects bank 1 at `$8000` (storing `$01` over a ROM byte that
     /// holds `$01`, so a bus conflict changes nothing), then every pass loads
     /// `$8010` into `$10` and, through `$2006` / `$2007`, the PPU's byte at
-    /// `$0010` into `$11`.
+    /// `$0010` into `$11`. Gated like its two callers: without `debug-hooks`
+    /// (e.g. `-p rustynes-core --features cpu-boot-trace`) it is dead code.
+    #[cfg(feature = "debug-hooks")]
     fn romwrite_uxrom() -> Vec<u8> {
         const FIXED: usize = 3 * 0x4000; // PRG offset of `$C000`.
         const PROGRAM: [u8; 34] = [
