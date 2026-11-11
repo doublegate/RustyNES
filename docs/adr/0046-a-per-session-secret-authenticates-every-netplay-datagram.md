@@ -6,6 +6,8 @@ Date: 2026-10-16
 
 Accepted. Plan row 11 of `to-dos/plans/v3.4.0-plan.md`
 (`T-NETPLAY-DATAGRAM-AUTH`, Round 2 NET-R2-07). Protocol 9 (`"RNE9"`).
+Amended 2026-11-10 (v3.7.0, protocol 10, `"RN10"`): see the amendment at
+the end.
 
 ## Context
 
@@ -94,3 +96,48 @@ The browser path is not affected: a WebRTC data channel runs over DTLS.
 - A v3.4.0 peer and a v3.3.x peer cannot play together: the v3.4.0 side
   refuses with the reason, the v3.3.x side times out (it does not know
   `"RNE9"`), as at every earlier protocol bump.
+
+## Amendment — 2026-11-10 (v3.7.0): protocol 10, and a spectator stream not sealed with the session key
+
+**What changed.** v3.7.0 adds two features that need messages a protocol-9
+peer cannot read, so the Sync magic becomes `"RN10"` (protocol 10). The Sync
+layout (88 bytes) and the per-datagram seal decided above are unchanged. A
+protocol-9 peer (v3.4.x to v3.6.x) is refused at the handshake, naming its
+epoch, as at every earlier bump.
+
+- **Desync forensics** (`T-NETPLAY-DESYNC-FORENSICS`, `docs/netplay-session.md`
+  section 4): opted-in peers exchange per-frame section digests, then the
+  differing section bodies. These are ordinary session datagrams, sealed like
+  every other.
+- **Edge-relayed spectating** (`T-NETPLAY-EDGE-SPECTATE`, section 5): a host
+  publishes the match identity and its confirmed inputs to a Cloudflare
+  Durable Object, which fans them out to viewers.
+
+**The departure from this ADR's Consequences.** They said that a host-side
+spectator broadcast, "when one is built", "must seal its stream with a key
+the spectator can derive". The relay does not:
+
+- The relay leg is a WebSocket over TLS (`wss://`) to the hosted Worker, so it
+  is encrypted and the Worker is authenticated by its certificate. The
+  session secret has nothing to add on that leg.
+- What travels is the match identity (the publisher's `Sync`, with its key
+  share zeroed: `EdgePublisher`, `crates/rustynes-netplay/src/edge.rs`) and
+  the players' confirmed inputs. That is the record a spectator exists to
+  receive, never frames, states or the session secret. A viewer needs no
+  key: anyone who knows the match id can watch, which is the feature.
+- Writing is authenticated: the first publisher's key (a 32-hex secret,
+  stored hashed) owns the match id until it has been idle for
+  `SPECTATE_IDLE_SECONDS`. Only that key may publish, and only one connection
+  at a time. The claim is atomic: a race found by the v3.7.0 security review
+  is fixed in `6a8f88f9`. The desktop keeps its key in
+  `[netplay] edge_publish_key`, so a host can re-host its own id
+  (`e19245ec`).
+- Integrity against the relay operator is not provided: whoever runs the
+  Worker could alter inputs in flight. A viewer's copy is then wrong, but no
+  player is affected, because the relay never feeds back into the session.
+
+A direct-link spectator (v1.7.0 H8) is unchanged and still unkeyed.
+
+**Who decided.** The maintainer chose to build, test and deploy the relay
+(2026-11-08). This amendment records the design as built, for review; it does
+not claim that review has happened.

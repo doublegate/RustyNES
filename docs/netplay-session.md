@@ -4,8 +4,11 @@ This is the spec for `rustynes-netplay`'s session layer: how
 `RollbackSession` keeps and uses its rollback window (v3.4.0,
 `T-NETPLAY-ROLLBACK-WINDOW`, section 1), and how every native datagram is
 authenticated (v3.4.0, `T-NETPLAY-DATAGRAM-AUTH`, protocol 9, section 2,
-[ADR 0046](adr/0046-a-per-session-secret-authenticates-every-netplay-datagram.md)).
-Transport, NAT traversal, WebRTC and the lobby are in
+[ADR 0046](adr/0046-a-per-session-secret-authenticates-every-netplay-datagram.md)),
+and the two protocol-10 additions of v3.7.0 (Sync magic `"RN10"`): desync
+forensics (section 4) and edge-relayed spectating (section 5). Protocol 10
+changes nothing in sections 1 to 3; it adds messages, so a protocol-9 peer is
+refused at the handshake. Transport, NAT traversal, WebRTC and the lobby are in
 [`netplay-webrtc.md`](netplay-webrtc.md).
 
 Netplay is on the frontend side of the determinism contract: nothing here
@@ -79,7 +82,7 @@ Nothing in netplay reads the framebuffer as input. A Zapper would (it senses
 light from the picture), but netplay carries only standard controllers and
 the Four Score.
 
-### 1.4 The digest (protocol 9)
+### 1.4 The digest (since protocol 9)
 
 `gameplay_digest` is `framebuffer_digest(framebuffer) ^ cycle * 0x100_0000_01b3`.
 Until v3.4.0 the framebuffer term was FNV-1a 64 over every byte. Since
@@ -237,7 +240,10 @@ session already ignores an input or ack naming its own, so it needs no check.
 - An attacker who observes the handshake can derive the key (the shares are
   in the clear). X25519 plus an authenticated fingerprint is the follow-up.
 - The handshake itself is first-come, as before.
-- Spectators carry no key; no host-side spectator broadcast exists yet.
+- Spectators carry no key. A direct-link spectator is unauthenticated, and so
+  is a viewer of the edge relay (section 5), which receives only the
+  identity and confirmed inputs; a relay publisher proves ownership of its
+  match with its publish key, not the session secret.
 - The browser (WebRTC) path does not seal: its data channel is DTLS.
 
 ### 2.5 Gates
@@ -274,7 +280,7 @@ mesh (`docs/netplay-webrtc.md` section 2.4): `NetplayUi::start_host` with 3 or
 its roster index against a mesh host. Every session runs over a sealed
 transport boxed as `Box<dyn Transport>` (`impl Transport for Box<T>`).
 
-**Acks are per player (protocol 9).** `InputAck { player, frame }`; the
+**Acks are per player (since protocol 9).** `InputAck { player, frame }`; the
 session keeps one ack per remote player and resends from the least of them.
 Before, the highest ack from any peer stood for all of them: found when the
 3-player UI test's host stalled at frame 9 with nothing confirmed, because it

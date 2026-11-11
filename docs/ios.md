@@ -278,7 +278,13 @@ determinism contract is untouched; the two newest upstream PPU tests are known g
   disabled / flat / centered config is a **bit-exact passthrough**, so the audio
   oracle and save portability are preserved.
 
-### The mobile extras (v3.7.0) — UNCOMPILED until the CI Simulator build
+### The mobile extras (v3.7.0) — compiled by the CI Simulator build; not run on a device
+
+The first compile was the iOS workflow's Simulator build of `feat/v3.7.0`
+(run 42950085751, 2026-11-11, Xcode 26): `BUILD SUCCEEDED` for the app and the
+`RustyNESWidget.appex` extension, unsigned, with `BoxArt.swift`,
+`ExternalDisplay.swift` and the widget sources compiled. It proves the code
+builds, not that it works: the run-sheet rows below are still the test.
 
 - **The bridge (`rustynes-mobile`'s `extras` module).** The desktop's 20-band
   graphic EQ (`rustynes-frontend/src/eq.rs`) and its Game Genie code database

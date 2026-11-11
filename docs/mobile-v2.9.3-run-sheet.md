@@ -215,9 +215,10 @@ Game Genie sheet, a one-line notice when RetroAchievements hardcore refuses
 the auto-resume (`T-RA-HARDCORE-RESUME`), and skips the CPU frame pack on
 the GPU path when nothing reads it (`T-ANDROID-GPU-FRAMESKIP`); the Android
 decisions are under JVM test (`MobileExtrasTest`, `CpuFrameTest`,
-`Mob08Test`). **None of the v3.7.0 Swift has been compiled** (no Swift
-toolchain on the Linux build host); `ios_source_audit.rs` pins its wiring
-and the iOS workflow's Simulator build is the first compile. The widget
+`Mob08Test`). The v3.7.0 Swift was written on a Linux host with no Swift toolchain;
+`ios_source_audit.rs` pins its wiring, and its first compile was the iOS
+workflow's Simulator build (run 42950085751, 2026-11-11: app and widget
+extension, unsigned, `BUILD SUCCEEDED`). No device has run it yet. The widget
 also needs signing work before any signed build (row W1).
 
 | # | Platform | Step | Expect | Emulator | Device |

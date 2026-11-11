@@ -148,8 +148,12 @@ nav:
       - RAM Atlas: ram-atlas.md
       - Divergence Lens: divergence-lens.md
       - Dump Check: dump-check.md
+      - Live-Patch Recorder: live-patch-recorder.md
+      - Source-Level Debugger (DAP): dap-debugger.md
+      - Memory Export Interface: memory-export-interface.md
       - CRT / Composite Video: crt-composite.md
       - Netplay (WebRTC): netplay-webrtc.md
+      - Netplay Session, Forensics and Spectating: netplay-session.md
       - RetroAchievements: cheevos-browser.md
       - Compatibility: compatibility.md
       - Performance: performance.md
@@ -206,6 +210,8 @@ not_in_nav: |
   benchmarks.md
   hd-pack-zelda-troubleshooting.md
   ppu-trace-tooling.md
+  mobile-v2.7.4-device-checklist.md
+  mobile-v2.9.3-run-sheet.md
   libretro/UPSTREAM_SYNC.md
   libretro/WALKTHROUGH.md
   libretro/advanced_features.md

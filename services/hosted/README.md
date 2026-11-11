@@ -422,7 +422,13 @@ socket with the hibernation API.
 - **Who publishes.** The first publisher of a match id claims it with its
   key; the object stores only the key's SHA-256. A reconnecting host presents
   the same key; any other key is refused (403), and a second simultaneous
-  publisher too (409).
+  publisher too (409). The desktop keeps its key in
+  `[netplay] edge_publish_key` (minted on the first publish), so a host that
+  restarts inside the idle window can re-host its own match id, and the
+  netplay panel shows a 403 or 409 in words. The claim is checked again after
+  the admission RPC (an RPC to another object lets other requests in), so two
+  first publishers racing for one id cannot both own it (vitest "two first
+  publishers racing for a new match").
 - **Storage.** The log is one storage row per published message (the native
   publisher sends one per tick that confirmed frames; batching more frames per
   message lowers the row count), so an eviction loses nothing. A match with
