@@ -434,7 +434,9 @@ impl PatchRecorder {
 ///
 /// # Errors
 ///
-/// The first write that failed.
+/// The first write that failed. Each file is written atomically
+/// (`crate::atomic_write::write_atomic`), so a failure leaves any earlier copy
+/// whole.
 pub fn write_patch_files(
     recorder: &PatchRecorder,
     pins: &[RawCheat],
@@ -448,11 +450,13 @@ pub fn write_patch_files(
         .file_stem()
         .map_or_else(|| "patch".into(), |s| s.to_string_lossy().into_owned());
     let out = rec.finish(&stem);
-    std::fs::write(bps_path, &out.bps)?;
+    // Atomic, like every other user file (`tests/no_bare_fs_write.rs`): a
+    // crash mid-write must not leave a truncated patch beside the ROM.
+    crate::atomic_write::write_atomic(bps_path, &out.bps)?;
     let mut written = vec![bps_path.to_path_buf()];
     if let Some((name, text)) = out.sidecar {
         let side = bps_path.with_file_name(name);
-        std::fs::write(&side, text)?;
+        crate::atomic_write::write_atomic(&side, text.as_bytes())?;
         written.push(side);
     }
     Ok(written)
