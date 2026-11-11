@@ -361,7 +361,12 @@ impl MemoryPanelState {
                 .all(|(k, &b)| self.read_byte(nes, base + k as u32) == b);
             if hit {
                 self.origin = base & !0xF;
-                self.find_status = Some(format!("found at ${base:04X}"));
+                // The ROM views show 6-digit offsets (#646 review).
+                self.find_status = Some(if self.domain.rom_space().is_some() {
+                    format!("found at ${base:06X}")
+                } else {
+                    format!("found at ${base:04X}")
+                });
                 return;
             }
         }

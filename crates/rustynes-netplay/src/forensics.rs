@@ -659,7 +659,13 @@ impl Forensics {
                     return;
                 };
                 let s = usize::from(section);
-                if player != d.peer || frame != d.frame || d.mask & (1 << s) == 0 {
+                // `from_bytes` bounds `section`; checked again so this state
+                // machine never shifts past its mask whoever built the message.
+                if s >= SECTION_COUNT
+                    || player != d.peer
+                    || frame != d.frame
+                    || d.mask & (1 << s) == 0
+                {
                     return;
                 }
                 let inc = &mut d.incoming[s];
@@ -692,7 +698,8 @@ impl Forensics {
                     // section this divergence sends, and never past the end
                     // of our body: the send loop slices from it.
                     let s = usize::from(section);
-                    if d.mask & (1 << s) != 0
+                    if s < SECTION_COUNT
+                        && d.mask & (1 << s) != 0
                         && let Some(body) = &d.outgoing[s]
                     {
                         let len = u32::try_from(body.len()).unwrap_or(u32::MAX);

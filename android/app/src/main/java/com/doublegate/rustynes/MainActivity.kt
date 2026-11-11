@@ -973,8 +973,11 @@ private fun prepareRom(
             lastPlayed = System.currentTimeMillis(),
         ),
     )
-    // v3.7.0 — the player's Game Genie picks for this game come back with it
-    // (hardcore refuses each, as it refuses a typed one).
+    // v3.7.0 — the player's Game Genie picks for this game come back with it.
+    // The RetroAchievements session is not attached yet, so the bridge accepts
+    // them here; once hardcore takes effect, its per-frame enforcement
+    // (`enforce_hardcore` / `drop_hardcore_codes` in `tick_frame`) removes every
+    // code on that first frame, the same frame its power cycle happens.
     for (code in CheatStore.picks(context, sha)) runCatching { ctrl.cheatAddGenie(code) }
     return PreparedRom(ctrl, sha, bytes, name, GameConfig.filter(context, sha), battery, batteryNotice, resume)
 }
