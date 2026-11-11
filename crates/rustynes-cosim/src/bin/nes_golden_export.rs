@@ -3,7 +3,7 @@
 //! # Usage
 //!
 //! ```text
-//! nes_golden_export --rom <path> --out <dir> [--seed N] [--frames N]
+//! nes_golden_export --rom <path> --out <dir> [--bios <path>] [--seed N] [--frames N]
 //!                   [--boot-trace START..END] [--irq-trace CAP]
 //!                   [--checkpoint-interval N]
 //!                   [--four-score P1:P2:P3:P4] [--vaus POS:FIRE] [--genie CODE]...
@@ -18,6 +18,9 @@
 //! `vaus`, `genie`, `zapper`) only when given; see `DeviceArgs`.
 //! `--ext-audio-trace` (v3.4.0) writes the cartridge's expansion-audio output
 //! per CPU cycle, for the `MiSTer` core's Sunsoft 5B gate.
+//! `--bios` (v3.7.0) makes `--rom` a Famicom Disk System disk image (`.fds`)
+//! booted with that 8 KiB BIOS (`Oracle::new_disk`), for the `MiSTer` core's
+//! Phase F4b gates; the manifest then records `bios_sha256` as well.
 //!
 //! Writes, under `<dir>`:
 //!
@@ -71,6 +74,12 @@ struct PpuStateTraceArgs {
 struct Args {
     rom: PathBuf,
     out: PathBuf,
+    /// v3.7.0 -- `--bios PATH`: the ROM is a Famicom Disk System disk image
+    /// (`.fds`) and this is the 8 KiB BIOS to boot it with
+    /// (`Oracle::new_disk`). Recorded in the manifest as `bios_sha256` when
+    /// given, so an FDS golden names both inputs; absent, every artifact and
+    /// manifest line is byte-identical to the exporter before it.
+    bios: Option<PathBuf>,
     seed: u64,
     frames: u32,
     /// Hold START on port 1 across a half-open frame window.
@@ -394,7 +403,7 @@ fn check_pst_cap(cap: usize) -> usize {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: nes_golden_export --rom <path> --out <dir> [--seed N] [--frames N]\n\
+        "usage: nes_golden_export --rom <path> --out <dir> [--bios <path>] [--seed N] [--frames N]\n\
          \x20                       [--boot-trace START..END] [--irq-trace CAP]\n\
          \x20                       [--fetch-trace CAP] [--apu-trace CAP] [--ext-audio-trace CAP]\n\
          \x20                       [--checkpoint-interval N]\n\
@@ -447,6 +456,7 @@ fn parse_press_start(spec: &str) -> (u64, u64) {
 fn parse_args() -> Args {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let (mut rom, mut out) = (None, None);
+    let mut bios: Option<PathBuf> = None;
     let (mut seed, mut frames) = (0u64, 60u32);
     let (mut boot_trace, mut irq_trace) = (None, None);
     let mut fetch_trace: Option<usize> = None;
@@ -477,6 +487,10 @@ fn parse_args() -> Args {
             }
             "--out" => {
                 out = Some(PathBuf::from(need(i)));
+                i += 2;
+            }
+            "--bios" => {
+                bios = Some(PathBuf::from(need(i)));
                 i += 2;
             }
             "--seed" => {
@@ -637,6 +651,7 @@ fn parse_args() -> Args {
     Args {
         rom: rom.unwrap_or_else(|| usage()),
         out: out.unwrap_or_else(|| usage()),
+        bios,
         seed,
         frames,
         press_start,
@@ -1302,6 +1317,28 @@ fn run_frames_capturing_each(o: &mut Oracle, args: &Args, base: &Path) -> u64 {
     calls
 }
 
+/// Build the oracle for the run: a cartridge, or (v3.7.0) with `--bios` an
+/// FDS disk image booted with that BIOS. Returns the manifest's
+/// `bios_sha256` line with it -- empty for a cartridge, so every cartridge
+/// manifest stays byte-identical to the exporter before `--bios` existed.
+fn open_oracle(args: &Args, rom: &[u8]) -> (Oracle, String) {
+    let bios = args
+        .bios
+        .as_ref()
+        .map(|p| std::fs::read(p).unwrap_or_else(|e| panic!("read {}: {e}", p.display())));
+    let o = bios
+        .as_ref()
+        .map_or_else(
+            || Oracle::new(rom, args.seed),
+            |b| Oracle::new_disk(rom, b, args.seed),
+        )
+        .unwrap_or_else(|e| panic!("parse rom: {e}"));
+    let line = bios.as_ref().map_or_else(String::new, |b| {
+        format!("bios_sha256  = {}\n", sha256_hex(b))
+    });
+    (o, line)
+}
+
 fn main() {
     let args = parse_args();
     // Refuse a contradictory argument set before ANY side effect: no output
@@ -1315,7 +1352,7 @@ fn main() {
         .map_or_else(|| "rom".to_owned(), |s| s.to_string_lossy().into_owned());
     std::fs::create_dir_all(&args.out).expect("create out dir");
 
-    let mut o = Oracle::new(&rom, args.seed).unwrap_or_else(|e| panic!("parse rom: {e}"));
+    let (mut o, bios_line) = open_oracle(&args, &rom);
     attach_devices(&mut o, &args);
 
     // The power-on work RAM, captured BEFORE a single cycle runs.
@@ -1431,7 +1468,7 @@ fn main() {
          ckpt_interval= {}\n\
          ckpt_count   = {}\n\
          obs_count    = {}\n\
-         {}",
+         {}{}",
         args.rom.display(),
         sha256_hex(&rom),
         args.seed,
@@ -1451,6 +1488,7 @@ fn main() {
         } else {
             ""
         },
+        bios_line,
     );
     write(&suffixed(&base, "manifest.txt"), manifest.as_bytes());
     println!("done; {cycles} CPU cycles simulated");
@@ -1507,6 +1545,7 @@ mod tests {
             ppu_state_trace: None,
             rom: std::path::PathBuf::from("/dev/null"),
             out: std::path::PathBuf::from("/tmp"),
+            bios: None,
             seed: 0,
             frames: 1,
             press_start: None,
@@ -1690,6 +1729,7 @@ mod device_tests {
             ppu_state_trace: None,
             rom: std::path::PathBuf::from("/dev/null"),
             out: std::path::PathBuf::from("/tmp"),
+            bios: None,
             seed: 0,
             frames: 1,
             press_start: None,
