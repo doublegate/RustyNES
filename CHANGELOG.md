@@ -188,6 +188,12 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **`rmcp` 3.9.0 for the MCP server** (RUSTSEC-2026-0462, published
+  2026-11-05). Before 3.9.0, rmcp's Streamable HTTP clients read a response
+  body with no size limit, so a hostile server could exhaust memory.
+  `rustynes-mcp` builds only rmcp's server role and stdio transport, so the
+  affected client was never compiled in; the dependency audits still flagged
+  the version, and the upgrade clears them.
 - **A Vs. DualSystem cabinet's save state now round-trips exactly under CPU
   overclock** (`T-CABINET-OVERCLOCK-DECAY-STATE`).
   - **The bug:** at x2, a state saved and restored with no other change ran
