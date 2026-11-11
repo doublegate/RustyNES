@@ -52,6 +52,23 @@ class CpuFrame(pixelCount: Int) {
         return true
     }
 
+    /**
+     * Pack a remembered frame, then hand [pixels] to [use] while still holding the
+     * monitor, when [always] or the pack changed them. Returns whether [use] ran.
+     *
+     * v3.7.0 (#646 review): the screenshot refresh (main thread) and the loop
+     * (`Dispatchers.Default`) both copy [pixels] into the same Bitmap. Called after
+     * [materialize] returned, the copy could interleave with the other thread's
+     * [publish] and Bitmap update; inside the monitor it cannot.
+     */
+    @Synchronized
+    fun materializeInto(always: Boolean, use: (IntArray) -> Unit): Boolean {
+        val changed = materialize()
+        if (!changed && !always) return false
+        use(pixels)
+        return true
+    }
+
     /** Write [pixels] directly (the netplay index path, the HD-pack fallback),
      *  dropping any remembered frame so a later [materialize] cannot overwrite it. */
     @Synchronized

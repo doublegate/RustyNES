@@ -427,7 +427,7 @@ pub fn show(
                     state.origin = state.origin.saturating_sub(256);
                 }
                 if ui.button("+").clicked() {
-                    let next = state.origin + 256;
+                    let next = state.origin.saturating_add(256);
                     if extent.is_some_and(|max| next <= max) {
                         state.origin = next;
                     }

@@ -105,4 +105,40 @@ class CpuFrameTest {
         assertEquals(0xFF123456.toInt(), out[0])
         assertEquals(0xFFFF8001.toInt(), out[1])
     }
+
+    /** v3.7.0 (#646 review): a screenshot's Bitmap update on the main thread and the
+     *  loop's publish on `Dispatchers.Default` must not interleave. [CpuFrame.materializeInto]
+     *  hands [CpuFrame.pixels] to the copy while holding the monitor, so a copy taken
+     *  while another thread publishes uniform black and white frames is never torn. */
+    @Test
+    fun a_copy_through_materialize_into_is_never_torn_by_a_concurrent_publish() {
+        val cpu = CpuFrame(n)
+        val black = ByteArray(n * 4) { if (it % 4 == 3) -1 else 0 }
+        val white = ByteArray(n * 4) { -1 }
+        val stop = java.util.concurrent.atomic.AtomicBoolean(false)
+        val loop = Thread {
+            var k = 0
+            while (!stop.get()) cpu.publish(if (k++ % 2 == 0) black else white, eager = true)
+        }
+        loop.start()
+        val copy = IntArray(n)
+        var torn = 0
+        try {
+            repeat(3000) {
+                cpu.materializeInto(always = true) { System.arraycopy(it, 0, copy, 0, n) }
+                if (copy.any { px -> px != copy[0] }) torn++
+            }
+        } finally {
+            stop.set(true)
+            loop.join()
+        }
+        assertEquals("copies torn by a concurrent publish", 0, torn)
+        // And without `always`, nothing pending means nothing to copy.
+        var ran = false
+        assertFalse(cpu.materializeInto(always = false) { ran = true })
+        assertFalse(ran)
+        cpu.publish(white, eager = false)
+        assertTrue(cpu.materializeInto(always = false) { ran = true })
+        assertTrue(ran)
+    }
 }

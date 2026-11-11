@@ -3116,9 +3116,10 @@ private fun EmulatorScreen(
         // v3.7.0 (`T-ANDROID-GPU-FRAMESKIP`): the CPU copy of the picture, packed only
         // when something reads it (see CpuFrame). A screenshot asks for it here.
         val cpuFrame = CpuFrame(NES_WIDTH * NES_HEIGHT)
-        val pixels = cpuFrame.pixels
         capture.refreshLatest = {
-            if (cpuFrame.materialize()) reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+            cpuFrame.materializeInto(always = false) {
+                reuse.setPixels(it, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+            }
         }
         val audio = AudioPlayer(
             48_000,
@@ -3330,8 +3331,9 @@ private fun EmulatorScreen(
                             // Compose image on that path) unless a clip or the external
                             // display started since the publish, which then gets it now.
                             if (!cpuFrame.isDeferred || capture.clip != null || castManager.casting) {
-                                cpuFrame.materialize()
-                                reuse.setPixels(pixels, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+                                cpuFrame.materializeInto(always = true) {
+                                    reuse.setPixels(it, 0, NES_WIDTH, 0, 0, NES_WIDTH, NES_HEIGHT)
+                                }
                             }
                             frame = reuse.asImageBitmap()
                             presented = reuse
