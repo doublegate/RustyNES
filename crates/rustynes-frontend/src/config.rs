@@ -492,21 +492,25 @@ impl NetplayConfig {
         (key, true)
     }
 
-    /// v3.7.0 — the match id a host publishes under: the typed one, kept as
-    /// is, else 128 random bits as 32 hex digits (the relay's longest id,
-    /// `services/hosted/src/spectate.ts` `MATCH_ID`), stored so the panel
-    /// shows it and the next session re-hosts it. Returns the id and
-    /// whether it was minted now. The relay asks viewers for no key, so the
-    /// id is what keeps a match private; a random one cannot be guessed.
+    /// The match id the next hosted session publishes under: the typed one,
+    /// as is, else 128 fresh random bits as 32 hex digits (the relay's
+    /// longest id, `services/hosted/src/spectate.ts` `MATCH_ID`). Returns the
+    /// id and whether it was minted.
+    ///
+    /// The relay asks viewers for no key, so the id is what keeps a match
+    /// private. v3.7.0 stored the minted id and re-hosted it every session,
+    /// so anyone once given it could watch every later match (maintainer,
+    /// 2026-11-11: a fresh id per match). A minted id is therefore NOT
+    /// stored: each hosted session gets its own, shown in the netplay panel
+    /// for the host to pass on. A typed id is the host's choice to reuse.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn edge_match_or_mint(&mut self) -> (String, bool) {
+    #[must_use]
+    pub fn edge_match_for_session(&self) -> (String, bool) {
         let typed = self.edge_match.trim();
         if !typed.is_empty() {
             return (typed.to_string(), false);
         }
-        let id = random_hex16();
-        self.edge_match.clone_from(&id);
-        (id, true)
+        (random_hex16(), true)
     }
 
     /// v3.7.0 — whether a typed match id is short enough to guess. 22
@@ -2626,26 +2630,31 @@ mod tests {
         assert_eq!(fresh.len(), 32);
     }
 
-    /// v3.7.0 — viewers present no key, so a match id is a viewer's whole
-    /// credential. An empty one is minted unguessable (and in the relay's
-    /// alphabet and length) and then kept; a typed one is kept as typed and
-    /// reported guessable when short.
+    /// Viewers present no key, so a match id is a viewer's whole credential.
+    /// With the field empty every hosted session gets a fresh unguessable id
+    /// (in the relay's alphabet and length), and none is stored, so a viewer
+    /// given one match's id cannot follow the host to the next (v3.7.1,
+    /// maintainer 2026-11-11); a typed id is kept as typed and reported
+    /// guessable when short.
     #[test]
-    fn an_empty_edge_match_is_minted_unguessable_and_a_typed_one_is_kept() {
+    fn each_hosted_session_gets_a_fresh_unstored_match_id_unless_one_is_typed() {
         let mut np = NetplayConfig::default();
         assert!(!np.edge_match_is_guessable());
-        let (id, minted) = np.edge_match_or_mint();
+        let (id, minted) = np.edge_match_for_session();
         assert!(minted);
         assert_eq!(id.len(), 32);
         assert!(id.bytes().all(|b| b.is_ascii_hexdigit()));
-        assert_eq!(np.edge_match, id);
-        assert!(!np.edge_match_is_guessable());
-        let (again, minted_again) = np.edge_match_or_mint();
-        assert_eq!((again.as_str(), minted_again), (id.as_str(), false));
-        let (other, _) = NetplayConfig::default().edge_match_or_mint();
-        assert_ne!(other, id, "two mints gave the same id");
+        assert_eq!(np.edge_match, "", "a minted id is not stored");
+        let (next, minted_next) = np.edge_match_for_session();
+        assert!(minted_next);
+        assert_ne!(next, id, "the next session gets a new id");
         np.edge_match = " game1 ".into();
-        assert_eq!(np.edge_match_or_mint(), ("game1".to_string(), false));
+        assert_eq!(np.edge_match_for_session(), ("game1".to_string(), false));
+        assert_eq!(
+            np.edge_match_for_session(),
+            ("game1".to_string(), false),
+            "a typed id is reused"
+        );
         assert!(np.edge_match_is_guessable());
         np.edge_match = "a".repeat(GUESSABLE_MATCH_ID_LEN);
         assert!(!np.edge_match_is_guessable());

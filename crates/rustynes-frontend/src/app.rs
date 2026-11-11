@@ -8138,26 +8138,28 @@ impl App {
     /// hosted base and a valid match id are set. The key is this peer's kept
     /// `edge_publish_key` (minted and saved on first use), not a fresh one:
     /// the relay keeps a match id for its first key, so a fresh key per
-    /// session locked a host out of its own match id after a restart. An
-    /// empty match id is minted random and shown in the status bar.
+    /// session locked a host out of its own match id after a restart. With
+    /// the match id empty each session gets a fresh random one, not stored
+    /// (v3.7.1), returned with the URL so the netplay panel shows it.
     #[cfg(not(target_arch = "wasm32"))]
-    fn edge_publish_url(&mut self) -> Option<String> {
+    fn edge_publish_url(&mut self) -> Option<(String, String)> {
         let np = &self.config.netplay;
         let base = np.edge_publish.then(|| np.hosted_base()).flatten()?;
         let (key, minted_key) = self.config.netplay.edge_publish_key_or_mint();
-        // Viewers present no key, so an empty match id is minted random
-        // (unguessable) rather than refused, and announced so the host can
-        // pass it on.
-        let (match_id, minted_id) = self.config.netplay.edge_match_or_mint();
-        if minted_key || minted_id {
+        if minted_key {
             let _ = self.config.save();
         }
+        // Viewers present no key, so an empty match id is minted random
+        // (unguessable) for this session only, and announced so the host can
+        // pass it on.
+        let (match_id, minted_id) = self.config.netplay.edge_match_for_session();
         if minted_id {
             self.ui.set_status(StatusMessage::info(format!(
-                "Spectators can watch this match through the relay with id {match_id}"
+                "Spectators can watch this match through the relay with id {match_id} \
+                 (a new id each match)"
             )));
         }
-        rustynes_netplay::spectate_url(&base, &match_id, Some(&key))
+        rustynes_netplay::spectate_url(&base, &match_id, Some(&key)).map(|url| (url, match_id))
     }
 
     /// v3.7.0 — watch `match_id` through the hosted relay: the same ROM,
@@ -10551,6 +10553,7 @@ fn netplay_status_view(s: &crate::netplay_ui::NetplayStatus) -> crate::debugger:
         spectator_pending: s.spectator_pending,
         message: s.message.clone(),
         relay_note: s.relay_note.clone(),
+        relay_match: s.relay_match.clone(),
         diagnostics: s.diagnostics.clone(),
     }
 }

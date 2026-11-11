@@ -56,6 +56,8 @@ pub struct NetplayStatusView {
     pub message: String,
     /// v3.7.0 — why publishing to the spectate relay stopped, else empty.
     pub relay_note: String,
+    /// v3.7.1 — the relay match id this hosted session publishes under.
+    pub relay_match: String,
     /// v1.3.0 Workstream G1 — read-only desync diagnostics + room / input
     /// topology, rendered in the panel's "Diagnostics" section.
     pub diagnostics: NetplayDiagnosticsView,
@@ -342,6 +344,9 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
             // error state.
             if !st.relay_note.is_empty() {
                 ui.colored_label(egui::Color32::from_rgb(0xE0, 0xB0, 0x40), &st.relay_note);
+            } else if !st.relay_match.is_empty() {
+                // v3.7.1 — the id to pass to spectators (selectable to copy).
+                ui.label(crate::tf!(NpEdgePublishingAs, st.relay_match));
             }
             let mut sync = Vec::new();
             if st.rolled_back {

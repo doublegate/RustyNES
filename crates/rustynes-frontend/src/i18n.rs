@@ -371,6 +371,7 @@ catalog! {
     NpEdgeWatch => "Watch via the relay", Some("Ver mediante el repetidor");
     NpEdgeNote => "Needs the hosted services. You receive the match's confirmed inputs only and run it locally.", Some("Requiere los servicios alojados. Recibes solo las entradas confirmadas de la partida y la ejecutas localmente.");
     NpEdgeGuessable => "A short match id can be guessed, and anyone who has it can watch. Leave it empty to publish under a random one.", Some("Un id de partida corto se puede adivinar, y cualquiera que lo tenga puede mirar. Déjalo vacío para publicar con uno aleatorio.");
+    NpEdgePublishingAs => "Spectators watch with match id {0}", Some("Los espectadores miran con el id de partida {0}");
     NpEdgePublish => "Publish this match to the spectate relay under the relay match id", Some("Publicar esta partida en el repetidor de espectadores con el id de partida del repetidor");
     NpForensics => "desync forensics: {0}", Some("análisis forense de desincronización: {0}");
     NpForensicsOptIn => "Desync forensics (shares state with the peer on a desync)", Some("Análisis forense de desincronización (comparte el estado con el otro jugador si se desincroniza)");

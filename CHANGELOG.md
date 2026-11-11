@@ -26,6 +26,16 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Changed
+
+- **Each hosted match gets its own spectator id.** With the relay match id
+  left empty, v3.7.0 minted a random id, saved it and reused it for every
+  later match, so anyone once given it could watch every match the host
+  played afterwards (viewers present no key). Now each hosted session gets a
+  fresh random id, shown in the netplay panel ("Spectators watch with match
+  id ...") and in the status bar, and none is saved. A typed id is kept and
+  reused as before. Maintainer decision, 2026-11-11; ADR 0046 addendum.
+
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 
 ### Breaking

@@ -141,6 +141,9 @@ pub struct NetplayStatus {
     /// (the relay refused it or the connection closed), else empty. The match
     /// itself carries on: a relay that is down never stalls play.
     pub relay_note: String,
+    /// v3.7.1 — the spectate-relay match id this hosted session publishes
+    /// under, for the host to pass on, else empty.
+    pub relay_match: String,
     /// v1.3.0 Workstream G1 — read-only desync diagnostics + session topology,
     /// rebuilt from the live session each `InGame` tick. Default (inert) in
     /// every other phase. Observational only.
@@ -247,8 +250,10 @@ pub struct NetplayUi {
     /// (`[netplay] desync_forensics`).
     desync_forensics: bool,
     /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — the spectate-relay publish URL
-    /// for the next session this peer hosts, if it publishes.
-    edge_publish_url: Option<String>,
+    /// for the next session this peer hosts, if it publishes, and the match
+    /// id it publishes under (shown in the panel: v3.7.1 mints a fresh one
+    /// per session when none is typed).
+    edge_publish_url: Option<(String, String)>,
     /// The running session's relay publisher, when it publishes.
     edge_publisher: Option<(
         rustynes_netplay::EdgeRelayClient,
@@ -299,10 +304,10 @@ impl NetplayUi {
     }
 
     /// v3.7.0 — publish the next session this peer hosts to the spectate
-    /// relay at `url` (`rustynes_netplay::spectate_url` with a publish key),
-    /// or not (`None`).
-    pub fn set_edge_publish(&mut self, url: Option<String>) {
-        self.edge_publish_url = url;
+    /// relay at `url` (`rustynes_netplay::spectate_url` with a publish key)
+    /// under `match_id`, or not (`None`).
+    pub fn set_edge_publish(&mut self, publish: Option<(String, String)>) {
+        self.edge_publish_url = publish;
     }
 
     /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — watch a match through the
@@ -682,21 +687,23 @@ impl NetplayUi {
             session.enable_forensics(rustynes_netplay::ForensicsConfig::default());
         }
         // v3.7.0 — the host publishes the match to the spectate relay.
-        self.edge_publisher = self
+        let publish = self
             .edge_publish_url
-            .as_deref()
-            .filter(|_| self.config.local_player == 0)
-            .map(|url| {
-                (
-                    rustynes_netplay::EdgeRelayClient::connect(url),
-                    rustynes_netplay::EdgePublisher::new(self.identity),
-                )
-            });
+            .as_ref()
+            .filter(|_| self.config.local_player == 0);
+        self.edge_publisher = publish.map(|(url, _)| {
+            (
+                rustynes_netplay::EdgeRelayClient::connect(url),
+                rustynes_netplay::EdgePublisher::new(self.identity),
+            )
+        });
+        let relay_match = publish.map(|(_, id)| id.clone()).unwrap_or_default();
         self.state = NetplayState::InGame(Box::new(session));
         self.last_peer_activity = std::time::Instant::now();
         self.last_confirmed_tracker = 0;
         self.status.phase = NetplayPhase::InGame;
         self.status.is_host = self.is_host;
+        self.status.relay_match = relay_match;
     }
 
     /// v3.4.0 — drive a 3-4 player host's gathering one tick. Once every
