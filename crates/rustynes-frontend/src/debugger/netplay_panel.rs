@@ -54,6 +54,8 @@ pub struct NetplayStatusView {
     pub spectator_pending: u32,
     /// Error / disconnect text (Error phase), else empty.
     pub message: String,
+    /// v3.7.0 — why publishing to the spectate relay stopped, else empty.
+    pub relay_note: String,
     /// v1.3.0 Workstream G1 — read-only desync diagnostics + room / input
     /// topology, rendered in the panel's "Diagnostics" section.
     pub diagnostics: NetplayDiagnosticsView,
@@ -335,6 +337,12 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
                 st.confirmed_frame
                     .map_or_else(|| "-".to_string(), |f| f.to_string()),
             ));
+            // v3.7.0 — a spectate-relay publisher that stopped (refused or
+            // disconnected). Play is unaffected, so this is a note, not an
+            // error state.
+            if !st.relay_note.is_empty() {
+                ui.colored_label(egui::Color32::from_rgb(0xE0, 0xB0, 0x40), &st.relay_note);
+            }
             let mut sync = Vec::new();
             if st.rolled_back {
                 sync.push(crate::tf!(NpRollback, st.resimulated_frames));

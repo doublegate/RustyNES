@@ -438,7 +438,9 @@ pub struct NetplayConfig {
     /// build time through `RUSTYNES_HOSTED_BASE`), the browser lobby defaults
     /// its signaling URL to the hosted lobby and fetches short-lived TURN
     /// credentials from it before the WebRTC handshake. Empty by default, which
-    /// keeps the pre-v3.4.0 behaviour exactly. Native netplay ignores it.
+    /// keeps the pre-v3.4.0 behaviour exactly. Since v3.7.0 native netplay
+    /// reads it too, for one thing only: the spectate relay
+    /// (`edge_publish` / `edge_match`) lives on the hosted services.
     #[serde(default)]
     pub hosted_base_url: String,
     /// v3.7.0 (`T-NETPLAY-DESYNC-FORENSICS`) — opt into desync forensics for
@@ -457,9 +459,40 @@ pub struct NetplayConfig {
     /// relay under [`Self::edge_match`]. Off by default.
     #[serde(default)]
     pub edge_publish: bool,
+    /// v3.7.0 — the key this peer publishes to the spectate relay with, as
+    /// hex. Minted once on the first publish and kept, because the relay
+    /// gives a match id to the first key that publishes it and keeps it for
+    /// `SPECTATE_IDLE_SECONDS` (an hour by default) after the last frame: a
+    /// fresh key per session meant a host that restarted inside that hour
+    /// could not re-host its own match id. A local secret: it lets whoever
+    /// holds it publish under this peer's match ids, so do not share it.
+    #[serde(default)]
+    pub edge_publish_key: String,
 }
 
 impl NetplayConfig {
+    /// v3.7.0 — the spectate-relay publish key, minting and storing one when
+    /// none is kept or the kept one is not 32 hex digits (the relay accepts
+    /// 32 to 64). Returns the key and whether it was minted, so the caller
+    /// knows to save the config.
+    pub fn edge_publish_key_or_mint(&mut self) -> (String, bool) {
+        use std::fmt::Write as _;
+        let kept = self.edge_publish_key.trim();
+        if kept.len() == 32 && kept.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return (kept.to_ascii_lowercase(), false);
+        }
+        let key =
+            rustynes_netplay::fresh_key_share()
+                .iter()
+                .take(16)
+                .fold(String::new(), |mut s, b| {
+                    let _ = write!(s, "{b:02x}");
+                    s
+                });
+        self.edge_publish_key.clone_from(&key);
+        (key, true)
+    }
+
     /// The hosted base in effect: this config's, else the build-time one.
     #[must_use]
     pub fn hosted_base(&self) -> Option<String> {
@@ -531,6 +564,7 @@ impl Default for NetplayConfig {
             desync_forensics: false,
             edge_match: String::new(),
             edge_publish: false,
+            edge_publish_key: String::new(),
         }
     }
 }
@@ -2516,6 +2550,26 @@ fn canonicalize_pad(pad: &PadBindings) -> PadBindings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// v3.7.0 — the spectate relay keeps a match id for its first key, so the
+    /// publish key must survive across sessions: minted once, then reused.
+    /// A malformed kept key (wrong length, not hex) is replaced.
+    #[test]
+    fn the_edge_publish_key_is_minted_once_and_kept() {
+        let mut np = NetplayConfig::default();
+        let (first, minted) = np.edge_publish_key_or_mint();
+        assert!(minted);
+        assert_eq!(first.len(), 32);
+        assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!(np.edge_publish_key, first);
+        let (again, minted_again) = np.edge_publish_key_or_mint();
+        assert_eq!((again.as_str(), minted_again), (first.as_str(), false));
+        np.edge_publish_key = "not-a-key".into();
+        let (fresh, minted_fresh) = np.edge_publish_key_or_mint();
+        assert!(minted_fresh);
+        assert_ne!(fresh, "not-a-key");
+        assert_eq!(fresh.len(), 32);
+    }
     use tempfile::TempDir;
 
     /// v3.4.0: the hosted base is opt-in. A config without the key loads with

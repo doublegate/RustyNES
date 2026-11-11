@@ -137,6 +137,10 @@ pub struct NetplayStatus {
     pub spectator_pending: u32,
     /// An error / disconnect message (Error phase), else empty.
     pub message: String,
+    /// v3.7.0 — why publishing this match to the spectate relay stopped
+    /// (the relay refused it or the connection closed), else empty. The match
+    /// itself carries on: a relay that is down never stalls play.
+    pub relay_note: String,
     /// v1.3.0 Workstream G1 — read-only desync diagnostics + session topology,
     /// rebuilt from the live session each `InGame` tick. Default (inert) in
     /// every other phase. Observational only.
@@ -799,7 +803,11 @@ impl NetplayUi {
                 // v3.7.0 — publish the newly confirmed frames. A relay that
                 // is down never stalls the match: its messages are dropped.
                 if let Some((client, publisher)) = self.edge_publisher.as_mut() {
-                    let _ = client.poll();
+                    for event in client.poll() {
+                        if let rustynes_netplay::EdgeEvent::Closed(why) = event {
+                            self.status.relay_note = relay_note(&why);
+                        }
+                    }
                     for msg in publisher.poll(session) {
                         client.send(&msg);
                     }
@@ -1041,9 +1049,38 @@ fn diagnostics_view<T: Transport>(
     }
 }
 
+/// v3.7.0 — the netplay panel's line for a spectate-relay publisher that
+/// stopped, from the relay client's terminal reason. A refused upgrade is a
+/// `connect failed: ... 403 ...`, which the relay sends when the match id
+/// belongs to another key (`services/hosted/src/spectate.ts`); a 409 when
+/// this key already has a live publisher; anything else is passed through.
+fn relay_note(why: &str) -> String {
+    if why.contains("403") {
+        "Spectate relay: this match id belongs to another publisher. Pick another id.".to_string()
+    } else if why.contains("409") {
+        "Spectate relay: this match id already has a live publisher.".to_string()
+    } else {
+        format!("Spectate relay stopped ({why}); the match continues without spectators.")
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// v3.7.0 — a stopped spectate-relay publisher is reported in words, and
+    /// the relay's two refusals are told apart from a dropped connection.
+    #[test]
+    fn a_stopped_relay_publisher_is_reported_in_words() {
+        assert!(
+            relay_note("connect failed: HTTP error: 403 Forbidden").contains("another publisher")
+        );
+        assert!(
+            relay_note("connect failed: HTTP error: 409 Conflict")
+                .contains("already has a live publisher")
+        );
+        let other = relay_note("read error: connection reset");
+        assert!(other.contains("connection reset") && other.contains("continues"));
+    }
     use std::net::{Ipv4Addr, UdpSocket};
 
     // A minimal NROM (infinite loop) so the session can advance frames

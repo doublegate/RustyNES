@@ -8108,21 +8108,20 @@ impl App {
     }
 
     /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — the spectate-relay publish URL
-    /// for the next hosted session, with a fresh random key, when
-    /// `[netplay] edge_publish` is on and a hosted base and a valid match id
-    /// are set.
+    /// for the next hosted session, when `[netplay] edge_publish` is on and a
+    /// hosted base and a valid match id are set. The key is this peer's kept
+    /// `edge_publish_key` (minted and saved on first use), not a fresh one:
+    /// the relay keeps a match id for its first key, so a fresh key per
+    /// session locked a host out of its own match id after a restart.
     #[cfg(not(target_arch = "wasm32"))]
-    fn edge_publish_url(&self) -> Option<String> {
-        use std::fmt::Write as _;
+    fn edge_publish_url(&mut self) -> Option<String> {
         let np = &self.config.netplay;
         let base = np.edge_publish.then(|| np.hosted_base()).flatten()?;
-        let key = rustynes_netplay::fresh_key_share()
-            .iter()
-            .fold(String::new(), |mut s, b| {
-                let _ = write!(s, "{b:02x}");
-                s
-            });
-        rustynes_netplay::spectate_url(&base, np.edge_match.trim(), Some(&key))
+        let (key, minted) = self.config.netplay.edge_publish_key_or_mint();
+        if minted {
+            let _ = self.config.save();
+        }
+        rustynes_netplay::spectate_url(&base, self.config.netplay.edge_match.trim(), Some(&key))
     }
 
     /// v3.7.0 — watch `match_id` through the hosted relay: the same ROM,
@@ -8215,7 +8214,7 @@ impl App {
                 // address from its first Sync — no remote to pre-enter or parse.
                 self.netplay
                     .set_desync_forensics(self.config.netplay.desync_forensics);
-                // v3.7.0 — publish to the spectate relay, with a fresh key.
+                // v3.7.0 — publish to the spectate relay, with the kept key.
                 let publish = self.edge_publish_url();
                 self.netplay.set_edge_publish(publish);
                 self.netplay.start_host(port, num_players, identity);
@@ -10502,6 +10501,7 @@ fn netplay_status_view(s: &crate::netplay_ui::NetplayStatus) -> crate::debugger:
         stalled: s.stalled,
         spectator_pending: s.spectator_pending,
         message: s.message.clone(),
+        relay_note: s.relay_note.clone(),
         diagnostics: s.diagnostics.clone(),
     }
 }
