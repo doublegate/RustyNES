@@ -453,8 +453,9 @@ pub struct NetplayConfig {
     pub desync_forensics: bool,
     /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — the spectate-relay match id: the
     /// one to watch, and the one a host publishes under. Empty by default; a
-    /// host that publishes with it empty gets a random one
-    /// ([`Self::edge_match_or_mint`]). Viewers present no key, so the id is
+    /// host that publishes with it empty gets a fresh random one for each
+    /// hosted session, never stored (`Self::edge_match_for_session`, native
+    /// only). Viewers present no key, so the id is
     /// the whole of a viewer's credential: anyone who has it can watch.
     #[serde(default)]
     pub edge_match: String,
