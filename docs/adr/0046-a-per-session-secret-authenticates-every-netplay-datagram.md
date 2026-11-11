@@ -6,8 +6,8 @@ Date: 2026-10-16
 
 Accepted. Plan row 11 of `to-dos/plans/v3.4.0-plan.md`
 (`T-NETPLAY-DATAGRAM-AUTH`, Round 2 NET-R2-07). Protocol 9 (`"RNE9"`).
-Amended 2026-11-10 (v3.7.0, protocol 10, `"RN10"`): see the amendment at
-the end.
+Amended 2026-11-10 (v3.7.0, protocol 10, `"RN10"`), approved by the
+maintainer 2026-11-11: see the amendment at the end.
 
 ## Context
 
@@ -146,5 +146,6 @@ the spectator can derive". The relay does not:
 A direct-link spectator (v1.7.0 H8) is unchanged and still unkeyed.
 
 **Who decided.** The maintainer chose to build, test and deploy the relay
-(2026-11-08). This amendment records the design as built, for review; it does
-not claim that review has happened.
+(2026-11-08), chose a random match id by default over a viewer key
+(2026-11-11), and approved this amendment, including the unsealed relay
+stream, on 2026-11-11.
