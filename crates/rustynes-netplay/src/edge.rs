@@ -276,7 +276,13 @@ impl EdgeSpectator {
                 offset,
                 ref data,
             } => {
-                if !self.wants_checkpoint || self.ready_checkpoint.is_some() || self.joined {
+                // `total == 0` is refused by `from_bytes`; checked again for a
+                // caller that builds the message itself.
+                if !self.wants_checkpoint
+                    || self.ready_checkpoint.is_some()
+                    || self.joined
+                    || total == 0
+                {
                     return;
                 }
                 let inc = self.checkpoint.get_or_insert_with(|| Incoming {

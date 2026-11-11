@@ -809,7 +809,10 @@ impl NetMessage {
         let offset = u32::from_le_bytes(rest.get(8..12)?.try_into().ok()?);
         let len = usize::from(u16::from_le_bytes(rest.get(12..14)?.try_into().ok()?));
         let data = rest.get(14..)?;
+        // An empty checkpoint is refused (#646 review): it would complete at
+        // once and take the place of the real one a spectator is waiting for.
         if data.len() != len
+            || total == 0
             || len > Self::MAX_FORENSIC_CHUNK
             || total as usize > crate::edge::MAX_CHECKPOINT_LEN
             || (offset as usize).checked_add(len)? > total as usize
@@ -1433,6 +1436,19 @@ mod tests {
             data: vec![0; 6],
         };
         assert_eq!(NetMessage::from_bytes(&past.to_bytes()), None);
+        // #646 review: an empty checkpoint completes at once and would take the
+        // place of the real one a spectator is waiting for; none is ever empty.
+        let empty = NetMessage::StateCheckpoint {
+            frame: 1,
+            total: 0,
+            offset: 0,
+            data: Vec::new(),
+        };
+        assert_eq!(
+            NetMessage::from_bytes(&empty.to_bytes()),
+            None,
+            "an empty checkpoint"
+        );
     }
 
     /// v3.7.0 (protocol 10) — the forensics messages round-trip and reject
