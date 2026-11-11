@@ -178,15 +178,28 @@ export class Spectate extends DurableObject<Env> {
             headers: { "Retry-After": String(admission.retryAfter) },
           });
         }
-        this.meta = { keyHash, frames: 0, rows: 0 };
-        await this.ctx.storage.put("meta", this.meta);
+        // The RPC above is not a storage operation, so the object's input
+        // gate let other requests in while it ran: a second first publisher
+        // may have claimed the match meanwhile. Check again; from here to the
+        // assignment there is no await, so the claim is atomic.
+        // (Read through a widened local: TypeScript still narrows `this.meta`
+        // to undefined across the await, the same assumption that was wrong.)
+        const claimed = this.meta as Meta | undefined;
+        if (claimed === undefined) {
+          this.meta = { keyHash, frames: 0, rows: 0 };
+          await this.ctx.storage.put("meta", this.meta);
+        } else if (claimed.keyHash !== keyHash) {
+          return new Response("this match belongs to another publisher", { status: 403 });
+        }
       } else if (this.meta.keyHash !== keyHash) {
         return new Response("this match belongs to another publisher", { status: 403 });
       }
+      await this.touch(now);
+      // Checked after the last await for the same reason: two connections
+      // with the owner's key must not both become the publisher.
       if (this.ctx.getWebSockets("publish").length > 0) {
         return new Response("this match already has a publisher", { status: 409 });
       }
-      await this.touch(now);
       return this.accept("publish", key).response;
     }
 

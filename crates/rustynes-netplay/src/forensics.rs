@@ -688,8 +688,16 @@ impl Forensics {
                     && player == d.peer
                     && frame == d.frame
                 {
+                    // `have` is the peer's to choose. Record it only for a
+                    // section this divergence sends, and never past the end
+                    // of our body: the send loop slices from it.
                     let s = usize::from(section);
-                    d.peer_have[s] = d.peer_have[s].max(have);
+                    if d.mask & (1 << s) != 0
+                        && let Some(body) = &d.outgoing[s]
+                    {
+                        let len = u32::try_from(body.len()).unwrap_or(u32::MAX);
+                        d.peer_have[s] = d.peer_have[s].max(have.min(len));
+                    }
                 }
             }
             _ => {}
@@ -763,9 +771,12 @@ impl Forensics {
             let section = i as u8;
             if let Some(body) = &d.outgoing[i] {
                 let total = u32::try_from(body.len()).unwrap_or(u32::MAX);
-                let mut at = d.peer_have[i] as usize;
-                // An empty body still announces its length once.
-                let mut first = true;
+                // Clamped again here so no stored ack can reach past the
+                // body, whatever wrote it.
+                let mut at = (d.peer_have[i] as usize).min(body.len());
+                // An empty body still announces its length once, unless the
+                // peer has already acknowledged it.
+                let mut first = d.peer_have[i] == 0;
                 while budget > 0 && (at < body.len() || (first && body.is_empty())) {
                     let end = (at + NetMessage::MAX_FORENSIC_CHUNK).min(body.len());
                     out.push(NetMessage::ForensicChunk {
@@ -877,6 +888,59 @@ mod tests {
         .expect("differs");
         assert_eq!(diff.location, StateLocation::CpuRam { addr: 0x0123 });
         assert_eq!(diff.differing_bytes, 1);
+    }
+
+    /// A peer's `ForensicAck` carries a `have` of its choosing. Past the end
+    /// of our body it must not reach a slice: with an empty body (a section
+    /// the snapshot lacks, `begin`'s `unwrap_or_default`) the send loop once
+    /// sliced `body[have..0]` and panicked, and on a 32-bit target a `have`
+    /// near `u32::MAX` overflowed `at + MAX_FORENSIC_CHUNK`. A hostile opted-in
+    /// peer could crash the session that way (security review, v3.7.0).
+    #[test]
+    fn an_ack_past_the_body_never_reaches_a_slice() {
+        let mut f = Forensics::new(ForensicsConfig::default(), 0);
+        let mut outgoing: [Option<Vec<u8>>; SECTION_COUNT] = Default::default();
+        outgoing[0] = Some(Vec::new());
+        outgoing[1] = Some(vec![0xAB; 10]);
+        f.divergence = Some(Divergence {
+            peer: 1,
+            frame: 5,
+            mask: 0b11,
+            outgoing,
+            peer_have: [0; SECTION_COUNT],
+            incoming: Default::default(),
+        });
+        for section in [0u8, 1, 2] {
+            f.on_message(&NetMessage::ForensicAck {
+                player: 1,
+                frame: 5,
+                section,
+                have: u32::MAX,
+            });
+        }
+        // Must not panic. Every chunk sent lies inside its body, and the
+        // non-empty body the peer acknowledged in full is not resent. (The
+        // empty body still makes its one length announcement, at offset 0
+        // with no data: a clamped ack of 0 cannot say "I have it", and the
+        // announcement is in bounds.)
+        let out = f.outbox();
+        for m in &out {
+            if let NetMessage::ForensicChunk {
+                section,
+                offset,
+                data,
+                total,
+                ..
+            } = m
+            {
+                assert!(*offset as usize + data.len() <= *total as usize, "{m:?}");
+                assert_ne!(*section, 1, "section 1 was resent past its ack: {m:?}");
+            }
+        }
+        // The stored ack is clamped to the body, and a section outside the
+        // divergence's mask is not recorded at all.
+        let d = f.divergence.as_ref().unwrap();
+        assert_eq!(d.peer_have[..3], [0, 10, 0]);
     }
 
     /// A 16 KiB NROM image that spins in place.

@@ -5620,6 +5620,17 @@ impl App {
                 ));
                 return;
             }
+            // v3.7.0 (security review): live ROM edits are refused WHILE
+            // hardcore is on, but enabling it only power-cycles, and
+            // `Nes::power_cycle` keeps the mapper and its edited buffers. So a
+            // ROM patched before the switch would run in hardcore. Refuse
+            // rather than revert: reverting would discard unsaved edits.
+            if self.emu.lock().has_rom_edits() {
+                self.ui.set_status(StatusMessage::info(
+                    "Save the patch and load the patched ROM, or Reset edits, before enabling hardcore",
+                ));
+                return;
+            }
         }
         let switched_on = self.ra.as_mut().is_some_and(|ra| ra.set_hardcore(on));
         self.config.retroachievements.hardcore = on;
@@ -13199,6 +13210,13 @@ mod tests {
         assert_before(
             "set_ra_hardcore",
             "crate::session_policy::refusal(TimelineAction::PowerCycle, owners).is_some()",
+            "ra.set_hardcore(on)",
+        );
+        // v3.7.0 — live ROM edits block the switch: the power cycle below
+        // keeps the mapper's edited buffers, so the refusal must come first.
+        assert_before(
+            "set_ra_hardcore",
+            "if self.emu.lock().has_rom_edits() {",
             "ra.set_hardcore(on)",
         );
         assert_before(

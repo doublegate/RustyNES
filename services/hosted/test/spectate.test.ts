@@ -209,6 +209,32 @@ describe("relay", () => {
     viewer.ws.close(1000, "");
   });
 
+  // v3.7.0 security review: the claim awaited the Budget object's admission
+  // RPC between "is this match unclaimed?" and "claim it", and a Durable
+  // Object lets other requests in during an RPC to another object. Two first
+  // publishers with different keys could both see it unclaimed, and the
+  // later one overwrote the owner's key. Exactly one may own a new match.
+  it("two first publishers racing for a new match: exactly one owns it", async () => {
+    const match = freshMatch();
+    const other = "ffffffffffffffffffffffffffffffff";
+    const [a, b] = await Promise.all([
+      open(match, `role=publish&key=${KEY}`),
+      open(match, `role=publish&key=${other}`),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([101, 403]);
+    const winner = a.status === 101 ? KEY : other;
+    const loser = a.status === 101 ? other : KEY;
+    (a.status === 101 ? a : b).webSocket?.accept();
+    (a.status === 101 ? a : b).webSocket?.close(1000, "");
+    // The owner's key still holds the match, and the loser's still cannot.
+    expect((await open(match, `role=publish&key=${loser}`)).status).toBe(403);
+    const again = await open(match, `role=publish&key=${winner}`);
+    expect(again.status).toBe(101);
+    again.webSocket?.accept();
+    again.webSocket?.close(1000, "");
+  });
+
   it("refuses a viewer of a match nobody published", async () => {
     expect((await open(freshMatch(), "role=view")).status).toBe(404);
     expect((await open("bad id!", "role=view")).status).toBe(400);
