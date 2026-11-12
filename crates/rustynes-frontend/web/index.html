@@ -57,16 +57,26 @@
         v1.7.0 "Forge" beta.5 Workstream H6 — PWA: manifest + service worker +
         icons, copied into dist/ by the trunk asset pipeline. The manifest +
         icons + the SW make the demo installable and offline-capable (the SW
-        runtime-caches the app shell on first load). Icons are reused from the
-        repo's `assets/RustyNES_Icon/` set.
+        runtime-caches the app shell on first load). Since v3.7.1 the icons are
+        the web set from `assets/RustyNES_Icon_Pack/web/`: the browser-tab
+        favicons (.ico, 16, 32, 96), the iOS home-screen icon (180) and the
+        PWA install icons (192, 512).
     -->
     <link data-trunk rel="copy-file" href="manifest.webmanifest" />
     <link data-trunk rel="copy-file" href="sw.js" />
-    <link data-trunk rel="copy-file" href="../../../assets/RustyNES_Icon/icon-256.png" />
-    <link data-trunk rel="copy-file" href="../../../assets/RustyNES_Icon/icon-512.png" />
+    <link data-trunk rel="copy-file" href="../../../assets/RustyNES_Icon_Pack/web/favicon.ico" />
+    <link data-trunk rel="copy-file" href="../../../assets/RustyNES_Icon_Pack/web/favicon-16x16.png" />
+    <link data-trunk rel="copy-file" href="../../../assets/RustyNES_Icon_Pack/web/favicon-32x32.png" />
+    <link data-trunk rel="copy-file" href="../../../assets/RustyNES_Icon_Pack/web/favicon-96x96.png" />
+    <link data-trunk rel="copy-file" href="../../../assets/RustyNES_Icon_Pack/web/apple-touch-icon.png" />
+    <link data-trunk rel="copy-file" href="../../../assets/RustyNES_Icon_Pack/web/android-chrome-192x192.png" />
+    <link data-trunk rel="copy-file" href="../../../assets/RustyNES_Icon_Pack/web/android-chrome-512x512.png" />
     <link rel="manifest" href="manifest.webmanifest" />
-    <link rel="icon" type="image/png" href="icon-256.png" />
-    <link rel="apple-touch-icon" href="icon-256.png" />
+    <link rel="icon" href="favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="96x96" href="favicon-96x96.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png" />
     <meta name="theme-color" content="#ff8800" />
 
     <style>

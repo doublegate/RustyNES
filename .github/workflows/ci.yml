@@ -731,7 +731,19 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           cache-key: full-build
+      # v3.7.1: the release's packaging, checked before a release is the first
+      # build of it. On Windows, `build.rs` must embed the icon pack's
+      # `RustyNES.ico` (a resource-compiler failure is fatal here, as in
+      # `release.yml`). On macOS, the `RustyNES.app` bundle is assembled around
+      # this build, then linted (`plutil`), signed ad hoc and verified
+      # (`codesign --verify --strict`) by the same script the release runs.
       - run: cargo build -p rustynes-frontend --features full --locked
+        env:
+          RUSTYNES_REQUIRE_EXE_ICON: "1"
+      - name: RustyNES.app assembles, lints and verifies (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: scripts/package/macos-app.sh target/debug/rustynes 0.0.0 "$RUNNER_TEMP"
       # 2026-10-23 (after v3.5.0) — the OS shared-memory store (`shm.rs`,
       # `script-ipc`) has a Windows implementation and an Apple one
       # (`target_vendor = "apple"`: variadic `shm_open`, `PSHMNAMLEN`, a `u16`

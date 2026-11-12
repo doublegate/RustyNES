@@ -15,8 +15,12 @@ Then it rasterizes to a PNG set and a multi-size `.ico`. Design concept and per-
 live in the script's header + docstrings.
 
 `rustynes.svg`, `rustynes.ico`, `icon-1024.png`, and `preview.png` are **generated outputs** that
-were copied up from the generator's `out/` directory. These assets are committed and the icon is
-wired into the build (the winit window icon, the in-app About dialog, and the README header).
+were copied up from the generator's `out/` directory. These assets are committed. Since v3.7.1
+the build uses this art in ONE place only, the in-app **Help -> About** dialog
+(`crates/rustynes-frontend/src/icon.rs`, `ABOUT_ICON_PNG` = `icon-256.png`). It is kept there by the
+maintainer's choice. Every other icon (window, `.exe`, `.app`, Linux, web, Android, iOS, the README
+header, the docs site) comes from `assets/RustyNES_Icon_Pack/`. Do not point anything else back
+here.
 
 ## Regenerating
 

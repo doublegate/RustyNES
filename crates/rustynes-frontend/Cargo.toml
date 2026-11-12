@@ -562,3 +562,12 @@ windows-sys = { version = "0.61", optional = true, features = [
     "Win32_Security_Authorization",
     "Win32_System_Threading",
 ] }
+
+# v3.7.1: `build.rs` embeds the icon pack's `RustyNES.ico` into `rustynes.exe`
+# as a Windows resource, so Explorer, the taskbar and shortcuts show it (the
+# winit window icon covers only the open window). A build-dependency on a
+# Windows HOST only: build scripts run on the host, and the frontend's Windows
+# builds (CI's `full-build`, `release.yml`) build on Windows; other hosts never
+# fetch it. MIT.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1.34"

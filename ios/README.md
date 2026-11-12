@@ -138,9 +138,11 @@ documented TestFlight carryovers; this work was authored on Linux without Xcode)
   (`fastlane match appstore`) and set the CI secrets `ASC_KEY_ID`,
   `ASC_ISSUER_ID`, `ASC_KEY_CONTENT`, `MATCH_GIT_URL`, `MATCH_PASSWORD`, and
   `MATCH_GIT_BASIC_AUTHORIZATION`.
-- App icons: `Assets.xcassets/AppIcon.appiconset` is a placeholder (no binary
-  images). Add the 1024x1024 marketing icon (and any per-size assets) as a design
-  task.
+- App icon: since v3.7.1 `Assets.xcassets/AppIcon.appiconset` holds the icon
+  pack's art as one opaque 1024x1024 universal icon (`AppIcon-1024.png`,
+  written by `assets/RustyNES_Icon_Pack/make_platform_icons.py`; Xcode derives
+  the other sizes). Not yet built into an app on a device: CI's Simulator
+  build compiles the catalog, and the home-screen look is a device-run item.
 - On-device validation of the checklist above, then the first TestFlight
   distribution.
 - The `AVAudioSession` route/interruption behaviour and the wgpu drawable resize

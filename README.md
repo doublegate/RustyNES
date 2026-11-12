@@ -1,11 +1,11 @@
 # RustyNES
 
-<img src="images/RustyNES_Logo-Icon.png" alt="RustyNES Logo Icon" width="150">
+<img src="assets/RustyNES_Icon_Pack/transparent/icon/rustynes-icon-transparent-256.png" alt="RustyNES icon: an NES cartridge with an RN monogram" width="150">
 
 > **Precise. Pure. Powerful.**
 
 <p align="center">
-  <img src="images/RustyNES_Banner-Logo.png" alt="RustyNES Banner Logo" width="800">
+  <img src="assets/RustyNES_Icon_Pack/branding/rustynes-banner-1500x500.png" alt="RustyNES banner: Precise. Pure. Powerful." width="800">
 </p>
 
 <p align="center">

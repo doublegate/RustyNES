@@ -28,6 +28,22 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **New icons everywhere but Help -> About.** The icon pack's "RN" cartridge
+  art (`assets/RustyNES_Icon_Pack/`) is now the icon of every build:
+  - the desktop window icon;
+  - `rustynes.exe` itself, so Explorer, the taskbar and shortcuts show it;
+  - a new `RustyNES.app` in the macOS archive, beside the bare binary;
+  - a `.desktop` entry and the hicolor icons under `share/` in the Linux
+    archive;
+  - the browser tab and the installable web app;
+  - the Android launcher (adaptive, round and legacy), its TV banner and its
+    splash colour;
+  - the iOS app icon;
+  - the README header and the documentation site.
+
+  The About dialog keeps the earlier gear-and-peripherals art. The macOS app
+  is signed ad hoc, not notarized: allow it once in System Settings > Privacy
+  & Security, or run `xattr -dr com.apple.quarantine RustyNES.app`.
 - **Android CI compiles the Rust once per run, not three times.** The
   Gradle build gains `-PrustynesPrebuiltLibs=<dir>`: with it set, `preBuild`
   copies the libraries (`jniLibs/<abi>/*.so`) and the UniFFI bindings from
