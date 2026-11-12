@@ -20,10 +20,10 @@
 // on every Gradle run, but nothing in the normal build COMPILES it: with
 // `automaticGenerationDuringBuild = false` in :app, neither `:app:testFossDebugUnitTest`
 // nor `:app:bundleFossRelease :app:bundlePlayRelease` (the two Android CI jobs) depends
-// on a `:baselineprofile:` task (a `--dry-run` of all three lists none, 2026-11-12), so a
-// dependency bump here (uiautomator, benchmark-macro) is not compile-checked by CI. Check
-// it by hand with `./gradlew :baselineprofile:compileNonMinifiedReleaseKotlin` (no
-// device needed; it passed with uiautomator 2.4.1 on 2026-11-12). Only the *run* needs a
+// on a `:baselineprofile:` task (a `--dry-run` of all three lists none, 2026-11-12), so
+// the Kotlin unit-test job in android.yml names `:baselineprofile:compileNonMinifiedReleaseKotlin`
+// explicitly, which compile-checks a dependency bump here (uiautomator, benchmark-macro)
+// with no device (it passed with uiautomator 2.4.1 on 2026-11-12). Only the *run* needs a
 // device/AVD. The generated baseline-prof.txt is committed under :app so a normal release
 // build ships the profile without a device in the loop.
 

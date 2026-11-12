@@ -35,6 +35,13 @@ cycle-accurate core later replaced.
   refuses a directory that is missing, empty or lacks an ABI the build
   packages. `android.yml`'s unit-test and bundle jobs now take `cross-build`'s
   artifact this way. Unset, local builds are unchanged. See `docs/android.md`.
+- **Android CI compiles the `:baselineprofile` module.** No CI task
+  depended on it (`automaticGenerationDuringBuild = false` in `:app`; a
+  Gradle `--dry-run` of both jobs listed none of its tasks), so a
+  uiautomator or benchmark-macro bump was never compile-checked, though the
+  module's own comment said it was. The unit-test job now names
+  `:baselineprofile:compileNonMinifiedReleaseKotlin`, which needs no device
+  (#645 review).
 - **Each hosted match gets its own spectator id.** With the relay match id
   left empty, v3.7.0 minted a random id, saved it and reused it for every
   later match, so anyone once given it could watch every match the host
