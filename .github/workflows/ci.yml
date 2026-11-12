@@ -95,9 +95,20 @@ jobs:
   # actually skips the heavy jobs on a docs-only change: they each gate on
   # `needs.changes.outputs.code == 'true'`. The `code` filter is the inverse of
   # the doc set the old `paths-ignore` listed (match everything, then exclude
-  # docs — picomatch/gitignore precedence). For events with no diff base (manual
-  # dispatch, merge queue) paths-filter reports every filter as changed, so they
-  # run the full suite.
+  # docs — picomatch/gitignore precedence).
+  #
+  # A `schedule` or `workflow_dispatch` run has no diff base, and for those
+  # paths-filter does NOT report every filter as changed, which this comment
+  # claimed until 2026-11-12. On the default branch it diffs the LAST COMMIT
+  # only (`git log -n 1`; its README: "Changes are detected from the last
+  # commit"), and on any other branch the merge-base with the default branch.
+  # So the weekly drift run tested whatever the tip of `main` last touched. On
+  # 2026-10-19 (run 39215053134) the tip was a docs-only commit: `Filter code =
+  # false`, every gate skipped, `CI success` green, and the drift net of that
+  # week tested nothing. The `code` output below is therefore forced on for
+  # those two events. The other outputs need no override: every job that
+  # reads them also accepts `setup`'s `full`, which is true for every event
+  # but a non-`release/*` pull request.
   changes:
     name: detect code changes
     runs-on: ubuntu-26.04
@@ -108,7 +119,8 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      code: ${{ steps.filter-code.outputs.code }}
+      # Forced on for `schedule` / `workflow_dispatch`: see the note above.
+      code: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'true' || steps.filter-code.outputs.code }}
       accuracy: ${{ steps.filter-accuracy.outputs.accuracy }}
       libretro: ${{ steps.filter-targets.outputs.libretro }}
       nostd: ${{ steps.filter-targets.outputs.nostd }}
