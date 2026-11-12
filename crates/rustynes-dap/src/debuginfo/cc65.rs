@@ -89,6 +89,14 @@ impl<'a> Record<'a> {
     fn num(&self, key: &str) -> Option<i64> {
         let v = self.raw(key)?;
         let (neg, v) = v.strip_prefix('-').map_or((false, v), |s| (true, s));
+        // One sign only: `str::parse` accepts its own leading sign, so `--5`
+        // read as 5 and `--9223372036854775808` as i64::MIN, whose negation
+        // below overflows (Antigravity on #654). `checked_neg` for the same
+        // value written with one sign is not needed: `-9223372036854775808`
+        // parses its magnitude as i64 and fails, so it is refused already.
+        if v.starts_with(['-', '+']) {
+            return None;
+        }
         let n = v
             .strip_prefix("0x")
             .or_else(|| v.strip_prefix("0X"))
@@ -96,7 +104,7 @@ impl<'a> Record<'a> {
                 || v.parse::<i64>().ok(),
                 |h| i64::from_str_radix(h, 16).ok(),
             )?;
-        Some(if neg { -n } else { n })
+        if neg { n.checked_neg() } else { Some(n) }
     }
 
     fn id(&self, key: &str) -> Option<u32> {
@@ -637,6 +645,22 @@ csym\tid=2,name=\"q\",scope=1,type=0,sc=auto,offs=-2
         assert_eq!(r.num("offs"), Some(-2));
         assert_eq!(r.id("id"), Some(3));
         assert_eq!(r.raw("missing"), None);
+    }
+
+    /// One sign only (Antigravity on #654): `str::parse` accepts a sign of its
+    /// own, so a doubled one read `--5` as 5 and `--9223372036854775808` as
+    /// `i64::MIN`, whose negation panicked a debug build.
+    #[test]
+    fn a_doubled_sign_is_no_number() {
+        let r = Record::parse(
+            "sym\tid=0,a=--5,b=--9223372036854775808,c=-+5,d=+-5,e=-9223372036854775807",
+        )
+        .expect("record");
+        assert_eq!(r.num("a"), None);
+        assert_eq!(r.num("b"), None);
+        assert_eq!(r.num("c"), None);
+        assert_eq!(r.num("d"), None, "a leading + is no cc65 number either");
+        assert_eq!(r.num("e"), Some(-9_223_372_036_854_775_807));
     }
 
     #[test]

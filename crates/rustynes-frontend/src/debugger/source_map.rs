@@ -197,9 +197,17 @@ impl SourceMap {
                 let Some(seg) = segs.get(&span.seg) else {
                     continue;
                 };
-                let base = seg.start + span.start;
-                for off in 0..span.size {
-                    let addr = base + off;
+                // The `.dbg` is the user's file, so neither sum may overflow
+                // and the walk is bounded by the CPU address space: unchecked,
+                // a span past u32 panicked a debug build and a `size` of
+                // 0xFFFFFFFF looped four billion times (Antigravity on #654;
+                // the same fix `rustynes-dap`'s cc65 loader got in #631's
+                // sweep).
+                let Some(base) = seg.start.checked_add(span.start) else {
+                    continue;
+                };
+                let end = base.saturating_add(span.size).min(0x1_0000);
+                for addr in base..end {
                     if let Ok(addr) = u16::try_from(addr) {
                         // First writer wins for a given byte so the *narrowest*
                         // owning line (declared first by ld65) is kept.
@@ -314,6 +322,26 @@ sym\tid=0,name=\"reset\",addrsize=absolute,scope=0,def=0
         );
         assert_eq!(m.loc(0x8004), Some(SourceLoc { file: 0, line: 11 }));
         assert_eq!(m.loc(0x8005), None, "past the mapped spans");
+    }
+
+    /// A user's `.dbg` may claim anything (Antigravity on #654): a span past
+    /// u32 is skipped, and a 0xFFFFFFFF-byte span stops at $FFFF instead of
+    /// looping four billion times.
+    #[test]
+    fn an_overflowing_or_huge_span_is_bounded() {
+        let dbg = "\
+file\tid=0,name=\"a.s\",size=1,mtime=0
+seg\tid=0,name=\"HI\",start=0xFFF0,size=0x10,addrsize=absolute,type=ro
+seg\tid=1,name=\"BAD\",start=0xFFFFFFFF,size=1,addrsize=absolute,type=ro
+span\tid=0,seg=0,start=0,size=0xFFFFFFFF
+span\tid=1,seg=1,start=2,size=1
+line\tid=0,file=0,line=1,span=0
+line\tid=1,file=0,line=2,span=1
+";
+        let mut m = SourceMap::default();
+        assert_eq!(m.load_dbg(dbg), 16, "$FFF0..=$FFFF and nothing past it");
+        assert_eq!(m.loc(0xFFFF), Some(SourceLoc { file: 0, line: 1 }));
+        assert_eq!(m.loc(0x0001), None, "the u32 overflow maps nothing");
     }
 
     #[test]

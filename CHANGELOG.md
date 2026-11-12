@@ -106,17 +106,22 @@ moves a frame, a sample or a bus cycle, so the emulation epoch stays 10.
   past what the detector produces, used to load (the counts clamped, the
   counter raw, where it would count past the 240 reset and never leave the
   frame). It is now refused with an error, as every other board's
-  out-of-range state is (#624 review).
+  out-of-range state is, and the refusal comes before any field is
+  restored: a refused state used to leave its banks, RAM and audio in place
+  (#624 review; #654 review).
 - **A splits file with two `game` or two `category` lines is an error** on
   the second one, as a second `start` or `reset` already was; the last one
   used to win silently (#624 review).
 - **The debugger no longer panics on a malformed debug file.** A cc65 `.dbg`
-  span whose address overflows is skipped, an oversized one is clamped, and
-  DWARF ranges and array bounds saturate instead of overflowing (#631
-  review).
-- **A `.zip` whose header claims a huge entry** no longer reserves that much
-  memory before the 64 MiB entry limit applies, and the "no image found"
-  message names `.unif` too (#631 review).
+  span whose address overflows is skipped and an oversized one is clamped,
+  in both the debug adapter and the desktop debugger's source view (whose
+  loader walked a span of 0xFFFFFFFF bytes four billion times); a number
+  written with two signs is refused; and DWARF ranges, array bounds and
+  array sizes saturate instead of overflowing (#631 review; #654 review).
+- **A `.zip` whose header claims a huge entry** reserves at most 4 MiB up
+  front, growing only as bytes are inflated; a few-byte archive claiming
+  64 MiB used to reserve all of it. The "no image found" message names
+  `.unif` too (#631 review; #654 review).
 - **`cargo full-native` on Windows on ARM** now overrides a user's own
   `[target.aarch64-pc-windows-msvc] rustflags`, as it already did on the
   other hosts (#641 review).
