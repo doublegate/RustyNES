@@ -216,6 +216,25 @@ gradle wrapper --gradle-version 8.11.1   # first time, materialises ./gradlew
 ./gradlew :app:bundlePlayRelease         # play release AAB
 ```
 
+**Prebuilt Rust (`-PrustynesPrebuiltLibs=<dir>`, v3.7.0).** With this property
+set, `preBuild` depends on `usePrebuiltRust` instead of `uniffiBindgen` (and so
+`cargoNdkBuild`): no cargo runs, and the libraries and bindings are copied from
+`<dir>` into the same two places the cargo tasks write. The layout is what CI's
+`cross-build` job uploads:
+
+```text
+<dir>/jniLibs/<abi>/librustynes_mobile.so       # every ABI the build packages
+<dir>/jniLibs/<abi>/librustynes_android.so      # (rustAbis: arm64-v8a + x86_64 by default)
+<dir>/kotlin/uniffi/rustynes_mobile/rustynes_mobile.kt
+```
+
+A relative path resolves against the workspace root. The build fails at
+configuration time if the directory is missing or empty, or lacks any of those
+files for an ABI it packages (`-PrustynesAbis=armeabi-v7a` adds that ABI to the
+check), so it cannot produce an APK without native libraries. Locally there is
+no reason to set it; unset, the build is unchanged. CI uses it so the Rust is
+compiled once per run instead of three times (see CI below).
+
 > **v2.0.1 (ADR 0025): the `distribution` flavor dimension.** The build now splits into a
 > **`foss`** flavor (default) and a **`play`** flavor, so AGP names the variant tasks
 > per-flavor (`assembleFossDebug`, `bundlePlayRelease`, …). The bare `installDebug` is kept as
@@ -370,10 +389,14 @@ reviewers make the final call; this records what RustyNES will ask for and why.
 ## CI
 
 `.github/workflows/android.yml` runs on changes to the mobile crates / `android/`:
-it installs the Android targets + cargo-ndk, cross-compiles both crates for
-arm64 + x86_64, generates the Kotlin bindings (smoke), checks **16 KB ELF
-alignment** on the shipped arm64 `.so`, and best-effort-bundles the AAB. It is
-**not** a required check — accuracy is gated only on host CI.
+its `cross-build` job installs the Android targets + cargo-ndk, cross-compiles
+both crates for arm64 + x86_64, generates the Kotlin bindings, checks **16 KB ELF
+alignment** on the shipped arm64 `.so`, and uploads the libraries and bindings
+(`rustynes-android-prebuilt`). The JVM unit-test job and the best-effort AAB
+bundle download that artifact and pass `-PrustynesPrebuiltLibs` (above), so
+neither installs Rust or re-runs cargo-ndk (since v3.7.0; until then each
+repeated the whole cross-build through `cargoNdkBuild`). It is **not** a
+required check — accuracy is gated only on host CI.
 
 ## Workstream status
 

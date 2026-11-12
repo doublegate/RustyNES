@@ -28,6 +28,13 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **Android CI compiles the Rust once per run, not three times.** The
+  Gradle build gains `-PrustynesPrebuiltLibs=<dir>`: with it set, `preBuild`
+  copies the libraries (`jniLibs/<abi>/*.so`) and the UniFFI bindings from
+  that directory instead of running `cargoNdkBuild` and `uniffiBindgen`, and
+  refuses a directory that is missing, empty or lacks an ABI the build
+  packages. `android.yml`'s unit-test and bundle jobs now take `cross-build`'s
+  artifact this way. Unset, local builds are unchanged. See `docs/android.md`.
 - **Each hosted match gets its own spectator id.** With the relay match id
   left empty, v3.7.0 minted a random id, saved it and reused it for every
   later match, so anyone once given it could watch every match the host

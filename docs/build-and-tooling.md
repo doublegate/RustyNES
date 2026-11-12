@@ -158,7 +158,7 @@ cargo build -p rustynes-core --target thumbv7em-none-eabihf --no-default-feature
   superseded PR runs (`concurrency`).
 - `workflows/android.yml` — `cargo ndk` cross-compiles `rustynes-mobile` +
   `rustynes-android`, generates the UniFFI Kotlin
-  bindings, and runs the Gradle build (AGP 9.2.1 / Gradle 9.4.1 / compileSdk 37
+  bindings once, and runs the Gradle build on those (`-PrustynesPrebuiltLibs`) (AGP 9.2.1 / Gradle 9.4.1 / compileSdk 37
   / targetSdk 36 / minSdk 26). See `docs/android.md`.
 - `workflows/release.yml` — tag-triggered (`v*`), builds the per-platform
   release binaries (`--features full` since v2.9.7) and attaches them to the
