@@ -308,21 +308,14 @@ jobs:
             platform:
               - *shared
               - 'crates/rustynes-cheevos/**'
-              - 'crates/rustynes-frontend/src/atomic_write.rs'
-              - 'crates/rustynes-frontend/src/battery_save.rs'
-              - 'crates/rustynes-frontend/src/bounded_read.rs'
-              - 'crates/rustynes-frontend/src/bundle.rs'
-              - 'crates/rustynes-frontend/src/clock.rs'
-              - 'crates/rustynes-frontend/src/config.rs'
-              - 'crates/rustynes-frontend/src/debugger/header_editor.rs'
-              - 'crates/rustynes-frontend/src/dump_check.rs'
-              - 'crates/rustynes-frontend/src/emu_thread.rs'
-              - 'crates/rustynes-frontend/src/lib.rs'
-              - 'crates/rustynes-frontend/src/memif.rs'
-              - 'crates/rustynes-frontend/src/presentation_clock.rs'
-              - 'crates/rustynes-frontend/src/script_host.rs'
-              - 'crates/rustynes-frontend/src/shm.rs'
-              - 'crates/rustynes-frontend/src/wayland_presentation.rs'
+              # v3.7.1: whole, since the crate gained a build.rs (the Windows
+              # .exe icon), as the audit's rule 2 requires; it subsumes the
+              # per-file `src/` entries listed here before. The icon files and
+              # the macOS bundle script feed this job's two packaging checks.
+              - 'crates/rustynes-frontend/**'
+              - 'assets/RustyNES_Icon_Pack/windows/RustyNES.ico'
+              - 'assets/RustyNES_Icon_Pack/macos/RustyNES.icns'
+              - 'scripts/package/macos-app.sh'
               - 'crates/rustynes-apu/Cargo.toml'
               - 'crates/rustynes-core/Cargo.toml'
               - 'crates/rustynes-cpu/Cargo.toml'
