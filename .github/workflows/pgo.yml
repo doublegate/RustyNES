@@ -21,7 +21,7 @@ name: PGO
 # `on: push`, so that path would have been fine — but a hand-pushed tag would
 # double up). One entry point per tag is the whole point.
 #
-# PROMOTION GATE (both conditions, AND):
+# PROMOTION GATE (all three conditions, AND):
 #   1. FASTER  — the PGO `full_frame` criterion mean must beat the plain-release
 #                baseline by > 3% (a Criterion-stable margin above shared-runner
 #                noise; the ci.yml bench gate's absolute ceiling does NOT apply
@@ -34,9 +34,12 @@ name: PGO
 #                golden-framebuffer visual_regression + audio mixer suites) with
 #                the MERGED PGO profile applied (`cargo pgo optimize test`). Any
 #                framebuffer/audio/cycle-hash divergence fails the stage.
+#   3. FULL BUILD — the kept binary must be the `full`-feature build, not the
+#                determinism stage's test build at the same path (it must
+#                carry the RetroAchievements User-Agent; see the gate step).
 #
-# The PGO artifact is uploaded + the run is marked "promotable" ONLY when BOTH
-# pass. A failure of either is informational on workflow_dispatch (the plain
+# The PGO artifact is uploaded + the run is marked "promotable" ONLY when ALL
+# THREE pass. A failure of either is informational on workflow_dispatch (the plain
 # release binary in release.yml is unaffected) and never blocks a release.
 
 on:
@@ -76,7 +79,7 @@ on:
         type: string
     outputs:
       promotable:
-        description: "'true' when the PGO build cleared BOTH the >3% speedup bar and the byte-identical determinism oracle."
+        description: "'true' when the PGO build cleared ALL THREE conditions: the >3% speedup bar, the byte-identical determinism oracle, and the kept binary being the full-feature build."
         value: ${{ jobs.pgo.outputs.promotable }}
       speedup_pct:
         description: "Measured full_frame speedup of PGO vs plain release, in percent."
@@ -230,9 +233,11 @@ jobs:
           faster="$(python3 -c "print('1' if ${speedup} > ${PGO_MIN_SPEEDUP_PCT} else '0')")"
           # The kept binary must be the `full` build, not Stage 4's test build
           # at the same path. v3.4.1 checked for the hosted base URL here, but
-          # native netplay never reads that base, so the optimizer drops the
-          # literal and the check could never pass (the v3.4.1 release run:
-          # "hosted base present=0" on a correct binary). The RetroAchievements
+          # v3.4.1's native netplay never read that base, so the optimizer
+          # dropped the literal and the check could never pass (the v3.4.1
+          # release run: "hosted base present=0" on a correct binary). (Since
+          # v3.7.0 desktop edge spectating reads it; the marker below is kept
+          # because it is tied to the `full` features alone.) The RetroAchievements
           # User-Agent (`RustyNES/<v> (<os>) rcheevos/<v>`) is compiled in only
           # with the `full` features' `retroachievements`, so it marks the
           # right binary. A miss refuses promotion rather than failing the job.

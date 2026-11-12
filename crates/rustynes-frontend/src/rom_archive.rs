@@ -30,6 +30,15 @@ use std::io::Read as _;
 /// declared size can lie (Gemini security-high + Copilot, PR #74).
 pub const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 
+/// The most `extract_rom` reserves up front on the archive's word: 4 MiB, above
+/// the largest licensed NES cartridge (1 MiB PRG + 1 MiB CHR) and any FDS image.
+const RESERVE_HINT_BYTES: u64 = 4 * 1024 * 1024;
+
+/// How much to reserve for an entry whose header claims `claimed` bytes.
+fn reserve_hint(claimed: u64) -> usize {
+    usize::try_from(claimed.min(RESERVE_HINT_BYTES)).unwrap_or(0)
+}
+
 /// The entry extensions the desktop loads from an archive.
 pub const DESKTOP_ROM_EXTENSIONS: &[&str] = &["nes", "fds", "nsf", "unf", "unif"];
 
@@ -82,8 +91,14 @@ pub fn extract_rom(zip_bytes: &[u8], extensions: &[&str]) -> Option<(String, Vec
                 .map(|f| f.to_string_lossy().into_owned())
         })
         .unwrap_or_else(|| "rom".to_string());
-    let cap = usize::try_from(file.size()).unwrap_or(0);
-    let mut out = Vec::with_capacity(cap);
+    // `size()` is the archive's own claim, so it bounds nothing. The check
+    // above already refuses a claim past the entry limit, so capping the
+    // reservation at that limit (the first version of this fix) changed
+    // nothing: a few-byte archive claiming 64 MiB still reserved 64 MiB before
+    // a byte was inflated (Antigravity on #631 and again on #654). The hint is
+    // capped at `RESERVE_HINT_BYTES`, larger than any real NES ROM, and the
+    // vector grows past it only as bytes actually arrive.
+    let mut out = Vec::with_capacity(reserve_hint(file.size()));
     file.take(MAX_ENTRY_BYTES + 1).read_to_end(&mut out).ok()?;
     if out.len() as u64 > MAX_ENTRY_BYTES {
         return None;
@@ -107,7 +122,7 @@ pub fn unpack_for_web(bytes: Vec<u8>) -> Result<(Vec<u8>, Option<String>), Strin
     extract_rom(&bytes, WEB_ROM_EXTENSIONS)
         .map(|(name, rom)| (rom, Some(name)))
         .ok_or_else(|| {
-            "No .nes, .fds or .unf image found inside the .zip archive \
+            "No .nes, .fds, .unf or .unif image found inside the .zip archive \
              (or the archive could not be read)"
                 .to_string()
         })
@@ -117,6 +132,17 @@ pub fn unpack_for_web(bytes: Vec<u8>) -> Result<(Vec<u8>, Option<String>), Strin
 mod tests {
     use super::*;
     use std::io::Write as _;
+
+    /// A header's size claim reserves at most `RESERVE_HINT_BYTES` (Antigravity
+    /// on #654): the first fix capped it at `MAX_ENTRY_BYTES`, which the early
+    /// return had already enforced, so a 64 MiB claim still reserved 64 MiB.
+    #[test]
+    fn a_size_claim_reserves_at_most_the_hint() {
+        assert_eq!(reserve_hint(40_976), 40_976, "an honest ROM-sized claim");
+        let hint = usize::try_from(RESERVE_HINT_BYTES).unwrap();
+        assert_eq!(reserve_hint(MAX_ENTRY_BYTES), hint);
+        assert_eq!(reserve_hint(u64::MAX), hint);
+    }
 
     fn archive(entries: &[(&str, &[u8])], method: zip::CompressionMethod) -> Vec<u8> {
         let mut buf = Vec::new();

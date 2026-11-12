@@ -71,7 +71,10 @@ reset = 0xH0770=0
 | `reset` | While a run is going or finished, the timer returns to idle on the first frame this holds. Optional. |
 
 Keys and values are split at the first `=`, so a condition keeps its own `=`
-signs; a split's name and condition are split at the first `|`.
+signs; a split's name and condition are split at the first `|`. Every key but
+`split` may appear at most once: a second `game`, `category`, `start` or
+`reset` is an error on its line (`game` and `category` after v3.7.0; before
+that the last one silently won).
 
 ### The condition grammar
 

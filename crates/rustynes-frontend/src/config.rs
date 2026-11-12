@@ -1480,6 +1480,11 @@ pub fn load_pal_file(path: &std::path::Path) -> Result<[[u8; 3]; 64], String> {
     // without limit (agy on #571). A longer `.pal` (e.g. 1,536 bytes with the
     // emphasis variants) still loads its first 64 colours, as before.
     let io_err = |e: std::io::Error| format!("palette file {}: {e}", path.display());
+    // A FIFO blocks inside `open` until a writer appears, so the regular-file
+    // check comes first (v3.5.1 promised it for palettes; Antigravity on #630
+    // found this reader still opened the path directly). It also refuses a
+    // device such as `/dev/zero`, which the 192-byte bound alone allowed.
+    crate::bounded_read::regular_file_metadata(path).map_err(io_err)?;
     let mut bytes = Vec::with_capacity(192);
     std::fs::File::open(path)
         .and_then(|f| f.take(192).read_to_end(&mut bytes))
@@ -3252,10 +3257,37 @@ mod tests {
         assert_eq!(load_pal_file(&good).unwrap()[1], [3, 4, 5]);
     }
 
+    /// A FIFO set as the palette file blocked `File::open` until a writer
+    /// appeared, although v3.5.1's notes promise palettes the regular-file
+    /// check (Antigravity on #630; the closed-PR review sweep). Run on a
+    /// thread, so a regression fails on the timeout instead of hanging.
+    #[cfg(unix)]
+    #[test]
+    fn load_pal_file_refuses_a_fifo_without_blocking() {
+        let dir = TempDir::new().unwrap();
+        let fifo = dir.path().join("pipe.pal");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo runs");
+        assert!(made.success(), "mkfifo {}", fifo.display());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(load_pal_file(&fifo));
+        });
+        let err = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("a FIFO must be refused before open")
+            .unwrap_err();
+        assert!(err.contains("not a regular file"), "{err}");
+    }
+
     /// The configured path is user-supplied and can name anything: a huge
     /// file, a FIFO, or a device that never ends. Only the first 192 bytes are
     /// used, so only 192 are read. Until v2.9.3 this was `std::fs::read`, which
     /// on `/dev/zero` grows a buffer until the allocator fails (agy on #571).
+    /// Since the closed-PR review sweep a device is refused outright as not a
+    /// regular file; the 192-byte bound still caps a long regular file.
     #[cfg(target_os = "linux")]
     #[test]
     fn load_pal_file_reads_only_what_a_palette_needs() {
@@ -3263,11 +3295,15 @@ mod tests {
         std::thread::spawn(move || {
             let _ = tx.send(load_pal_file(std::path::Path::new("/dev/zero")));
         });
-        let pal = rx
+        let err = rx
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("an endless file must not be read to its end")
-            .expect("192 zero bytes are a (black) palette");
-        assert_eq!(pal, [[0u8; 3]; 64]);
+            .unwrap_err();
+        assert!(err.contains("not a regular file"), "{err}");
+        let dir = TempDir::new().unwrap();
+        let long = dir.path().join("long.pal");
+        std::fs::write(&long, vec![7u8; 4096]).unwrap();
+        assert_eq!(load_pal_file(&long).unwrap(), [[7u8; 3]; 64]);
     }
 
     #[test]

@@ -335,8 +335,10 @@ fn subprogram(
     };
     let high = match entry.attr_value(gimli::DW_AT_high_pc) {
         Some(AttributeValue::Addr(a)) => a,
-        Some(v) => low + v.udata_value().unwrap_or(1),
-        None => low + 1,
+        // Client-supplied DWARF: saturate rather than overflow (a debug
+        // build panics on it; Antigravity on #631, the closed-PR sweep).
+        Some(v) => low.saturating_add(v.udata_value().unwrap_or(1)),
+        None => low.saturating_add(1),
     };
     let Ok(low16) = u16::try_from(low) else {
         return Ok(None);
@@ -522,9 +524,7 @@ fn type_info(
         gimli::DW_TAG_array_type => {
             let elem = inner(depth)?.unwrap_or_else(|| opaque("?"));
             let count = array_count(unit, off)?;
-            let total = count.map_or(elem.size, |c| {
-                u16::try_from(u64::from(elem.size) * c).unwrap_or(u16::MAX)
-            });
+            let total = array_size(elem.size, count);
             TypeInfo {
                 name: format!(
                     "{}[{}]",
@@ -543,6 +543,16 @@ fn type_info(
     })
 }
 
+/// An array's size in bytes, saturating at `u16::MAX`. `array_count` bounds the
+/// count only by u64, so a client-supplied `DW_AT_count` near `u64::MAX` times a
+/// 2-byte element overflowed an unchecked multiply -- a panic in a debug build
+/// and a wrapped, small size in a release one (Antigravity on #654).
+fn array_size(elem: u16, count: Option<u64>) -> u16 {
+    count.map_or(elem, |c| {
+        u16::try_from(u64::from(elem).saturating_mul(c)).unwrap_or(u16::MAX)
+    })
+}
+
 fn array_count(unit: &Unit<'_>, off: UnitOffset) -> Result<Option<u64>, LoadError> {
     let mut tree = unit.entries_tree(Some(off)).map_err(err)?;
     let root = tree.root().map_err(err)?;
@@ -554,7 +564,8 @@ fn array_count(unit: &Unit<'_>, off: UnitOffset) -> Result<Option<u64>, LoadErro
                 return Ok(Some(c));
             }
             if let Some(u) = u_attr(e, gimli::DW_AT_upper_bound) {
-                return Ok(Some(u + 1));
+                // `checked_add`: a u64::MAX bound is no array length.
+                return Ok(u.checked_add(1));
             }
         }
     }
@@ -652,6 +663,17 @@ mod tests {
             Some(Op::Addr(0x20))
         );
         assert_eq!(decode(&[0x51]), Some(Op::Reg(1)));
+    }
+
+    #[test]
+    fn an_array_size_saturates_instead_of_overflowing() {
+        assert_eq!(array_size(2, Some(3)), 6);
+        assert_eq!(array_size(2, None), 2, "no count: the element's size");
+        assert_eq!(array_size(2, Some(u64::MAX - 1)), u16::MAX);
+        assert_eq!(array_size(4, Some(u64::MAX / 2)), u16::MAX);
+        // 2 * (2^63 + 1) wraps to 2: the release-build symptom, a tiny size.
+        assert_eq!(array_size(2, Some((1 << 63) + 1)), u16::MAX);
+        assert_eq!(array_size(1, Some(70_000)), u16::MAX);
     }
 
     #[test]

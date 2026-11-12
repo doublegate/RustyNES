@@ -279,12 +279,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6.4.1
         with:
           cache-provider: basic
-      - name: Run the JVM unit tests
+      # The `:baselineprofile` compile rides along: no other task depends on
+      # it (`automaticGenerationDuringBuild = false` in :app), so without it a
+      # uiautomator / benchmark-macro bump is never compile-checked by CI. It
+      # needs no device; only generating the profile does.
+      - name: Run the JVM unit tests (and compile :baselineprofile)
         working-directory: android
         env:
           PREBUILT: ${{ runner.temp }}/android-prebuilt
         run: >-
-          ./gradlew :app:testFossDebugUnitTest --no-daemon --warning-mode all
+          ./gradlew :app:testFossDebugUnitTest
+          :baselineprofile:compileNonMinifiedReleaseKotlin
+          --no-daemon --warning-mode all
           "-PrustynesPrebuiltLibs=$PREBUILT"
       - name: Upload the test report on failure
         if: failure()

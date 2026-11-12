@@ -568,14 +568,18 @@ artifact:
   **The aliases have precedence traps, and the canonical statement of them is
   the comment above `[alias]` in `.cargo/config.toml`** (not repeated here, so
   the two cannot drift). In short: the aliases override both
-  `build.rustflags` and every host's per-triple `rustflags`, because a user's
-  per-triple flags otherwise win silently; an exported `RUSTFLAGS` or
+  `build.rustflags` and the per-triple `rustflags` of the triples they list,
+  because a user's per-triple flags otherwise win silently; an exported `RUSTFLAGS` or
   `CARGO_ENCODED_RUSTFLAGS` (even empty), a `target-cpu` in a user
   `[target.'cfg(...)']` table, or a user `-C target-feature` still defeats
   them; a string-form user `rustflags` makes Cargo refuse the configuration.
   Check the last `-C target-cpu` on the final rustc line of a `-v` build.
-  `full-native` works on any host; `full-baseline` and `full-v3` are x86-64
-  only.
+  `full-native` works on any host, and carries per-triple keys for the four
+  x86-64 desktop triples and for `aarch64-apple-darwin`,
+  `aarch64-unknown-linux-gnu` and `aarch64-pc-windows-msvc`. A host triple
+  outside that list gets `target-cpu=native` from `build.rustflags` only, so
+  a user config that sets that triple's own `rustflags` wins and the build is
+  not tuned (#654 review). `full-baseline` and `full-v3` are x86-64 only.
 
   **The three-way comparison is `scripts/perf/cpu_target_ab.sh`** (v3.7.0).
   `scripts/perf/ab_check.sh` compares two REVISIONS (or feature sets) at one

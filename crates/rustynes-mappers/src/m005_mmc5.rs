@@ -2128,6 +2128,48 @@ impl Mapper for Mmc5 {
                 got: data.len(),
             });
         }
+        // Validate EVERY refusable field before assigning any (docs/mappers.md
+        // rule 12): an error returned halfway through used to leave the banks,
+        // PRG-RAM, nametables, ExRAM and audio of the refused state in place
+        // under the old detector (Antigravity on #654). The scalar block ends
+        // `.. in_frame, scanline_counter, mul_a, mul_b, mirroring`, so the
+        // counter sits four bytes before its end and the mirroring tag on its
+        // last byte; the detector tail is the last `DETECTOR_TAIL_LEN` bytes.
+        // `load_state_refuses_detector_values_the_board_cannot_produce` finds
+        // each offset by diffing two saves, so a layout change that moves one
+        // fails that test rather than these indices going quietly stale.
+        let scanline = data[scalar_len - 4];
+        // The counter resets on reaching 240 (`scanline_detected`), so 239 is
+        // the largest value it can hold; a larger one would count past the
+        // 240 reset and never leave the frame.
+        if scanline > 239 {
+            return Err(MapperError::Invalid(format!(
+                "MMC5 scanline counter {scanline} is past 239"
+            )));
+        }
+        let mirroring = match data[scalar_len - 1] {
+            0 => Mirroring::Horizontal,
+            1 => Mirroring::Vertical,
+            2 => Mirroring::SingleScreenA,
+            3 => Mirroring::SingleScreenB,
+            4 => Mirroring::FourScreen,
+            5 => Mirroring::MapperControlled,
+            other => {
+                return Err(MapperError::Invalid(format!(
+                    "unknown mirroring tag {other}"
+                )));
+            }
+        };
+        // The detector's two counters saturate at 2 (matching reads) and 3
+        // (idle cycles), so a larger value is one it cannot produce and is
+        // refused rather than clamped (the closed-PR review sweep of #624).
+        let det = &data[expected - DETECTOR_TAIL_LEN..];
+        if det[2] > 2 || det[4] > 3 {
+            return Err(MapperError::Invalid(format!(
+                "MMC5 detector counts out of range (match {}, idle {})",
+                det[2], det[4]
+            )));
+        }
         let mut cur = 1usize;
         self.prg_mode = data[cur];
         cur += 1;
@@ -2206,25 +2248,14 @@ impl Mapper for Mmc5 {
         cur += 1;
         self.in_frame = data[cur] != 0;
         cur += 1;
-        self.scanline_counter = data[cur];
+        debug_assert_eq!(cur, scalar_len - 4, "scanline counter offset");
+        self.scanline_counter = scanline;
         cur += 1;
         self.mul_a = data[cur];
         cur += 1;
         self.mul_b = data[cur];
         cur += 1;
-        self.current_mirroring_summary = match data[cur] {
-            0 => Mirroring::Horizontal,
-            1 => Mirroring::Vertical,
-            2 => Mirroring::SingleScreenA,
-            3 => Mirroring::SingleScreenB,
-            4 => Mirroring::FourScreen,
-            5 => Mirroring::MapperControlled,
-            other => {
-                return Err(MapperError::Invalid(format!(
-                    "unknown mirroring tag {other}"
-                )));
-            }
-        };
+        self.current_mirroring_summary = mirroring;
         cur += 1;
         let prg_ram_len = self.prg_ram.len();
         self.prg_ram.copy_from_slice(&data[cur..cur + prg_ram_len]);
@@ -2250,13 +2281,12 @@ impl Mapper for Mmc5 {
         let n = self.prg_ram_extra.len();
         self.prg_ram_extra.copy_from_slice(&data[cur..cur + n]);
         cur += n;
-        // v7 tail: the scanline detector. The two counters are clamped to
-        // the ranges the detector itself can produce, so a hand-edited state
-        // cannot park them where no read or cycle would ever move them.
+        // v7 tail: the scanline detector, validated above.
+        debug_assert_eq!(cur, expected - DETECTOR_TAIL_LEN, "detector offset");
         self.det_last_addr = u16::from_le_bytes([data[cur], data[cur + 1]]);
-        self.det_match_count = data[cur + 2].min(2);
+        self.det_match_count = data[cur + 2];
         self.det_armed = data[cur + 3] != 0;
-        self.det_idle_cycles = data[cur + 4].min(3);
+        self.det_idle_cycles = data[cur + 4];
         self.det_read_this_cycle = data[cur + 5] != 0;
         self.render_window = data[cur + 6] != 0;
         Ok(())
@@ -3763,6 +3793,79 @@ mod tests {
         // Also: writes to $5011 in read-mode are dropped.
         m.cpu_write(0x5011, 50);
         assert_eq!(m.audio.pcm_sample, 100);
+    }
+
+    /// `docs/mappers.md` rule 12: `load_state` refuses a value the board's own
+    /// logic cannot produce rather than repairing it. The scanline counter
+    /// resets on reaching 240, so it never holds more than 239; the detector's
+    /// match count saturates at 2 and its idle count at 3. Before the closed-PR
+    /// review sweep (PR #624, CodeRabbit) the two detector bytes were silently
+    /// clamped and the counter restored raw. Each offset is found by diffing
+    /// two saves that differ in that one field, so the test does not hard-code
+    /// the layout.
+    #[test]
+    fn load_state_refuses_detector_values_the_board_cannot_produce() {
+        fn offset_of(set: impl Fn(&mut Mmc5, u8)) -> usize {
+            let mut a = fresh(8, 8);
+            let mut b = fresh(8, 8);
+            set(&mut a, 1);
+            set(&mut b, 2);
+            let (sa, sb) = (a.save_state(), b.save_state());
+            let diffs: Vec<usize> = (0..sa.len()).filter(|&i| sa[i] != sb[i]).collect();
+            assert_eq!(diffs.len(), 1, "field must occupy exactly one byte");
+            diffs[0]
+        }
+        let cases: [(usize, u8, u8); 4] = [
+            (offset_of(|m, v| m.scanline_counter = v), 239, 240),
+            (
+                offset_of(|m, v| {
+                    m.current_mirroring_summary = if v == 1 {
+                        Mirroring::Vertical
+                    } else {
+                        Mirroring::SingleScreenA
+                    };
+                }),
+                5,
+                6,
+            ),
+            (offset_of(|m, v| m.det_match_count = v), 2, 3),
+            (offset_of(|m, v| m.det_idle_cycles = v), 3, 4),
+        ];
+        // The refused blob carries a DIFFERENT state from the mapper it is
+        // loaded into, so a load that writes some fields before refusing shows
+        // up as a changed save (Antigravity on #654: the refusal used to come
+        // after the banks, RAM and audio had been overwritten).
+        let base = {
+            let mut src = fresh(8, 8);
+            src.cpu_write(0x5100, 0x01);
+            src.cpu_write(0x5114, 0x85);
+            src.cpu_write(0x5C00, 0x5A);
+            src.save_state()
+        };
+        for (off, max_ok, bad) in cases {
+            let mut ok = base.clone();
+            ok[off] = max_ok;
+            fresh(8, 8)
+                .load_state(&ok)
+                .unwrap_or_else(|e| panic!("offset {off} = {max_ok} must load: {e:?}"));
+            let mut blob = base.clone();
+            blob[off] = bad;
+            let mut target = fresh(8, 8);
+            let before = target.save_state();
+            assert_ne!(
+                before, base,
+                "the refused state must differ from the target's"
+            );
+            assert!(
+                matches!(target.load_state(&blob), Err(MapperError::Invalid(_))),
+                "offset {off} = {bad} must be refused with MapperError::Invalid"
+            );
+            assert_eq!(
+                target.save_state(),
+                before,
+                "offset {off} = {bad}: a refused load must leave the mapper unchanged"
+            );
+        }
     }
 
     #[test]

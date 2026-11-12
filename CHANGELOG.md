@@ -35,6 +35,13 @@ cycle-accurate core later replaced.
   refuses a directory that is missing, empty or lacks an ABI the build
   packages. `android.yml`'s unit-test and bundle jobs now take `cross-build`'s
   artifact this way. Unset, local builds are unchanged. See `docs/android.md`.
+- **Android CI compiles the `:baselineprofile` module.** No CI task
+  depended on it (`automaticGenerationDuringBuild = false` in `:app`; a
+  Gradle `--dry-run` of both jobs listed none of its tasks), so a
+  uiautomator or benchmark-macro bump was never compile-checked, though the
+  module's own comment said it was. The unit-test job now names
+  `:baselineprofile:compileNonMinifiedReleaseKotlin`, which needs no device
+  (#645 review).
 - **Each hosted match gets its own spectator id.** With the relay match id
   left empty, v3.7.0 minted a random id, saved it and reused it for every
   later match, so anyone once given it could watch every match the host
@@ -83,6 +90,41 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+Found by re-reading every bot review on the pull requests closed since
+v3.4.1 (#618 to #649) for findings that never got an answer; nothing here
+moves a frame, a sample or a bus cycle, so the emulation epoch stays 10.
+
+- **A FIFO as the palette file, or as the header editor's target, no
+  longer hangs the window.** v3.5.1 refused FIFOs and devices on every
+  user-named read, but the palette loader and the header editor's write
+  still opened the path directly, so `open` blocked until a writer (or
+  reader) appeared. Both now refuse anything that is not a regular file; a
+  device such as `/dev/zero` named as a palette is refused too, where it
+  used to load as an all-black palette (#630 review).
+- **MMC5 save states with impossible scanline-detector values are refused.**
+  A state whose scanline counter is past 239, or whose detector counts are
+  past what the detector produces, used to load (the counts clamped, the
+  counter raw, where it would count past the 240 reset and never leave the
+  frame). It is now refused with an error, as every other board's
+  out-of-range state is, and the refusal comes before any field is
+  restored: a refused state used to leave its banks, RAM and audio in place
+  (#624 review; #654 review).
+- **A splits file with two `game` or two `category` lines is an error** on
+  the second one, as a second `start` or `reset` already was; the last one
+  used to win silently (#624 review).
+- **The debugger no longer panics on a malformed debug file.** A cc65 `.dbg`
+  span whose address overflows is skipped and an oversized one is clamped,
+  in both the debug adapter and the desktop debugger's source view (whose
+  loader walked a span of 0xFFFFFFFF bytes four billion times); a number
+  written with two signs is refused; and DWARF ranges, array bounds and
+  array sizes saturate instead of overflowing (#631 review; #654 review).
+- **A `.zip` whose header claims a huge entry** reserves at most 4 MiB up
+  front, growing only as bytes are inflated; a few-byte archive claiming
+  64 MiB used to reserve all of it. The "no image found" message names
+  `.unif` too (#631 review; #654 review).
+- **`cargo full-native` on Windows on ARM** now overrides a user's own
+  `[target.aarch64-pc-windows-msvc] rustflags`, as it already did on the
+  other hosts (#641 review).
 - **Spectators through the hosted relay see a match to its end when it ends
   in an error.** The host sends its confirmed frames to the relay in
   batches of eight, and v3.7.0 sent the last, shorter batch only when the
@@ -1289,8 +1331,9 @@ bitstreams are unchanged.
   rebuilt the binary at the same path). The binary that was optimized is now
   the one shipped when the gate promotes, and it must be the `full` build (it
   carries the RetroAchievements User-Agent) to be promoted. The first version of
-  that check required the hosted base, which a native binary never contains, so
-  it could not pass (corrected 2026-10-20). v3.4.1's own gate did not promote:
+  that check required the hosted base, which the v3.4.1 native binaries did
+  not contain, so it could not pass (corrected 2026-10-20; since v3.7.0 the
+  desktop binaries do contain it, for edge spectating). v3.4.1's own gate did not promote:
   the PGO build measured 5.05% slower than plain. The release
   history shows one promotion, v2.9.6 (2026-09-30): its Linux download lacks the
   RetroAchievements client, and it is rebuilt from the v2.9.6 tag with the
