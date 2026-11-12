@@ -2206,6 +2206,15 @@ impl Mapper for Mmc5 {
         cur += 1;
         self.in_frame = data[cur] != 0;
         cur += 1;
+        // The counter resets on reaching 240 (`scanline_detected`), so 239 is
+        // the largest value it can hold; a larger one would count past the
+        // 240 reset and never leave the frame (docs/mappers.md rule 12).
+        if data[cur] > 239 {
+            return Err(MapperError::Invalid(format!(
+                "MMC5 scanline counter {} is past 239",
+                data[cur]
+            )));
+        }
         self.scanline_counter = data[cur];
         cur += 1;
         self.mul_a = data[cur];
@@ -2250,13 +2259,21 @@ impl Mapper for Mmc5 {
         let n = self.prg_ram_extra.len();
         self.prg_ram_extra.copy_from_slice(&data[cur..cur + n]);
         cur += n;
-        // v7 tail: the scanline detector. The two counters are clamped to
-        // the ranges the detector itself can produce, so a hand-edited state
-        // cannot park them where no read or cycle would ever move them.
+        // v7 tail: the scanline detector. The two counters saturate at 2
+        // (matching reads) and 3 (idle cycles), so a larger value is one the
+        // detector cannot produce and is refused rather than clamped
+        // (docs/mappers.md rule 12; the closed-PR review sweep of PR #624).
+        if data[cur + 2] > 2 || data[cur + 4] > 3 {
+            return Err(MapperError::Invalid(format!(
+                "MMC5 detector counts out of range (match {}, idle {})",
+                data[cur + 2],
+                data[cur + 4]
+            )));
+        }
         self.det_last_addr = u16::from_le_bytes([data[cur], data[cur + 1]]);
-        self.det_match_count = data[cur + 2].min(2);
+        self.det_match_count = data[cur + 2];
         self.det_armed = data[cur + 3] != 0;
-        self.det_idle_cycles = data[cur + 4].min(3);
+        self.det_idle_cycles = data[cur + 4];
         self.det_read_this_cycle = data[cur + 5] != 0;
         self.render_window = data[cur + 6] != 0;
         Ok(())
@@ -3763,6 +3780,47 @@ mod tests {
         // Also: writes to $5011 in read-mode are dropped.
         m.cpu_write(0x5011, 50);
         assert_eq!(m.audio.pcm_sample, 100);
+    }
+
+    /// `docs/mappers.md` rule 12: `load_state` refuses a value the board's own
+    /// logic cannot produce rather than repairing it. The scanline counter
+    /// resets on reaching 240, so it never holds more than 239; the detector's
+    /// match count saturates at 2 and its idle count at 3. Before the closed-PR
+    /// review sweep (PR #624, CodeRabbit) the two detector bytes were silently
+    /// clamped and the counter restored raw. Each offset is found by diffing
+    /// two saves that differ in that one field, so the test does not hard-code
+    /// the layout.
+    #[test]
+    fn load_state_refuses_detector_values_the_board_cannot_produce() {
+        fn offset_of(set: impl Fn(&mut Mmc5, u8)) -> usize {
+            let mut a = fresh(8, 8);
+            let mut b = fresh(8, 8);
+            set(&mut a, 1);
+            set(&mut b, 2);
+            let (sa, sb) = (a.save_state(), b.save_state());
+            let diffs: Vec<usize> = (0..sa.len()).filter(|&i| sa[i] != sb[i]).collect();
+            assert_eq!(diffs.len(), 1, "field must occupy exactly one byte");
+            diffs[0]
+        }
+        let cases: [(usize, u8, u8); 3] = [
+            (offset_of(|m, v| m.scanline_counter = v), 239, 240),
+            (offset_of(|m, v| m.det_match_count = v), 2, 3),
+            (offset_of(|m, v| m.det_idle_cycles = v), 3, 4),
+        ];
+        let base = fresh(8, 8).save_state();
+        for (off, max_ok, bad) in cases {
+            let mut ok = base.clone();
+            ok[off] = max_ok;
+            fresh(8, 8)
+                .load_state(&ok)
+                .unwrap_or_else(|e| panic!("offset {off} = {max_ok} must load: {e:?}"));
+            let mut blob = base.clone();
+            blob[off] = bad;
+            assert!(
+                matches!(fresh(8, 8).load_state(&blob), Err(MapperError::Invalid(_))),
+                "offset {off} = {bad} must be refused with MapperError::Invalid"
+            );
+        }
     }
 
     #[test]

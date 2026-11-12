@@ -82,7 +82,10 @@ pub fn extract_rom(zip_bytes: &[u8], extensions: &[&str]) -> Option<(String, Vec
                 .map(|f| f.to_string_lossy().into_owned())
         })
         .unwrap_or_else(|| "rom".to_string());
-    let cap = usize::try_from(file.size()).unwrap_or(0);
+    // `size()` is the archive's own claim, so it bounds nothing: capped at the
+    // entry limit, a lying header cannot ask for a multi-gigabyte buffer
+    // before `take` is reached (Antigravity on #631; the closed-PR sweep).
+    let cap = usize::try_from(file.size().min(MAX_ENTRY_BYTES)).unwrap_or(0);
     let mut out = Vec::with_capacity(cap);
     file.take(MAX_ENTRY_BYTES + 1).read_to_end(&mut out).ok()?;
     if out.len() as u64 > MAX_ENTRY_BYTES {
@@ -107,7 +110,7 @@ pub fn unpack_for_web(bytes: Vec<u8>) -> Result<(Vec<u8>, Option<String>), Strin
     extract_rom(&bytes, WEB_ROM_EXTENSIONS)
         .map(|(name, rom)| (rom, Some(name)))
         .ok_or_else(|| {
-            "No .nes, .fds or .unf image found inside the .zip archive \
+            "No .nes, .fds, .unf or .unif image found inside the .zip archive \
              (or the archive could not be read)"
                 .to_string()
         })

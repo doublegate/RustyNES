@@ -1251,7 +1251,12 @@ chunked `NSFE` containers; the FDS-style `$5FF6/$5FF7` RAM banking remains defer
     (111) banks (an index panic), the BS-5 (286) DIP setting, which must be
     one of its four (a shift overflow in `1 << (dip + 4)`), and the FDS audio
     cycle prescaler, which must be 0-15 (an add overflow). Validate before
-    assigning, and return `MapperError::Invalid`.
+    assigning, and return `MapperError::Invalid`. Do not clamp instead: the
+    MMC5's v3.5.0 detector tail clamped its match and idle counts to 2 and 3
+    and restored the scanline counter raw (a counter above 239 counts past
+    the 240 reset and never leaves the frame). All three are refused since
+    the closed-PR review sweep of PR #624
+    (`load_state_refuses_detector_values_the_board_cannot_produce`).
 
 ## Test plan
 

@@ -269,8 +269,12 @@ pub fn load(text: &str, source_root: &Path) -> DebugInfo {
     let span_range = |id: u32| -> Option<(u32, u32)> {
         let s = spans.get(&id)?;
         let base = segs.get(&s.seg)?;
-        let start = base + s.start;
-        (s.size > 0 && start <= 0xFFFF).then_some((start, (start + s.size).min(0x1_0000)))
+        // The `.dbg` is client-supplied, so neither sum may overflow: a start
+        // past u32 is no address, and an end past it clamps like any end past
+        // $FFFF (Antigravity on #631; the closed-PR review sweep).
+        let start = base.checked_add(s.start)?;
+        (s.size > 0 && start <= 0xFFFF)
+            .then_some((start, start.saturating_add(s.size).min(0x1_0000)))
     };
     let is_lib_file = |file: u32| {
         file_mods
@@ -516,6 +520,36 @@ csym\tid=0,name=\"f\",scope=1,type=0,sc=static,sym=1
 csym\tid=1,name=\"p\",scope=1,type=0,sc=auto
 csym\tid=2,name=\"q\",scope=1,type=0,sc=auto,offs=-2
 ";
+
+    /// A `.dbg` is client-supplied: a span whose start or size overflows u32
+    /// once added to its segment base is skipped, not a panic (debug builds
+    /// check overflow) or a wrapped address (Antigravity on #631; the
+    /// closed-PR review sweep).
+    #[test]
+    fn an_overflowing_span_is_skipped_without_panicking() {
+        let text = SAMPLE
+            .replacen(
+                "span\tid=2,seg=0,start=3,size=5",
+                "span\tid=2,seg=0,start=0xFFFFFFFF,size=5",
+                1,
+            )
+            .replacen(
+                "span\tid=3,seg=0,start=8,size=2",
+                "span\tid=3,seg=0,start=8,size=0xFFFFFFFF",
+                1,
+            );
+        let d = load(&text, Path::new("/src"));
+        assert_eq!(d.line_at(0x8000).map(|l| l.line), Some(4));
+        assert!(
+            d.line_at(0x8003).is_none_or(|l| l.line != 6),
+            "the span whose start overflows is dropped"
+        );
+        assert_eq!(
+            d.line_at(0x8009).map(|l| l.line),
+            Some(7),
+            "an oversized span is clamped to the address space"
+        );
+    }
 
     #[test]
     fn c_lines_form_the_table_and_narrower_spans_win() {

@@ -685,11 +685,12 @@ impl SplitsDefinition {
     /// # Errors
     ///
     /// [`ParseError`] with the line number, for an unknown key, a malformed
-    /// condition, a missing `start` or split, a second `start` or `reset`, or
-    /// more than [`MAX_SPLITS`] splits.
+    /// condition, a missing `start` or split, a second `game`, `category`,
+    /// `start` or `reset`, or more than [`MAX_SPLITS`] splits.
     pub fn parse(text: &str) -> Result<Self, ParseError> {
         let mut game = String::new();
         let mut category = String::new();
+        let (mut seen_game, mut seen_category) = (false, false);
         let mut start = None;
         let mut reset = None;
         let mut splits = Vec::new();
@@ -708,8 +709,21 @@ impl SplitsDefinition {
             };
             let (key, value) = (key.trim(), value.trim());
             match key {
-                "game" => game = value.to_string(),
-                "category" => category = value.to_string(),
+                "game" | "category" => {
+                    // Refused like a second `start` / `reset`: a repeated
+                    // header line is a copy-paste slip, and keeping the last
+                    // one silently labels the run with the wrong name.
+                    let (slot, seen) = if key == "game" {
+                        (&mut game, &mut seen_game)
+                    } else {
+                        (&mut category, &mut seen_category)
+                    };
+                    if *seen {
+                        return Err(at(err(format!("a second `{key}`"))));
+                    }
+                    *seen = true;
+                    *slot = value.to_string();
+                }
                 "start" | "reset" => {
                     let slot = if key == "start" {
                         &mut start
@@ -1270,6 +1284,17 @@ reset = 0xH0003=1
             ),
             ("start = 0xH0000\nsplit = a | 0xH0000=1\n", 1),
             ("start = 0xH0000=1\nsplit = no-bar 0xH0000=1\n", 2),
+            // A second `game` or `category` is refused like a second `start`
+            // or `reset`, rather than silently replacing the first (PR #624
+            // review, Antigravity).
+            (
+                "game = A\ngame = B\nstart = 0xH0000=1\nsplit = a | 0xH0000=1\n",
+                2,
+            ),
+            (
+                "category = A\nstart = 0xH0000=1\ncategory = B\nsplit = a | 0xH0000=1\n",
+                3,
+            ),
         ] {
             let e = SplitsDefinition::parse(bad).unwrap_err();
             assert_eq!(e.line, line, "{bad:?}: {e}");

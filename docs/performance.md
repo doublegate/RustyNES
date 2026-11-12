@@ -574,8 +574,10 @@ artifact:
   `[target.'cfg(...)']` table, or a user `-C target-feature` still defeats
   them; a string-form user `rustflags` makes Cargo refuse the configuration.
   Check the last `-C target-cpu` on the final rustc line of a `-v` build.
-  `full-native` works on any host; `full-baseline` and `full-v3` are x86-64
-  only.
+  `full-native` works on any host (it carries per-triple keys for the four
+  x86-64 desktop triples and for `aarch64-apple-darwin`,
+  `aarch64-unknown-linux-gnu` and `aarch64-pc-windows-msvc`); `full-baseline`
+  and `full-v3` are x86-64 only.
 
   **The three-way comparison is `scripts/perf/cpu_target_ab.sh`** (v3.7.0).
   `scripts/perf/ab_check.sh` compares two REVISIONS (or feature sets) at one

@@ -83,6 +83,36 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+Found by re-reading every bot review on the pull requests closed since
+v3.4.1 (#618 to #649) for findings that never got an answer; nothing here
+moves a frame, a sample or a bus cycle, so the emulation epoch stays 10.
+
+- **A FIFO as the palette file, or as the header editor's target, no
+  longer hangs the window.** v3.5.1 refused FIFOs and devices on every
+  user-named read, but the palette loader and the header editor's write
+  still opened the path directly, so `open` blocked until a writer (or
+  reader) appeared. Both now refuse anything that is not a regular file; a
+  device such as `/dev/zero` named as a palette is refused too, where it
+  used to load as an all-black palette (#630 review).
+- **MMC5 save states with impossible scanline-detector values are refused.**
+  A state whose scanline counter is past 239, or whose detector counts are
+  past what the detector produces, used to load (the counts clamped, the
+  counter raw, where it would count past the 240 reset and never leave the
+  frame). It is now refused with an error, as every other board's
+  out-of-range state is (#624 review).
+- **A splits file with two `game` or two `category` lines is an error** on
+  the second one, as a second `start` or `reset` already was; the last one
+  used to win silently (#624 review).
+- **The debugger no longer panics on a malformed debug file.** A cc65 `.dbg`
+  span whose address overflows is skipped, an oversized one is clamped, and
+  DWARF ranges and array bounds saturate instead of overflowing (#631
+  review).
+- **A `.zip` whose header claims a huge entry** no longer reserves that much
+  memory before the 64 MiB entry limit applies, and the "no image found"
+  message names `.unif` too (#631 review).
+- **`cargo full-native` on Windows on ARM** now overrides a user's own
+  `[target.aarch64-pc-windows-msvc] rustflags`, as it already did on the
+  other hosts (#641 review).
 - **Spectators through the hosted relay see a match to its end when it ends
   in an error.** The host sends its confirmed frames to the relay in
   batches of eight, and v3.7.0 sent the last, shorter batch only when the

@@ -82,8 +82,12 @@ incompatible-rust-versions = "fallback"
 # these rules; `docs/performance.md` and `docs/agents/tooling-traps.md` point
 # here rather than repeating it (v3.7.0, PR #641 review). `full-baseline` and `full-v3` are x86-64 aliases: an Apple Silicon
 # or other ARM host cannot target `x86-64` or `x86-64-v3`. `full-native` is valid
-# everywhere, so it also carries the `aarch64-apple-darwin` and
-# `aarch64-unknown-linux-gnu` keys.
+# on every host, so it also carries the `aarch64-apple-darwin`,
+# `aarch64-unknown-linux-gnu` and `aarch64-pc-windows-msvc` keys (the last added
+# after the PR #641 review: without it a Windows-on-ARM user's own
+# `[target.aarch64-pc-windows-msvc] rustflags` silently won). A host triple not
+# in the list is still covered by `build.rustflags` unless the user's config sets
+# that triple's own `rustflags`.
 #
 # The CPU flag changes no emulated output (Rust enables no fast-math / FP
 # contraction under target-cpu), and a speed claim is only what
@@ -117,7 +121,7 @@ incompatible-rust-versions = "fallback"
 full-run = "run --release -p rustynes-frontend --features full --"
 full-build = "build --release -p rustynes-frontend --features full"
 full-baseline = "build --profile release-baseline -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-apple-darwin.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-pc-windows-msvc.rustflags=[\"-C\",\"target-cpu=x86-64\"] --config target.x86_64-pc-windows-gnu.rustflags=[\"-C\",\"target-cpu=x86-64\"]"
-full-native = "build --profile release-native -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-apple-darwin.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-pc-windows-msvc.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-pc-windows-gnu.rustflags=[\"-C\",\"target-cpu=native\"] --config target.aarch64-apple-darwin.rustflags=[\"-C\",\"target-cpu=native\"] --config target.aarch64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=native\"]"
+full-native = "build --profile release-native -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-apple-darwin.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-pc-windows-msvc.rustflags=[\"-C\",\"target-cpu=native\"] --config target.x86_64-pc-windows-gnu.rustflags=[\"-C\",\"target-cpu=native\"] --config target.aarch64-apple-darwin.rustflags=[\"-C\",\"target-cpu=native\"] --config target.aarch64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=native\"] --config target.aarch64-pc-windows-msvc.rustflags=[\"-C\",\"target-cpu=native\"]"
 full-v3 = "build --profile release-v3 -p rustynes-frontend --features full --config build.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-unknown-linux-gnu.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-apple-darwin.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-pc-windows-msvc.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"] --config target.x86_64-pc-windows-gnu.rustflags=[\"-C\",\"target-cpu=x86-64-v3\"]"
 
 # Resilient crates.io downloads — the permanent fix for the recurring CI flake.

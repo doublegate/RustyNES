@@ -335,8 +335,10 @@ fn subprogram(
     };
     let high = match entry.attr_value(gimli::DW_AT_high_pc) {
         Some(AttributeValue::Addr(a)) => a,
-        Some(v) => low + v.udata_value().unwrap_or(1),
-        None => low + 1,
+        // Client-supplied DWARF: saturate rather than overflow (a debug
+        // build panics on it; Antigravity on #631, the closed-PR sweep).
+        Some(v) => low.saturating_add(v.udata_value().unwrap_or(1)),
+        None => low.saturating_add(1),
     };
     let Ok(low16) = u16::try_from(low) else {
         return Ok(None);
@@ -554,7 +556,8 @@ fn array_count(unit: &Unit<'_>, off: UnitOffset) -> Result<Option<u64>, LoadErro
                 return Ok(Some(c));
             }
             if let Some(u) = u_attr(e, gimli::DW_AT_upper_bound) {
-                return Ok(Some(u + 1));
+                // `checked_add`: a u64::MAX bound is no array length.
+                return Ok(u.checked_add(1));
             }
         }
     }

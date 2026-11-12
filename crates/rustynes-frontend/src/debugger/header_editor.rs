@@ -389,6 +389,10 @@ fn write_header_to_file(loaded: &mut Loaded) -> String {
 /// Overwrite the first [`HEADER_LEN`] bytes of the file in place via a seek +
 /// partial write, leaving the ROM body untouched.
 fn overwrite_header(path: &std::path::Path, header: &[u8; HEADER_LEN]) -> std::io::Result<()> {
+    // Opening a FIFO for writing blocks until a reader appears, on the window
+    // thread; the read half checks this, and the path may have been swapped
+    // since (Antigravity on #630; the closed-PR review sweep).
+    crate::bounded_read::regular_file_metadata(path)?;
     let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
     // Guard against truncated files: the body after the header must exist.
     if file.metadata()?.len() < HEADER_LEN as u64 {
@@ -420,6 +424,33 @@ mod tests {
             .expect("mkfifo runs");
         assert!(made.success(), "mkfifo {}", fifo.display());
         let e = read_header_bytes(&fifo).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{e}");
+    }
+
+    /// The write half: `overwrite_header` opened the path for writing with no
+    /// check, so a FIFO swapped in after the read blocked `open` until a
+    /// reader appeared (Antigravity on #630, three rounds; the closed-PR
+    /// review sweep). Run on a thread, so a regression fails on the timeout
+    /// instead of hanging the suite (the blocked thread dies with the test
+    /// process).
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_is_refused_by_the_writer_without_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("pipe.nes");
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo runs");
+        assert!(made.success(), "mkfifo {}", fifo.display());
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(overwrite_header(&fifo, &[0u8; HEADER_LEN]));
+        });
+        let e = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("opening a FIFO for writing must not block")
+            .unwrap_err();
         assert_eq!(e.kind(), std::io::ErrorKind::InvalidInput, "{e}");
     }
 }
