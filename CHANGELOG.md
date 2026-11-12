@@ -71,7 +71,8 @@ cycle-accurate core later replaced.
   only when it changes something that builds differently there (the
   dependency graph, the toolchain, CI, the vendored rcheevos C, or a source
   file with an OS-specific `cfg`); a lint step keeps that list complete.
-  Release PRs and every push to `main` build both, as before.
+  Release PRs and every push to `main` that changes code build both, as
+  before (a documentation-only push runs no Rust job at all).
 
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 

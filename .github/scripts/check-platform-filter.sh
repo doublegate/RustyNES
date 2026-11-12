@@ -87,6 +87,11 @@ if [ "${#crates[@]}" -eq 0 ]; then
   exit 1
 fi
 
+# An OS predicate inside a cfg attribute, cfg_attr or cfg! macro, or any
+# target_os / target_vendor / target_family token.
+OS_CFG='target_os|target_vendor|target_family|cfg(_attr)?!?\s*\([^\]]{0,400}?\b(windows|unix)\b'
+# The name of a module whose declaration sits under such a cfg.
+OS_MOD='#\[cfg(_attr)?\s*\([^\]]{0,400}?\b(windows|unix|target_os|target_vendor|target_family)\b[^\]]*\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+\K[A-Za-z0-9_]+(?=\s*;)'
 scanned=0
 for c in "${crates[@]}"; do
   matched "$c/Cargo.toml" || { echo "::error file=$ci::platform filter misses '$c/Cargo.toml' (a crate of the full build)"; fail=1; }
@@ -95,10 +100,34 @@ for c in "${crates[@]}"; do
     fail=1
   fi
   [ -d "$c/src" ] || continue
+  # Whole-file matching (`-z` reads each file as one record), because rustfmt
+  # wraps a long `#[cfg(all(...))]` across lines and a line-based pattern then
+  # sees `cfg(` and `unix,` on different lines (PR #650 review). The span after
+  # `cfg(` / `cfg_attr(` / `cfg!(` is bounded at 400 characters and may not
+  # cross a `]`, so it stays inside one attribute or macro call rather than
+  # running on into ordinary code that happens to say "windows".
   while IFS= read -r f; do
     scanned=$((scanned + 1))
     matched "$f" || { echo "::error file=$f::OS-specific cfg in a file the platform filter in $ci does not list"; fail=1; }
-  done < <(grep -rlE 'target_os|target_vendor|target_family|cfg!?\(.*\b(windows|unix)\b' "$c/src" --include='*.rs' | sort)
+  done < <(grep -rlzP "$OS_CFG" "$c/src" --include='*.rs' | sort)
+  # A module gated on its `mod` declaration (`#[cfg(windows)] mod foo;`) can
+  # be OS-specific with no cfg of its own inside foo.rs: the parent matches
+  # the scan above, foo.rs does not. Resolve each such declaration to its file
+  # and require that too.
+  while IFS= read -r f; do
+    case "$(basename "$f")" in
+      lib.rs|main.rs|mod.rs) dir="$(dirname "$f")" ;;
+      *) dir="${f%.rs}" ;;
+    esac
+    while IFS= read -r m; do
+      [ -n "$m" ] || continue
+      for cand in "$dir/$m.rs" "$dir/$m/mod.rs"; do
+        [ -f "$cand" ] || continue
+        scanned=$((scanned + 1))
+        matched "$cand" || { echo "::error file=$cand::module '$m' is declared under an OS cfg in $f, and the platform filter in $ci does not list it"; fail=1; }
+      done
+    done < <(grep -ozP "$OS_MOD" "$f" | tr '\0' '\n')
+  done < <(grep -rlzP "$OS_MOD" "$c/src" --include='*.rs' | sort)
 done
 
 if [ "$scanned" -eq 0 ]; then

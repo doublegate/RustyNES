@@ -322,6 +322,7 @@ jobs:
               - 'crates/rustynes-frontend/src/presentation_clock.rs'
               - 'crates/rustynes-frontend/src/script_host.rs'
               - 'crates/rustynes-frontend/src/shm.rs'
+              - 'crates/rustynes-frontend/src/wayland_presentation.rs'
               - 'crates/rustynes-apu/Cargo.toml'
               - 'crates/rustynes-core/Cargo.toml'
               - 'crates/rustynes-cpu/Cargo.toml'
