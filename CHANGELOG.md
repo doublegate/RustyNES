@@ -74,6 +74,16 @@ cycle-accurate core later replaced.
   Release PRs and every push to `main` that changes code build both, as
   before (a documentation-only push runs no Rust job at all).
 
+### Fixed
+
+- **Spectators through the hosted relay see a match to its end when it ends
+  in an error.** The host sends its confirmed frames to the relay in
+  batches of eight, and v3.7.0 sent the last, shorter batch only when the
+  player left; a session that ended in an error (the peer stopped
+  answering, a desync, a connection failure) dropped up to seven confirmed
+  frames, so relay viewers stopped short of the players. Every end of a
+  session now sends them (Cursor Bugbot on #646).
+
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 
 ### Breaking
