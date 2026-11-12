@@ -35,10 +35,12 @@ bin="${1:?usage: macos-app.sh <rustynes-binary> <version> <out-dir>}"
 version="${2:?usage: macos-app.sh <rustynes-binary> <version> <out-dir>}"
 out="${3:?usage: macos-app.sh <rustynes-binary> <version> <out-dir>}"
 version="${version#v}"
-case "$version" in
-  [0-9]*.[0-9]*.[0-9]*) ;;
-  *) echo "macos-app.sh: version '$version' is not X.Y.Z" >&2; exit 2 ;;
-esac
+# Strict, because the version is written into the Info.plist XML below: a
+# glob such as [0-9]*.[0-9]*.[0-9]* would let `<` or `&` through.
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "macos-app.sh: version '$version' is not X.Y.Z" >&2
+  exit 2
+fi
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 icns="$root/assets/RustyNES_Icon_Pack/macos/RustyNES.icns"

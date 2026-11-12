@@ -10,6 +10,8 @@ Android and iOS apps build from, in the places their build systems read:
   android/app/src/main/res/mipmap-<density>/ic_launcher_round.png   legacy round
   android/app/src/main/res/mipmap-<density>/ic_launcher_foreground.png
                                          adaptive-icon foreground (108 dp canvas)
+  android/app/src/main/res/mipmap-<density>/ic_launcher_monochrome.png
+                                         Material You themed-icon layer
   android/app/src/main/res/drawable-xhdpi/tv_banner.png             Leanback banner
   ios/RustyNES/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png   single-size icon
 
@@ -20,6 +22,11 @@ Design rules it follows, each from the platform's own documentation:
   art (the transparent "RN" cartridge, trimmed to its own bounds) is scaled to
   fit 66 dp and centred. The background is the colour
   `@color/ic_launcher_background`, set to the art's own field, `#000214`.
+* **Monochrome** (Android 13 themed icons): the system tints the layer by its
+  ALPHA alone. The colour foreground's cartridge is opaque throughout, so it
+  would tint to a featureless block; this layer's alpha is the glyph's alpha
+  weighted by its brightness, so the bright "RN" letters and circuit traces
+  carry the shape and the dark cartridge body falls back.
 * **Legacy icons** (pre-API-26 launchers): the full-bleed square art at
   48 dp, and the same clipped to a circle for `ic_launcher_round`.
 * **TV banner**: "an xhdpi resource with a size of 320 x 180 px" (Android TV's
@@ -39,7 +46,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 PACK = Path(__file__).resolve().parent
 ROOT = PACK.parent.parent
@@ -92,6 +99,18 @@ def _foreground(canvas: int) -> Image.Image:
     return out
 
 
+def _monochrome(canvas: int) -> Image.Image:
+    """The themed-icon layer: white, alpha = foreground alpha x luminance,
+    stretched so the brightest detail is fully opaque."""
+    fg = _foreground(canvas)
+    mono = ImageChops.multiply(fg.convert("L"), fg.getchannel("A"))
+    hi = max(mono.getextrema()[1], 1)
+    mono = mono.point(lambda v: min(255, v * 255 // hi))
+    out = Image.new("RGBA", (canvas, canvas), (255, 255, 255, 0))
+    out.putalpha(mono)
+    return out
+
+
 def _banner(w: int, h: int) -> Image.Image:
     mark = Image.open(WORDMARK).convert("RGBA")
     mark = mark.crop(mark.getbbox())
@@ -109,6 +128,7 @@ def main() -> int:
         _square(round(48 * k)).save(d / "ic_launcher.png", optimize=True)
         _round(round(48 * k)).save(d / "ic_launcher_round.png", optimize=True)
         _foreground(round(108 * k)).save(d / "ic_launcher_foreground.png", optimize=True)
+        _monochrome(round(108 * k)).save(d / "ic_launcher_monochrome.png", optimize=True)
     d = RES / "drawable-xhdpi"
     d.mkdir(parents=True, exist_ok=True)
     _banner(320, 180).save(d / "tv_banner.png", optimize=True)

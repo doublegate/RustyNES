@@ -13,7 +13,8 @@
 
 "use strict";
 
-const CACHE_NAME = "rustynes-shell-v1";
+// v2: the v3.7.1 icon set replaced icon-256/512, so installs must refetch.
+const CACHE_NAME = "rustynes-shell-v2";
 
 // On install, take over as soon as possible (no waiting for old clients).
 self.addEventListener("install", (event) => {
