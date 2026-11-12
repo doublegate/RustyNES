@@ -39,8 +39,11 @@ on:
 permissions:
   contents: read
 
+# A draft run (which skips its job) has a group of its own, so a draft-payload
+# run created after `gh pr ready` cannot cancel the ready run (ci.yml's note on
+# `concurrency`, 2026-11-12).
 concurrency:
-  group: hosted-${{ github.ref }}
+  group: hosted-${{ github.ref }}${{ github.event.pull_request.draft && '-draft' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

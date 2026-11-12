@@ -64,8 +64,12 @@ permissions:
 # had no group at all, so each push to a PR left the previous run -- up to
 # ~27 minutes of NDK build plus Gradle packaging -- running to completion for
 # a commit nobody would look at again.
+#
+# A draft run (every job skips) has a group of its own, so a draft-payload run
+# created after `gh pr ready` cannot cancel the ready run (ci.yml's note on
+# `concurrency`, 2026-11-12; #548 lost its Android build that way).
 concurrency:
-  group: android-${{ github.ref }}
+  group: android-${{ github.ref }}${{ github.event.pull_request.draft && '-draft' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -133,11 +137,20 @@ jobs:
       # with a five-line warning on every run (rust-lang/rustup#4836). The
       # composite installs it explicitly, and its cargo cache saves from `main`
       # only.
+      #
+      # `shared-key`, not `cache-key` (2026-11): all three jobs in this file
+      # compile the same thing -- `cargo ndk -t arm64-v8a -t x86_64 build
+      # --profile release-mobile -p rustynes-mobile -p rustynes-android`, here
+      # directly and in the other two through Gradle's `cargoNdkBuild`, plus
+      # the host `uniffi-bindgen` -- so one entry serves all three instead of
+      # three copies of it in the 10 GB repository cache. This job saves it on
+      # `main`; the other two need this one, so they find it already saved and
+      # restore it.
       - uses: ./.github/actions/rust-setup
         with:
           targets: aarch64-linux-android,x86_64-linux-android
           apt: "false"
-          cache-key: android-ndk
+          shared-key: android-ndk
 
       # Cached compiled binary instead of `cargo install` on every run (it
       # compiled cargo-ndk from source, in both jobs, every time). `--locked` is
@@ -228,7 +241,8 @@ jobs:
         with:
           targets: aarch64-linux-android,x86_64-linux-android
           apt: "false"
-          cache-key: android-ndk
+          # One entry for all three jobs; see the cross-build job.
+          shared-key: android-ndk
       - uses: taiki-e/cache-cargo-install-action@v3
         with:
           tool: cargo-ndk@4
@@ -294,7 +308,8 @@ jobs:
         with:
           targets: aarch64-linux-android,x86_64-linux-android
           apt: "false"
-          cache-key: android-ndk
+          # One entry for all three jobs; see the cross-build job.
+          shared-key: android-ndk
       # Cached compiled binary instead of `cargo install` on every run (it
       # compiled cargo-ndk from source, in both jobs, every time). `--locked` is
       # the action's default. cargo-ndk publishes no prebuilt binary that

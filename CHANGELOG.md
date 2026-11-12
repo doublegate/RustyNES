@@ -60,6 +60,19 @@ cycle-accurate core later replaced.
   newest stable release, and nothing user-visible changes in emulation:
   the full suite with the commercial corpus passes with no golden,
   snapshot or frame moved, so the emulation epoch stays 10.
+- **CI (contributors): the cargo cache keeps dependencies again.** It had
+  stored nothing since v1.2.0 (rust-cache cannot list this workspace's
+  dependencies with `--all-features`), so every Rust job compiled its whole
+  dependency graph on every run. Nothing about what is tested changes; see
+  `docs/agents/ci-and-release.md`. The weekly full run (and a dispatched
+  one) now always tests: it had been deciding from the last commit alone,
+  and on 2026-10-19, when that commit was documentation, it skipped every
+  gate and passed. A regular pull request now builds on macOS and Windows
+  only when it changes something that builds differently there (the
+  dependency graph, the toolchain, CI, the vendored rcheevos C, or a source
+  file with an OS-specific `cfg`); a lint step keeps that list complete.
+  Release PRs and every push to `main` that changes code build both, as
+  before (a documentation-only push runs no Rust job at all).
 
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 
