@@ -461,11 +461,28 @@ impl NetplayUi {
                 }
                 Err(e) => self.fail(format!("host bind failed: {e}")),
             }
+            self.announce_relay_match();
             return;
         }
         match NetplayConnection::host(local, identity) {
             Ok(conn) => self.enter_connecting(conn, true),
             Err(e) => self.fail(format!("host bind failed: {e}")),
+        }
+        self.announce_relay_match();
+    }
+
+    /// v3.7.1 — show the match id this host will publish under from the
+    /// moment it starts waiting, not only once the game begins: a host given
+    /// a fresh id needs it to invite spectators while still waiting for its
+    /// peer, and the status-bar notice fades after a few seconds. Set again
+    /// by `enter_game`, from the same `edge_publish_url`.
+    fn announce_relay_match(&mut self) {
+        if self.status.phase == NetplayPhase::Connecting {
+            self.status.relay_match = self
+                .edge_publish_url
+                .as_ref()
+                .map(|(_, id)| id.clone())
+                .unwrap_or_default();
         }
     }
 
@@ -1155,6 +1172,24 @@ mod tests {
         ui.leave();
         assert_eq!(ui.phase(), NetplayPhase::Idle);
         assert!(!ui.is_active());
+    }
+
+    #[test]
+    fn a_publishing_host_shows_its_match_id_while_connecting() {
+        // PR #648 review (Cursor): the id reached the panel only in
+        // `enter_game`, so a host given a fresh id could not see it while
+        // waiting for its peer once the status-bar notice faded.
+        let mut ui = NetplayUi::default();
+        ui.set_edge_publish(Some(("wss://relay/x".to_string(), "abc123".to_string())));
+        ui.start_host(0, 2, SessionIdentity::new([0u8; 32], [0u8; 32]));
+        assert_eq!(ui.phase(), NetplayPhase::Connecting);
+        assert_eq!(ui.status().relay_match, "abc123");
+        ui.leave();
+        // Not publishing: nothing to show.
+        let mut ui = NetplayUi::default();
+        ui.start_host(0, 2, SessionIdentity::new([0u8; 32], [0u8; 32]));
+        assert_eq!(ui.status().relay_match, "");
+        ui.leave();
     }
 
     /// End-to-end smoke: two in-process `NetplayUi`s over loopback reach

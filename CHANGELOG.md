@@ -35,6 +35,12 @@ cycle-accurate core later replaced.
   fresh random id, shown in the netplay panel ("Spectators watch with match
   id ...") and in the status bar, and none is saved. A typed id is kept and
   reused as before. Maintainer decision, 2026-11-11; ADR 0046 addendum.
+  An id v3.7.0 generated and saved is cleared the first time this version
+  loads the settings (recognised by its shape, 32 lowercase hex digits; a
+  typed id of exactly that shape is cleared too, with a note on stderr), so
+  it does not keep being reused after the upgrade. The panel shows the id
+  with a "Copy match id" button while the host waits for its peer, as well
+  as in game.
 
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 

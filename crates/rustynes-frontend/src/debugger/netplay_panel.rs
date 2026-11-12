@@ -318,6 +318,11 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
             if let Some(ms) = st.ping_ms {
                 ui.label(crate::tf!(NpPingMs, ms));
             }
+            // v3.7.1 — a host waiting for its peer already knows the id it
+            // will publish under, and needs it to invite spectators now.
+            if !st.relay_match.is_empty() {
+                relay_match_row(ui, &st.relay_match);
+            }
         }
         InGame => {
             ui.colored_label(
@@ -345,8 +350,7 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
             if !st.relay_note.is_empty() {
                 ui.colored_label(egui::Color32::from_rgb(0xE0, 0xB0, 0x40), &st.relay_note);
             } else if !st.relay_match.is_empty() {
-                // v3.7.1 — the id to pass to spectators (selectable to copy).
-                ui.label(crate::tf!(NpEdgePublishingAs, st.relay_match));
+                relay_match_row(ui, &st.relay_match);
             }
             let mut sync = Vec::new();
             if st.rolled_back {
@@ -497,6 +501,21 @@ fn body(ui: &mut egui::Ui, state: &mut NetplayPanelState, config: &mut crate::co
 
     ui.separator();
     ui.label(egui::RichText::new(crate::t!(NpPeersNote)).weak());
+}
+
+/// v3.7.1 — the spectate-relay match id a host publishes under, with a
+/// button that copies it. The label alone was selectable only with the
+/// mouse; the button is a focusable widget, so a keyboard-only host can
+/// Tab to it and copy the id to pass on (viewers need nothing else).
+/// Native only, like the session status it belongs to.
+#[cfg(not(target_arch = "wasm32"))]
+fn relay_match_row(ui: &mut egui::Ui, id: &str) {
+    ui.horizontal(|ui| {
+        ui.label(crate::tf!(NpEdgePublishingAs, id));
+        if ui.button(crate::t!(NpEdgeCopyMatch)).clicked() {
+            ui.ctx().copy_text(id.to_owned());
+        }
+    });
 }
 
 /// Render the read-only "Diagnostics" section (v1.3.0 Workstream G1): the room

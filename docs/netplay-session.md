@@ -247,9 +247,13 @@ session already ignores an input or ack naming its own, so it needs no check.
   therefore a viewer's whole credential. The desktop mints a fresh random
   128-bit id for each hosted session when none is typed, and does not store
   it, so a viewer given one match's id cannot follow the host to the next
-  (since v3.7.1; v3.7.0 stored and reused it). It warns when a typed id is
-  shorter than 22 characters (`NetplayConfig::edge_match_for_session`,
-  `edge_match_is_guessable`).
+  (since v3.7.1; v3.7.0 stored and reused it). The first load after the
+  upgrade clears an id v3.7.0 stored, recognised by its shape (exactly 32
+  lowercase hex digits), once, recorded by `edge_match_v370_checked`
+  (`retire_v370_minted_match_id`). The netplay panel shows the id with a
+  copy button from the moment the host starts waiting, not only in game. It
+  warns when a typed id is shorter than 22 characters
+  (`NetplayConfig::edge_match_for_session`, `edge_match_is_guessable`).
 - The browser (WebRTC) path does not seal: its data channel is DTLS.
 
 ### 2.5 Gates
