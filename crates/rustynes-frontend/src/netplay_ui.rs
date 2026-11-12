@@ -287,6 +287,26 @@ impl Default for NetplayUi {
     }
 }
 
+/// Closing the window mid-match drops the panel without `leave`; the tail
+/// still reaches the relay before the client's own `Drop` drains and closes
+/// the socket (Antigravity on #653). Every other end has already taken the
+/// publisher, so this is a no-op for them.
+impl Drop for NetplayUi {
+    fn drop(&mut self) {
+        self.finish_edge_publish();
+        #[cfg(test)]
+        DROPPED_EDGE_SENT.with(|d| *d.borrow_mut() = core::mem::take(&mut self.edge_sent));
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What a dropped panel had handed its relay client: the only window a
+    /// test has onto `Drop`'s flush, since `edge_sent` goes with the panel.
+    static DROPPED_EDGE_SENT: std::cell::RefCell<Vec<rustynes_netplay::NetMessage>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl NetplayUi {
     /// `true` while a session is active or connecting (so the produce path
     /// drives via [`tick`](Self::tick) instead of `run_frame`). The `Error`
@@ -713,6 +733,8 @@ impl NetplayUi {
                 rustynes_netplay::EdgePublisher::new(self.identity),
             )
         });
+        #[cfg(test)]
+        self.edge_sent.clear();
         let relay_match = publish.map(|(_, id)| id.clone()).unwrap_or_default();
         self.state = NetplayState::InGame(Box::new(session));
         self.last_peer_activity = std::time::Instant::now();
@@ -880,13 +902,7 @@ impl NetplayUi {
                     && !matches!(session.forensics_status(), ForensicsStatus::Off)
                     && let NetplayState::InGame(session) = std::mem::take(&mut self.state)
                 {
-                    self.status.phase = NetplayPhase::Error;
-                    self.status.message = format!("{why}; collecting desync forensics");
-                    self.state = NetplayState::Investigating {
-                        session,
-                        why,
-                        since: std::time::Instant::now(),
-                    };
+                    self.begin_investigating(session, why);
                     return NetplayTick {
                         active: true,
                         produced_frame: false,
@@ -964,6 +980,28 @@ impl NetplayUi {
         }
     }
 
+    /// v3.7.0 — move a desynced session (forensics on) to `Investigating`,
+    /// and hand the relay its tail now. The session no longer advances there
+    /// (`tick_investigating` only pumps the forensics exchange), so no frame
+    /// can be confirmed after this point, and waiting for `fail` held the
+    /// last batch, and the relay socket, for the whole exchange: up to
+    /// [`FORENSICS_DEADLINE`] when the peer has not opted in (Antigravity on
+    /// #653).
+    fn begin_investigating(
+        &mut self,
+        session: Box<RollbackSession<SessionTransport>>,
+        why: String,
+    ) {
+        self.status.phase = NetplayPhase::Error;
+        self.status.message = format!("{why}; collecting desync forensics");
+        self.state = NetplayState::Investigating {
+            session,
+            why,
+            since: std::time::Instant::now(),
+        };
+        self.finish_edge_publish();
+    }
+
     /// v3.7.0 — drive an ended session's forensics exchange one tick, and end
     /// it with the report (or with why there is none).
     fn tick_investigating(&mut self) -> NetplayTick {
@@ -1019,16 +1057,17 @@ impl NetplayUi {
     /// own core, exactly as it would have had the batch filled first.
     ///
     /// The session is reachable in two states: `InGame`, and
-    /// `Investigating` (a desync with forensics on moves the session there
-    /// and the publisher stays alive until `tick_investigating` calls
-    /// `fail`, or the user leaves). In any other state there is no session
-    /// to read, and the publisher is simply dropped. The publisher is
-    /// created only by `enter_game`; inside this state machine the session
-    /// leaves `InGame` / `Investigating` only through `leave`, `fail` or the
-    /// `InGame` -> `Investigating` move (which keeps the publisher), so the
-    /// tail is sent on every end the state machine itself drives. A
-    /// `start_*` call made while a session runs replaces the state directly
-    /// and does not come here; the panel does not offer that.
+    /// `Investigating`. A desync with forensics on moves the session there
+    /// through `begin_investigating`, which sends the tail at once, since no
+    /// frame confirms after the desync; `leave` and `fail` then find the
+    /// publisher already gone. In any other state there is no session to
+    /// read, and the publisher is simply dropped. The publisher is created
+    /// only by `enter_game`; the session leaves `InGame` only through
+    /// `leave`, `fail` or `begin_investigating`, and dropping the panel
+    /// (closing the window mid-match) comes here too, through `Drop`, so
+    /// the tail is sent on every end. A `start_*` call made while a session
+    /// runs replaces the state directly and does not come here; the panel
+    /// does not offer that.
     fn finish_edge_publish(&mut self) {
         let Some((client, mut publisher)) = self.edge_publisher.take() else {
             return;
@@ -1454,17 +1493,22 @@ mod tests {
         let NetplayState::InGame(session) = core::mem::take(&mut host.state) else {
             unreachable!("advance_to_a_pending_tail leaves the host in game");
         };
-        host.state = NetplayState::Investigating {
-            session,
-            why: "desync at frame 1 (test)".to_string(),
-            since: std::time::Instant::now(),
-        };
-        host.fail("desync at frame 1 (test); no report".to_string());
-        assert!(host.edge_publisher.is_none());
+        host.begin_investigating(session, "desync at frame 1 (test)".to_string());
+        assert!(
+            host.edge_publisher.is_none(),
+            "entering Investigating ends the publish"
+        );
         assert_eq!(
             relayed_through(&host.edge_sent),
             confirmed,
-            "fail from Investigating sent the held tail"
+            "entering Investigating sent the held tail, before the exchange"
+        );
+        let sent = host.edge_sent.len();
+        host.fail("desync at frame 1 (test); no report".to_string());
+        assert_eq!(
+            host.edge_sent.len(),
+            sent,
+            "fail found nothing left to send"
         );
 
         // Frames the session confirmed after the publisher's last poll.
@@ -1503,6 +1547,18 @@ mod tests {
             relayed_through(&host.edge_sent),
             confirmed,
             "teardown polled the frames confirmed since the last tick"
+        );
+
+        // Dropping the panel mid-match (closing the window) sends it.
+        let (mut host, mut join, mut nes_host, mut nes_join) = publishing_pair();
+        let confirmed =
+            advance_to_a_pending_tail(&mut host, &mut join, &mut nes_host, &mut nes_join);
+        drop(host);
+        let sent = DROPPED_EDGE_SENT.with(|d| core::mem::take(&mut *d.borrow_mut()));
+        assert_eq!(
+            relayed_through(&sent),
+            confirmed,
+            "dropping the panel sent the held tail"
         );
 
         // `leave` still sends it.

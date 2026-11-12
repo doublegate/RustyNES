@@ -82,7 +82,9 @@ cycle-accurate core later replaced.
   player left; a session that ended in an error (the peer stopped
   answering, a desync, a connection failure) dropped up to seven confirmed
   frames, so relay viewers stopped short of the players. Every end of a
-  session now sends them (Cursor Bugbot on #646).
+  session now sends them, closing the window mid-match included, and a
+  desync with forensics on sends them as it happens rather than after the
+  up-to-ten-second forensics exchange (Cursor Bugbot on #646; #653 review).
 
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 
