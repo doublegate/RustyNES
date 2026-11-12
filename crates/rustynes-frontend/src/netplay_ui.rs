@@ -141,6 +141,9 @@ pub struct NetplayStatus {
     /// (the relay refused it or the connection closed), else empty. The match
     /// itself carries on: a relay that is down never stalls play.
     pub relay_note: String,
+    /// v3.7.1 — the spectate-relay match id this hosted session publishes
+    /// under, for the host to pass on, else empty.
+    pub relay_match: String,
     /// v1.3.0 Workstream G1 — read-only desync diagnostics + session topology,
     /// rebuilt from the live session each `InGame` tick. Default (inert) in
     /// every other phase. Observational only.
@@ -247,8 +250,10 @@ pub struct NetplayUi {
     /// (`[netplay] desync_forensics`).
     desync_forensics: bool,
     /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — the spectate-relay publish URL
-    /// for the next session this peer hosts, if it publishes.
-    edge_publish_url: Option<String>,
+    /// for the next session this peer hosts, if it publishes, and the match
+    /// id it publishes under (shown in the panel: v3.7.1 mints a fresh one
+    /// per session when none is typed).
+    edge_publish_url: Option<(String, String)>,
     /// The running session's relay publisher, when it publishes.
     edge_publisher: Option<(
         rustynes_netplay::EdgeRelayClient,
@@ -299,10 +304,10 @@ impl NetplayUi {
     }
 
     /// v3.7.0 — publish the next session this peer hosts to the spectate
-    /// relay at `url` (`rustynes_netplay::spectate_url` with a publish key),
-    /// or not (`None`).
-    pub fn set_edge_publish(&mut self, url: Option<String>) {
-        self.edge_publish_url = url;
+    /// relay at `url` (`rustynes_netplay::spectate_url` with a publish key)
+    /// under `match_id`, or not (`None`).
+    pub fn set_edge_publish(&mut self, publish: Option<(String, String)>) {
+        self.edge_publish_url = publish;
     }
 
     /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — watch a match through the
@@ -456,11 +461,28 @@ impl NetplayUi {
                 }
                 Err(e) => self.fail(format!("host bind failed: {e}")),
             }
+            self.announce_relay_match();
             return;
         }
         match NetplayConnection::host(local, identity) {
             Ok(conn) => self.enter_connecting(conn, true),
             Err(e) => self.fail(format!("host bind failed: {e}")),
+        }
+        self.announce_relay_match();
+    }
+
+    /// v3.7.1 — show the match id this host will publish under from the
+    /// moment it starts waiting, not only once the game begins: a host given
+    /// a fresh id needs it to invite spectators while still waiting for its
+    /// peer, and the status-bar notice fades after a few seconds. Set again
+    /// by `enter_game`, from the same `edge_publish_url`.
+    fn announce_relay_match(&mut self) {
+        if self.status.phase == NetplayPhase::Connecting {
+            self.status.relay_match = self
+                .edge_publish_url
+                .as_ref()
+                .map(|(_, id)| id.clone())
+                .unwrap_or_default();
         }
     }
 
@@ -682,21 +704,23 @@ impl NetplayUi {
             session.enable_forensics(rustynes_netplay::ForensicsConfig::default());
         }
         // v3.7.0 — the host publishes the match to the spectate relay.
-        self.edge_publisher = self
+        let publish = self
             .edge_publish_url
-            .as_deref()
-            .filter(|_| self.config.local_player == 0)
-            .map(|url| {
-                (
-                    rustynes_netplay::EdgeRelayClient::connect(url),
-                    rustynes_netplay::EdgePublisher::new(self.identity),
-                )
-            });
+            .as_ref()
+            .filter(|_| self.config.local_player == 0);
+        self.edge_publisher = publish.map(|(url, _)| {
+            (
+                rustynes_netplay::EdgeRelayClient::connect(url),
+                rustynes_netplay::EdgePublisher::new(self.identity),
+            )
+        });
+        let relay_match = publish.map(|(_, id)| id.clone()).unwrap_or_default();
         self.state = NetplayState::InGame(Box::new(session));
         self.last_peer_activity = std::time::Instant::now();
         self.last_confirmed_tracker = 0;
         self.status.phase = NetplayPhase::InGame;
         self.status.is_host = self.is_host;
+        self.status.relay_match = relay_match;
     }
 
     /// v3.4.0 — drive a 3-4 player host's gathering one tick. Once every
@@ -1148,6 +1172,24 @@ mod tests {
         ui.leave();
         assert_eq!(ui.phase(), NetplayPhase::Idle);
         assert!(!ui.is_active());
+    }
+
+    #[test]
+    fn a_publishing_host_shows_its_match_id_while_connecting() {
+        // PR #648 review (Cursor): the id reached the panel only in
+        // `enter_game`, so a host given a fresh id could not see it while
+        // waiting for its peer once the status-bar notice faded.
+        let mut ui = NetplayUi::default();
+        ui.set_edge_publish(Some(("wss://relay/x".to_string(), "abc123".to_string())));
+        ui.start_host(0, 2, SessionIdentity::new([0u8; 32], [0u8; 32]));
+        assert_eq!(ui.phase(), NetplayPhase::Connecting);
+        assert_eq!(ui.status().relay_match, "abc123");
+        ui.leave();
+        // Not publishing: nothing to show.
+        let mut ui = NetplayUi::default();
+        ui.start_host(0, 2, SessionIdentity::new([0u8; 32], [0u8; 32]));
+        assert_eq!(ui.status().relay_match, "");
+        ui.leave();
     }
 
     /// End-to-end smoke: two in-process `NetplayUi`s over loopback reach

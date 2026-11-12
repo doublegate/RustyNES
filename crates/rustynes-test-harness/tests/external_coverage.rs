@@ -30,6 +30,17 @@
 //!    audio + cycle hashes via [`snapshot_text`]), the regression net for
 //!    a ROM that already has a committed baseline.
 //!
+//! ## Parallel boots (v3.7.1, `T-TEST-COVERAGE-PARALLEL`)
+//!
+//! The sweep is one `#[test]`, and libtest parallelises between tests, not
+//! inside one, so before v3.7.1 it booted every ROM on one core. The boots
+//! are independent (each builds its own `Nes`; determinism is per ROM), so
+//! `parallel_map_ordered` runs them on `RUSTYNES_COVERAGE_JOBS` threads
+//! (default: the available parallelism) and returns the outcomes in corpus
+//! order, which the reporting then walks exactly as the serial loop did.
+//! `RUSTYNES_COVERAGE_JOBS=1` is the serial sweep, kept for the equality
+//! check: both must report the same snapshots and the same failure list.
+//!
 //! ## Relationship to the curated harnesses (overlap)
 //!
 //! The two curated harnesses and this one DELIBERATELY overlap on the
@@ -93,7 +104,7 @@
 //! # Stage ROMs under tests/roms/external/mapper-NNN-Name/, then use the ONE
 //! # lock-guarded bless entry point (NEVER run two blesses at once / nohup it —
 //! # they race the Cargo target lock; see the script header for the postmortem):
-//! scripts/coverage/bless.sh                 # full sweep, single-threaded, flock'd
+//! scripts/coverage/bless.sh                 # full sweep, one libtest thread, flock'd
 //! # Inspect the PNGs at /tmp/rustynes-baseline-screenshots/external/, then:
 //! cargo insta accept
 //! python3 scripts/coverage/coverage.py categorize
@@ -637,16 +648,13 @@ fn snapshot_id(rom_rel: &str) -> String {
 
 /// Single auto-discovering coverage test.
 ///
-/// Walks every staged ROM, runs the default boot capture, and applies
-/// the two checks documented at the top of this file: (1) the shared
-/// blank / few-colour health verdict, and (2) the derived `insta`
-/// snapshot comparison. Per-ROM assertion panics are caught and
-/// aggregated so one missing/mismatched baseline (or one blank boot)
 /// v2.3.4 — narrow the sweep to the ROMs whose paths contain any of the
 /// comma-separated needles in `RUSTYNES_COVERAGE_FILTER` (case-insensitive).
 ///
 /// The full sweep is **699 ROMs x ~1,290 boot frames == ~900k emulated frames,
-/// about 70 minutes single-threaded**. That is the right cost for a release
+/// about 70 minutes single-threaded** (108 minutes in the v3.7.0 release
+/// suite, on 819 staged ROMs; v3.7.1 runs the boots in parallel, see
+/// `RUSTYNES_COVERAGE_JOBS`). That is the right cost for a release
 /// gate and the wrong cost for the loop you actually work in — diagnosing one
 /// drifted baseline should not require re-booting the entire corpus, and
 /// before this the only way to re-check one ROM was to run all of them.
@@ -698,8 +706,20 @@ fn apply_filter(all: Vec<String>) -> Vec<String> {
     kept
 }
 
+/// Walks every staged ROM, runs the default boot capture, and applies
+/// the two checks documented at the top of this file: (1) the shared
+/// blank / few-colour health verdict, and (2) the derived `insta`
+/// snapshot comparison. Per-ROM assertion panics are caught and
+/// aggregated so one missing/mismatched baseline (or one blank boot)
 /// does not hide the rest — the final panic message lists EVERY failing
 /// ROM with its reason.
+///
+/// v3.7.1: the boots run on `RUSTYNES_COVERAGE_JOBS` worker threads
+/// (default: the available parallelism; `1` is the old serial sweep), and
+/// the outcomes are reported in corpus order, so the reported SKIP lines,
+/// the failure list and the ratchet read the same either way. A line a
+/// worker prints itself while booting (`load_nes`'s "FDS disk but no BIOS"
+/// SKIP) appears in completion order, and can interleave.
 ///
 /// Skips cleanly (prints a SKIP line, passes) when no ROMs are staged,
 /// so a fresh checkout without the gitignored dumps stays green.
@@ -722,94 +742,34 @@ fn external_coverage_boot_smoke() {
         roms.len()
     );
 
+    // v3.7.1 (`T-TEST-COVERAGE-PARALLEL`): the boots run on worker threads.
+    // Each builds its own `Nes` and determinism holds per ROM, so the order
+    // they run in changes no result; `parallel_map_ordered` hands them out by
+    // index and returns the outcomes in the corpus order, so everything below
+    // (the SKIP lines this loop prints, the failure list, the ratchet) reads
+    // exactly as the serial sweep's did. Lines a worker prints during its own
+    // boot (`load_nes`'s missing-BIOS SKIP) come out in completion order.
+    // `RUSTYNES_COVERAGE_JOBS=1` runs it serially.
+    let jobs = coverage_jobs();
+    eprintln!("[external_coverage] {jobs} worker thread(s)");
+    let outcomes = parallel_map_ordered(&roms, jobs, |rom_rel| boot_one(rom_rel));
+
     let mut failures: Vec<String> = Vec::new();
     let mut blank_seen: Vec<&str> = Vec::new();
-    for rom_rel in &roms {
-        if let Some((_, why)) = UNSUPPORTED.iter().find(|(r, _)| *r == rom_rel.as_str()) {
-            eprintln!("[external_coverage] SKIP {rom_rel}: {why}.");
-            continue;
-        }
+    for (rom_rel, outcome) in roms.iter().zip(outcomes) {
         let id = snapshot_id(rom_rel);
-        // Catch the per-ROM assertion panic (insta panics on a baseline
-        // mismatch in normal mode; in INSTA_UPDATE=auto/always it writes
-        // a .snap.new and does NOT panic) so the loop runs to completion
-        // and we can report ALL failures at once. A ROM-read / parse
-        // panic inside run_capture is caught here too and surfaces as a
-        // clear per-ROM failure line.
-        let rom = rom_rel.clone();
-        let snap = id.clone();
-        let capture_script = capture_override(rom_rel).unwrap_or(DEFAULT_CAPTURE);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-            move || -> Result<Option<()>, String> {
-                let famicom = FAMICOM_WIRED.contains(&rom.as_str());
-                let model = if famicom {
-                    ConsoleModel::Famicom
-                } else {
-                    ConsoleModel::Nes
-                };
-                // The FAMICOM_WIRED ratchet: on the NES model the same boot
-                // must still be blank, or the entry is no longer needed. It runs
-                // FIRST so the frames `RUSTYNES_DUMP_FRAMES` writes for review
-                // are the Famicom boot's, which overwrites them.
-                if famicom {
-                    let nes_boot = run_capture_model(&rom, capture_script, ConsoleModel::Nes)
-                        .expect("a FAMICOM_WIRED entry is a cartridge, not an FDS disk");
-                    if !nes_boot.best_frame_health.looks_blank() {
-                        return Err("in FAMICOM_WIRED but also draws on the NES model; \
-                             remove it from the list"
-                            .to_string());
-                    }
-                }
-                // FDS disk on a BIOS-less checkout -> clean skip (Ok(None)).
-                let Some(capture) = run_capture_model(&rom, capture_script, model) else {
-                    return Ok(None);
-                };
-
-                // (1) Blank / few-colour health — the shared coverage
-                // heuristic. A real boot draws dozens of colours; a
-                // crashed / never-rendered one collapses to the backdrop.
-                // We do NOT panic on a blank frame (so the snapshot still
-                // gets a chance to bless / compare); instead we record it
-                // and surface it in the aggregated failure list.
-                // v2.3.4 — judge the BEST frame the capture saw, not the one it
-                // happened to stop on. The check exists to catch a boot that
-                // never rendered; a boot that crashed or hung shows nothing at
-                // every checkpoint, while a healthy ROM whose script ends on a
-                // dark transition (Solstice: full title at f1100, uniform black
-                // at the final frame) is not a failure and was being reported as
-                // one.
-                let health = capture.best_frame_health;
-                let blank = if health.looks_blank() {
-                    Some(format!(
-                        "blank/few-colour boot: {} distinct colour(s), \
-                         dominant {:.1}% of frame",
-                        health.distinct_colors,
-                        health.dominant_fraction * 100.0
-                    ))
-                } else {
-                    None
-                };
-
-                // (2) Baseline snapshot comparison.
-                let mut text = snapshot_text(&rom, capture_script, &capture);
-                if famicom {
-                    text.insert_str(0, "console: Famicom (FAMICOM_WIRED)\n");
-                }
-                insta::assert_snapshot!(snap.as_str(), text);
-
-                // Snapshot passed; report the health verdict (if blank).
-                blank.map_or(Ok(Some(())), Err)
-            },
-        ));
-        match result {
+        match outcome {
+            BootOutcome::Unsupported(why) => {
+                eprintln!("[external_coverage] SKIP {rom_rel}: {why}.");
+            }
             // Snapshot passed AND frame not blank.
-            Ok(Ok(Some(()))) => {}
+            BootOutcome::Pass => {}
             // ROM was an FDS disk with no resolvable BIOS — clean skip.
-            Ok(Ok(None)) => {
+            BootOutcome::FdsWithoutBios => {
                 eprintln!("[external_coverage] SKIP {rom_rel}: FDS disk, no BIOS resolved.");
             }
             // Snapshot passed but the final frame was blank/few-colour.
-            Ok(Err(reason)) => {
+            BootOutcome::Blank(reason) => {
                 if KNOWN_BLANK.contains(&rom_rel.as_str()) {
                     blank_seen.push(rom_rel.as_str());
                 } else {
@@ -818,7 +778,7 @@ fn external_coverage_boot_smoke() {
             }
             // run_capture panicked (read/parse) or insta panicked
             // (baseline mismatch / missing in normal mode).
-            Err(_) => {
+            BootOutcome::Failed => {
                 failures.push(format!(
                     "{rom_rel}  (snapshot id: {id}) — snapshot mismatch or boot panic"
                 ));
@@ -845,6 +805,187 @@ fn external_coverage_boot_smoke() {
         failures.len(),
         roms.len(),
         failures.join("\n  "),
+    );
+}
+
+/// What one ROM's boot check came to (`boot_one`).
+enum BootOutcome {
+    /// On the `UNSUPPORTED` list, with the reason.
+    Unsupported(&'static str),
+    /// Snapshot matched and the boot drew a picture.
+    Pass,
+    /// An FDS disk on a checkout with no BIOS: a clean skip.
+    FdsWithoutBios,
+    /// Snapshot matched but the best frame was blank or few-colour.
+    Blank(String),
+    /// A boot panic or a snapshot mismatch.
+    Failed,
+}
+
+/// Boot one staged ROM and check it, catching its panics so the sweep runs
+/// to the end. The body is the serial sweep's loop body, unchanged; it
+/// touches nothing shared but the snapshot files, each its own (the corpus
+/// is 1:1, ROM to snapshot id, which the collision tests below guard).
+fn boot_one(rom_rel: &str) -> BootOutcome {
+    if let Some((_, why)) = UNSUPPORTED.iter().find(|(r, _)| *r == rom_rel) {
+        return BootOutcome::Unsupported(why);
+    }
+    // Catch the per-ROM assertion panic (insta panics on a baseline
+    // mismatch in normal mode; in INSTA_UPDATE=auto/always it writes
+    // a .snap.new and does NOT panic) so the loop runs to completion
+    // and we can report ALL failures at once. A ROM-read / parse
+    // panic inside run_capture is caught here too and surfaces as a
+    // clear per-ROM failure line.
+    let rom = rom_rel.to_string();
+    let snap = snapshot_id(rom_rel);
+    let capture_script = capture_override(rom_rel).unwrap_or(DEFAULT_CAPTURE);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        move || -> Result<Option<()>, String> {
+            let famicom = FAMICOM_WIRED.contains(&rom.as_str());
+            let model = if famicom {
+                ConsoleModel::Famicom
+            } else {
+                ConsoleModel::Nes
+            };
+            // The FAMICOM_WIRED ratchet: on the NES model the same boot
+            // must still be blank, or the entry is no longer needed. It runs
+            // FIRST so the frames `RUSTYNES_DUMP_FRAMES` writes for review
+            // are the Famicom boot's, which overwrites them.
+            if famicom {
+                let nes_boot = run_capture_model(&rom, capture_script, ConsoleModel::Nes)
+                    .expect("a FAMICOM_WIRED entry is a cartridge, not an FDS disk");
+                if !nes_boot.best_frame_health.looks_blank() {
+                    return Err("in FAMICOM_WIRED but also draws on the NES model; \
+                         remove it from the list"
+                        .to_string());
+                }
+            }
+            // FDS disk on a BIOS-less checkout -> clean skip (Ok(None)).
+            let Some(capture) = run_capture_model(&rom, capture_script, model) else {
+                return Ok(None);
+            };
+
+            // (1) Blank / few-colour health — the shared coverage
+            // heuristic. A real boot draws dozens of colours; a
+            // crashed / never-rendered one collapses to the backdrop.
+            // We do NOT panic on a blank frame (so the snapshot still
+            // gets a chance to bless / compare); instead we record it
+            // and surface it in the aggregated failure list.
+            // v2.3.4 — judge the BEST frame the capture saw, not the one it
+            // happened to stop on. The check exists to catch a boot that
+            // never rendered; a boot that crashed or hung shows nothing at
+            // every checkpoint, while a healthy ROM whose script ends on a
+            // dark transition (Solstice: full title at f1100, uniform black
+            // at the final frame) is not a failure and was being reported as
+            // one.
+            let health = capture.best_frame_health;
+            let blank = if health.looks_blank() {
+                Some(format!(
+                    "blank/few-colour boot: {} distinct colour(s), \
+                     dominant {:.1}% of frame",
+                    health.distinct_colors,
+                    health.dominant_fraction * 100.0
+                ))
+            } else {
+                None
+            };
+
+            // (2) Baseline snapshot comparison.
+            let mut text = snapshot_text(&rom, capture_script, &capture);
+            if famicom {
+                text.insert_str(0, "console: Famicom (FAMICOM_WIRED)\n");
+            }
+            insta::assert_snapshot!(snap.as_str(), text);
+
+            // Snapshot passed; report the health verdict (if blank).
+            blank.map_or(Ok(Some(())), Err)
+        },
+    ));
+    match result {
+        Ok(Ok(Some(()))) => BootOutcome::Pass,
+        Ok(Ok(None)) => BootOutcome::FdsWithoutBios,
+        Ok(Err(reason)) => BootOutcome::Blank(reason),
+        Err(_) => BootOutcome::Failed,
+    }
+}
+
+/// Worker threads for the sweep: `RUSTYNES_COVERAGE_JOBS` when it is a
+/// positive number, else the machine's available parallelism.
+fn coverage_jobs() -> usize {
+    std::env::var("RUSTYNES_COVERAGE_JOBS")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, usize::from))
+}
+
+/// `items.iter().map(f).collect()`, on up to `jobs` threads: each takes the
+/// next unclaimed index, so a slow item never holds up the rest, and the
+/// results come back in `items`' order whatever order they finished in.
+/// `jobs == 1` (or one item) runs on the calling thread.
+fn parallel_map_ordered<T: Sync, R: Send>(
+    items: &[T],
+    jobs: usize,
+    f: impl Fn(&T) -> R + Sync,
+) -> Vec<R> {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let jobs = jobs.clamp(1, items.len().max(1));
+    if jobs == 1 {
+        return items.iter().map(&f).collect();
+    }
+    let next = AtomicUsize::new(0);
+    let slots: Vec<Mutex<Option<R>>> = items.iter().map(|_| Mutex::new(None)).collect();
+    std::thread::scope(|scope| {
+        for _ in 0..jobs {
+            std::thread::Builder::new()
+                // The emulator's deepest paths want more than the 2 MiB a
+                // spawned thread gets by default; the test threads run them
+                // on the same budget, so match what cargo test gives.
+                .stack_size(8 << 20)
+                .spawn_scoped(scope, || {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(item) = items.get(i) else { break };
+                        let r = f(item);
+                        *slots[i].lock().expect("a slot lock") = Some(r);
+                    }
+                })
+                .expect("spawn a coverage worker");
+        }
+    });
+    slots
+        .into_iter()
+        .map(|m| {
+            m.into_inner()
+                .expect("a slot lock")
+                .expect("every item ran")
+        })
+        .collect()
+}
+
+/// v3.7.1 (`T-TEST-COVERAGE-PARALLEL`) — the parallel map returns every
+/// result in input order for any worker count, however the items' run times
+/// differ, and runs each item exactly once. Needs no staged ROM.
+#[test]
+fn parallel_map_ordered_keeps_input_order_and_runs_each_item_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let items: Vec<u64> = (0..50).collect();
+    let serial: Vec<u64> = items.iter().map(|i| i * 2).collect();
+    for jobs in [1, 2, 3, 16, 200] {
+        let calls = AtomicUsize::new(0);
+        let got = parallel_map_ordered(&items, jobs, |&i| {
+            calls.fetch_add(1, Ordering::Relaxed);
+            // Later items finish first, so completion order is reversed.
+            std::thread::sleep(std::time::Duration::from_micros(50 * (50 - i)));
+            i * 2
+        });
+        assert_eq!(got, serial, "{jobs} jobs");
+        assert_eq!(calls.load(Ordering::Relaxed), items.len(), "{jobs} jobs");
+    }
+    assert_eq!(
+        parallel_map_ordered(&[] as &[u64], 4, |&i| i),
+        Vec::<u64>::new()
     );
 }
 

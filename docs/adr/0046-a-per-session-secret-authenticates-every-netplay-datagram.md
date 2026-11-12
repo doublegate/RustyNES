@@ -149,3 +149,9 @@ A direct-link spectator (v1.7.0 H8) is unchanged and still unkeyed.
 (2026-11-08), chose a random match id by default over a viewer key
 (2026-11-11), and approved this amendment, including the unsealed relay
 stream, on 2026-11-11.
+
+**Addendum, 2026-11-11 (v3.7.1).** v3.7.0 stored the minted id and re-hosted
+it every session, so anyone once given it could watch every later match. The
+maintainer chose a fresh id per match: `NetplayConfig::edge_match_for_session`
+(replacing `edge_match_or_mint`) mints one for each hosted session and stores
+none, and the netplay panel shows it. A typed id is still the host's to reuse.

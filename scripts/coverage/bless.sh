@@ -49,7 +49,7 @@ echo "[bless] cleaning stale artifacts (.snap.new + dumped PNGs) ..."
 find "$SNAP_DIR" -name '*.snap.new' -delete 2>/dev/null || true
 rm -f "$DUMP"/*.png 2>/dev/null || true
 
-echo "[bless] full external_coverage sweep (single-threaded). log: $LOG"
+echo "[bless] full external_coverage sweep (one test; boots on RUSTYNES_COVERAGE_JOBS workers, default all cores). log: $LOG"
 # INSTA_UPDATE=auto writes a .snap.new per new/changed baseline; insta still
 # reports the run as "failed" (non-zero) by design — that is NOT an error here,
 # so the cargo exit is intentionally ignored.

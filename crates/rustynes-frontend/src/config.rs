@@ -453,11 +453,19 @@ pub struct NetplayConfig {
     pub desync_forensics: bool,
     /// v3.7.0 (`T-NETPLAY-EDGE-SPECTATE`) — the spectate-relay match id: the
     /// one to watch, and the one a host publishes under. Empty by default; a
-    /// host that publishes with it empty gets a random one
-    /// ([`Self::edge_match_or_mint`]). Viewers present no key, so the id is
+    /// host that publishes with it empty gets a fresh random one for each
+    /// hosted session, never stored (`Self::edge_match_for_session`, native
+    /// only). Viewers present no key, so the id is
     /// the whole of a viewer's credential: anyone who has it can watch.
     #[serde(default)]
     pub edge_match: String,
+    /// v3.7.1 — whether [`Self::retire_v370_minted_match_id`] has run on this
+    /// config. It runs once, at the first load after the upgrade, and this
+    /// records that so an id the host types later -- even one that happens
+    /// to look minted -- is never cleared. False when absent, which is every
+    /// config v3.7.0 wrote.
+    #[serde(default)]
+    pub edge_match_v370_checked: bool,
     /// v3.7.0 — publish the sessions this peer hosts to the hosted spectate
     /// relay under [`Self::edge_match`]. Off by default.
     #[serde(default)]
@@ -492,21 +500,49 @@ impl NetplayConfig {
         (key, true)
     }
 
-    /// v3.7.0 — the match id a host publishes under: the typed one, kept as
-    /// is, else 128 random bits as 32 hex digits (the relay's longest id,
-    /// `services/hosted/src/spectate.ts` `MATCH_ID`), stored so the panel
-    /// shows it and the next session re-hosts it. Returns the id and
-    /// whether it was minted now. The relay asks viewers for no key, so the
-    /// id is what keeps a match private; a random one cannot be guessed.
+    /// The match id the next hosted session publishes under: the typed one,
+    /// as is, else 128 fresh random bits as 32 hex digits (the relay's
+    /// longest id, `services/hosted/src/spectate.ts` `MATCH_ID`). Returns the
+    /// id and whether it was minted.
+    ///
+    /// The relay asks viewers for no key, so the id is what keeps a match
+    /// private. v3.7.0 stored the minted id and re-hosted it every session,
+    /// so anyone once given it could watch every later match (maintainer,
+    /// 2026-11-11: a fresh id per match). A minted id is therefore NOT
+    /// stored: each hosted session gets its own, shown in the netplay panel
+    /// for the host to pass on. A typed id is the host's choice to reuse.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn edge_match_or_mint(&mut self) -> (String, bool) {
+    #[must_use]
+    pub fn edge_match_for_session(&self) -> (String, bool) {
         let typed = self.edge_match.trim();
         if !typed.is_empty() {
             return (typed.to_string(), false);
         }
-        let id = random_hex16();
-        self.edge_match.clone_from(&id);
-        (id, true)
+        (random_hex16(), true)
+    }
+
+    /// v3.7.1 — clear a match id that v3.7.0 minted and saved, once.
+    ///
+    /// v3.7.0 wrote its minted id into [`Self::edge_match`], where every
+    /// later version reads it as one the host typed and reuses it (see
+    /// `edge_match_for_session`), so a viewer given it once could keep
+    /// watching every match after the upgrade. The schema stored no marker,
+    /// so a minted id is recognised by its shape: exactly 32 lowercase hex
+    /// digits, what v3.7.0's minting wrote. A typed id of that exact shape
+    /// is cleared too; that is the price of not knowing, it is unlikely, and
+    /// the host is told on stderr. Runs at most once per config
+    /// ([`Self::edge_match_v370_checked`]); returns whether it cleared one.
+    pub fn retire_v370_minted_match_id(&mut self) -> bool {
+        if self.edge_match_v370_checked {
+            return false;
+        }
+        self.edge_match_v370_checked = true;
+        let id = self.edge_match.trim();
+        let minted = id.len() == 32 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+        if minted {
+            self.edge_match.clear();
+        }
+        minted
     }
 
     /// v3.7.0 — whether a typed match id is short enough to guess. 22
@@ -590,6 +626,9 @@ impl Default for NetplayConfig {
             hosted_base_url: String::new(),
             desync_forensics: false,
             edge_match: String::new(),
+            // A config this build creates never held a v3.7.0-minted id; only
+            // a file without the field (serde's `false`) is checked.
+            edge_match_v370_checked: true,
             edge_publish: false,
             edge_publish_key: String::new(),
         }
@@ -2346,7 +2385,24 @@ impl Config {
         }
 
         match toml::from_str::<Self>(&bytes) {
-            Ok(cfg) => cfg,
+            Ok(mut cfg) => {
+                // v3.7.1 — a v3.7.0-minted spectate id must not outlive the
+                // upgrade (`NetplayConfig::retire_v370_minted_match_id`).
+                // Only the load that first runs the check writes the file
+                // (so the marker sticks even if this session never saves the
+                // settings itself); every later load leaves it untouched.
+                let first_check = !cfg.netplay.edge_match_v370_checked;
+                if cfg.netplay.retire_v370_minted_match_id() {
+                    eprintln!(
+                        "rustynes: cleared the spectate match id v3.7.0 generated and saved; \
+                         each hosted match now gets a fresh one"
+                    );
+                }
+                if first_check && let Err(e) = cfg.save_to(path) {
+                    eprintln!("rustynes: could not record the spectate id check: {e}");
+                }
+                cfg
+            }
             Err(e) => {
                 Self::preserve_corrupt(path, bytes.as_bytes(), &e.to_string());
                 Self::default()
@@ -2626,26 +2682,31 @@ mod tests {
         assert_eq!(fresh.len(), 32);
     }
 
-    /// v3.7.0 — viewers present no key, so a match id is a viewer's whole
-    /// credential. An empty one is minted unguessable (and in the relay's
-    /// alphabet and length) and then kept; a typed one is kept as typed and
-    /// reported guessable when short.
+    /// Viewers present no key, so a match id is a viewer's whole credential.
+    /// With the field empty every hosted session gets a fresh unguessable id
+    /// (in the relay's alphabet and length), and none is stored, so a viewer
+    /// given one match's id cannot follow the host to the next (v3.7.1,
+    /// maintainer 2026-11-11); a typed id is kept as typed and reported
+    /// guessable when short.
     #[test]
-    fn an_empty_edge_match_is_minted_unguessable_and_a_typed_one_is_kept() {
+    fn each_hosted_session_gets_a_fresh_unstored_match_id_unless_one_is_typed() {
         let mut np = NetplayConfig::default();
         assert!(!np.edge_match_is_guessable());
-        let (id, minted) = np.edge_match_or_mint();
+        let (id, minted) = np.edge_match_for_session();
         assert!(minted);
         assert_eq!(id.len(), 32);
         assert!(id.bytes().all(|b| b.is_ascii_hexdigit()));
-        assert_eq!(np.edge_match, id);
-        assert!(!np.edge_match_is_guessable());
-        let (again, minted_again) = np.edge_match_or_mint();
-        assert_eq!((again.as_str(), minted_again), (id.as_str(), false));
-        let (other, _) = NetplayConfig::default().edge_match_or_mint();
-        assert_ne!(other, id, "two mints gave the same id");
+        assert_eq!(np.edge_match, "", "a minted id is not stored");
+        let (next, minted_next) = np.edge_match_for_session();
+        assert!(minted_next);
+        assert_ne!(next, id, "the next session gets a new id");
         np.edge_match = " game1 ".into();
-        assert_eq!(np.edge_match_or_mint(), ("game1".to_string(), false));
+        assert_eq!(np.edge_match_for_session(), ("game1".to_string(), false));
+        assert_eq!(
+            np.edge_match_for_session(),
+            ("game1".to_string(), false),
+            "a typed id is reused"
+        );
         assert!(np.edge_match_is_guessable());
         np.edge_match = "a".repeat(GUESSABLE_MATCH_ID_LEN);
         assert!(!np.edge_match_is_guessable());
@@ -3974,6 +4035,76 @@ start = "Start"
             Some(garbage),
             "the unparseable original is kept byte-for-byte beside it"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_v370_minted_spectate_id_is_cleared_once_and_a_typed_one_kept() {
+        // PR #648 review (Cursor, CodeRabbit): v3.7.0 saved its minted id in
+        // `edge_match`, which every later build reads as typed and reuses.
+        let minted = "0123456789abcdef0123456789abcdef";
+        let mut np = NetplayConfig {
+            edge_match: minted.to_string(),
+            edge_match_v370_checked: false,
+            ..NetplayConfig::default()
+        };
+        assert!(np.retire_v370_minted_match_id(), "a 32-hex id is cleared");
+        assert_eq!(np.edge_match, "");
+        assert!(np.edge_match_v370_checked);
+        // Once only: an id of the same shape typed AFTER the check is kept.
+        np.edge_match = minted.to_string();
+        assert!(!np.retire_v370_minted_match_id());
+        assert_eq!(np.edge_match, minted);
+        // Ids of any other shape are the host's, and kept.
+        for typed in [
+            "game1",
+            "0123456789ABCDEF0123456789ABCDEF",
+            "0123456789abcdef0123456789abcde",
+        ] {
+            let mut np = NetplayConfig {
+                edge_match: typed.to_string(),
+                edge_match_v370_checked: false,
+                ..NetplayConfig::default()
+            };
+            assert!(
+                !np.retire_v370_minted_match_id(),
+                "{typed:?} is not v3.7.0's shape"
+            );
+            assert_eq!(np.edge_match, typed);
+        }
+        // A config this build creates needs no check.
+        assert!(NetplayConfig::default().edge_match_v370_checked);
+    }
+
+    #[test]
+    fn loading_a_v370_config_clears_its_minted_id_and_writes_the_file_once() {
+        let dir = std::env::temp_dir().join(format!("rustynes-v370id-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("config.toml");
+        // What v3.7.0 wrote: the minted id, and no `edge_match_v370_checked`.
+        let mut old = Config::default();
+        old.netplay.edge_match = "fedcba9876543210fedcba9876543210".to_string();
+        let mut text = toml::to_string_pretty(&old).unwrap();
+        text = text.replace("edge_match_v370_checked = true\n", "");
+        assert!(!text.contains("edge_match_v370_checked"));
+        std::fs::write(&path, &text).expect("seed v3.7.0 config");
+
+        let cfg = Config::load_or_default_at(&path);
+        assert_eq!(cfg.netplay.edge_match, "", "the minted id is gone");
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            written.contains("edge_match_v370_checked = true"),
+            "the check is recorded"
+        );
+        assert!(
+            !written.contains("fedcba9876543210"),
+            "and the id is not on disk"
+        );
+        // A later load finds the marker and leaves the file byte for byte.
+        std::fs::write(&path, written.as_bytes()).unwrap();
+        let _ = Config::load_or_default_at(&path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), written);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

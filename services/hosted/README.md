@@ -437,9 +437,11 @@ socket with the hibernation API.
   new connection from the owner is a new match: the relay drops the previous
   identity and log and closes that match's viewers with "the match restarted".
 - **Who watches.** Viewers present no key: anyone with the match id can
-  watch. The desktop mints a random 128-bit id (32 hex digits, the longest
-  `MATCH_ID` allows) when a host publishes with none, and warns when a typed
-  id is shorter than 22 characters.
+  watch. The desktop mints a fresh random 128-bit id (32 hex digits, the
+  longest `MATCH_ID` allows) for each hosted session when none is typed, and
+  does not store it (since v3.7.1), so a viewer given one match's id cannot
+  follow the host to the next. It warns when a typed id is shorter than 22
+  characters.
 - **Storage.** The log is one storage row per published message (the native
   publisher sends 8-frame batches, `EdgePublisher::BATCH_FRAMES`, 7.5 a second
   at 60 Hz against the 30 a second the bucket admits), so an eviction loses
