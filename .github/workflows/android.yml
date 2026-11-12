@@ -64,8 +64,12 @@ permissions:
 # had no group at all, so each push to a PR left the previous run -- up to
 # ~27 minutes of NDK build plus Gradle packaging -- running to completion for
 # a commit nobody would look at again.
+#
+# A draft run (every job skips) has a group of its own, so a draft-payload run
+# created after `gh pr ready` cannot cancel the ready run (ci.yml's note on
+# `concurrency`, 2026-11-12; #548 lost its Android build that way).
 concurrency:
-  group: android-${{ github.ref }}
+  group: android-${{ github.ref }}${{ github.event.pull_request.draft && '-draft' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:

@@ -63,8 +63,20 @@ on:
 # `test-roms`. Each job records its own observed time beside its budget. The
 # point is not to measure the runner; it is that six hours becomes thirty
 # minutes and a red X.
+#
+# A DRAFT run has a group of its own (2026-11-12). `gh pr ready` seconds after a
+# push used to lose the ready run: the push's `synchronize` run still carries
+# `draft: true`, and when it was created second it cancelled the ready run in
+# this shared group, leaving a green `CI success` that had run no test, no
+# test-roms, no Android and no Pages build (#548; ci-and-release.md). Now a
+# draft-payload run can cancel only another draft run. The ready run always
+# completes, and its `CI success` concludes after the draft run's: it waits for
+# every job it needs, failed or not, and the heavy ones (`test` ~17 min,
+# `test-roms` ~19) outlast every job a draft run has. The cost is that a draft run
+# overlapping the ready one finishes its fast gates instead of being cancelled
+# -- free runner time here.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event.pull_request.draft && '-draft' || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:

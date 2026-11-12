@@ -75,8 +75,12 @@ permissions:
 # behind each other and behind `main`'s deploys, and because GitHub keeps only
 # one PENDING run per group, a third arrival silently cancelled the second --
 # a PR could lose its Pages build to an unrelated PR's push.
+#
+# A draft PR run (which skips the build) has a group of its own as well, so a
+# draft-payload run created after `gh pr ready` cannot cancel the ready run
+# (ci.yml's note on `concurrency`, 2026-11-12; #548 lost its Pages build so).
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('pages-pr-{0}', github.ref) || 'pages' }}
+  group: ${{ github.event_name == 'pull_request' && format('pages-pr-{0}{1}', github.ref, github.event.pull_request.draft && '-draft' || '') || 'pages' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
