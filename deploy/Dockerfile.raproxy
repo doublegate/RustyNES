@@ -16,7 +16,11 @@
 # Build context is the workspace root (so the source script under scripts/ is
 # reachable), matching the signaling image:
 #   docker build -f deploy/Dockerfile.raproxy -t rustynes-raproxy ..
-FROM python:3.14-slim
+#
+# Python 3.15 since 2026-11 (the newest feature release, and the one web.yml's
+# MkDocs job already uses). The stub is stdlib-only; it was run under 3.15.2
+# with `-I -W error` and answered a CORS preflight before the tag moved.
+FROM python:3.15-slim
 
 # Non-root for defence in depth — the proxy needs no privilege.
 RUN useradd --create-home --uid 10001 raproxy
