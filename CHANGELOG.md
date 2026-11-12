@@ -1319,8 +1319,9 @@ bitstreams are unchanged.
   rebuilt the binary at the same path). The binary that was optimized is now
   the one shipped when the gate promotes, and it must be the `full` build (it
   carries the RetroAchievements User-Agent) to be promoted. The first version of
-  that check required the hosted base, which a native binary never contains, so
-  it could not pass (corrected 2026-10-20). v3.4.1's own gate did not promote:
+  that check required the hosted base, which the v3.4.1 native binaries did
+  not contain, so it could not pass (corrected 2026-10-20; since v3.7.0 the
+  desktop binaries do contain it, for edge spectating). v3.4.1's own gate did not promote:
   the PGO build measured 5.05% slower than plain. The release
   history shows one promotion, v2.9.6 (2026-09-30): its Linux download lacks the
   RetroAchievements client, and it is rebuilt from the v2.9.6 tag with the

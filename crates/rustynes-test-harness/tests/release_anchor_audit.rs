@@ -1510,10 +1510,11 @@ fn the_hosted_worker_names_the_workspace_version() {
 /// passes it to the reusable `pgo.yml` as a literal (`with: hosted_base:`),
 /// because a called workflow inherits no `env:` and `env` is not an allowed
 /// context in `with:`, so the optimized build is configured like the plain one
-/// (Copilot / Antigravity on #618). The base matters to the browser and mobile
-/// builds; native desktop netplay does not read it, so a desktop binary does
-/// not contain it (measured on v3.4.1's Linux download). Two literals that must agree are a drift waiting to happen, so this
-/// compares them. `ci.yml` must not set it: `a_stock_build_has_no_hosted_base`
+/// (Copilot / Antigravity on #618). The base is used by the browser and mobile
+/// builds and, since v3.7.0, by desktop edge spectating and publishing
+/// (`NetplayConfig::hosted_base`); v3.4.1's desktop netplay did not read it,
+/// so that release's Linux download did not contain it. Two literals that
+/// must agree are a drift waiting to happen, so this compares them. `ci.yml` must not set it: `a_stock_build_has_no_hosted_base`
 /// asserts the default only when the variable is absent, so setting it there
 /// would make that test vacuous rather than fail it.
 #[test]
