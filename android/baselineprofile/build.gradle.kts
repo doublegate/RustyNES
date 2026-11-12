@@ -16,8 +16,14 @@
 // step. The maintainer generates the profile with, from android/:
 //   ./gradlew :app:generateReleaseBaselineProfile
 // (uses the managed `pixel6Api34` AVD below; -Pandroid.testInstrumentationRunnerArguments
-//  or `useConnectedDevices` can switch to a plugged-in phone). This module is built
-// (compiled) on every Gradle run so it stays one command away; only the *run* needs a
+//  or `useConnectedDevices` can switch to a plugged-in phone). This module is CONFIGURED
+// on every Gradle run, but nothing in the normal build COMPILES it: with
+// `automaticGenerationDuringBuild = false` in :app, neither `:app:testFossDebugUnitTest`
+// nor `:app:bundleFossRelease :app:bundlePlayRelease` (the two Android CI jobs) depends
+// on a `:baselineprofile:` task (a `--dry-run` of all three lists none, 2026-11-12), so a
+// dependency bump here (uiautomator, benchmark-macro) is not compile-checked by CI. Check
+// it by hand with `./gradlew :baselineprofile:compileNonMinifiedReleaseKotlin` (no
+// device needed; it passed with uiautomator 2.4.1 on 2026-11-12). Only the *run* needs a
 // device/AVD. The generated baseline-prof.txt is committed under :app so a normal release
 // build ships the profile without a device in the loop.
 
