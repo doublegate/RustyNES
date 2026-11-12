@@ -99,6 +99,26 @@ fn the_excluded_crate_still_matches_the_workspace_package_fields() {
     }
 }
 
+/// `fuzz/` is its own workspace too, so its `rust-version` is spelled out by
+/// hand and nothing moves it. It drifted: it read `1.86` against a `1.99`
+/// workspace until the v3.7.1 dependency sweep, and the stale value held
+/// MSRV-aware resolution of its gitignored lock back (sha2, ctutils). PR #649
+/// review (Antigravity).
+#[test]
+fn the_fuzz_workspace_tracks_the_workspace_msrv() {
+    let root = read("Cargo.toml");
+    let fuzz = read("fuzz/Cargo.toml");
+    let want = field_in_table(&root, "[workspace.package]", "rust-version")
+        .expect("workspace.package has no `rust-version` -- did the table move?");
+    let got = field_in_table(&fuzz, "[package]", "rust-version")
+        .expect("fuzz/Cargo.toml has no explicit `rust-version`");
+    assert_eq!(
+        got, want,
+        "fuzz/Cargo.toml `rust-version` = {got:?} but the workspace says {want:?}; \
+         fuzz/ is its own workspace, so nothing inherits this for you"
+    );
+}
+
 /// The lockfile must also AGREE with the workspace, not merely exist.
 ///
 /// `the_excluded_crates_lockfile_is_tracked` below asserts the file is

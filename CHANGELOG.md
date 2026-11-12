@@ -48,7 +48,7 @@ cycle-accurate core later replaced.
   zenity, and the duplicate
   `pollster` 0.4 it carried is gone), rusqlite 0.42 (bundled SQLite 3.54.1
   for Lua's key-value store), object 0.41 (the source-level debugger's ELF
-  reader), plus a lockfile refresh (zip 9.5, toml 1.2.1, cc 1.11.1, syn
+  reader), plus a lockfile refresh (zip 9.5.1, toml 1.2.1, cc 1.11.1, syn
   3.0.10 and others). The web build moves to trunk 0.22.1, whose output
   names the wasm and its JavaScript glue by separate content hashes.
   Android: the Android Gradle Plugin 9.5.1, Gradle 9.9.1 (its wrapper jar
