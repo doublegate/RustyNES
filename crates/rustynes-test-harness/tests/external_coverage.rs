@@ -104,7 +104,7 @@
 //! # Stage ROMs under tests/roms/external/mapper-NNN-Name/, then use the ONE
 //! # lock-guarded bless entry point (NEVER run two blesses at once / nohup it —
 //! # they race the Cargo target lock; see the script header for the postmortem):
-//! scripts/coverage/bless.sh                 # full sweep, single-threaded, flock'd
+//! scripts/coverage/bless.sh                 # full sweep, one libtest thread, flock'd
 //! # Inspect the PNGs at /tmp/rustynes-baseline-screenshots/external/, then:
 //! cargo insta accept
 //! python3 scripts/coverage/coverage.py categorize

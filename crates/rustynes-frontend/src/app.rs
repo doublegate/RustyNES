@@ -8153,13 +8153,16 @@ impl App {
         // (unguessable) for this session only, and announced so the host can
         // pass it on.
         let (match_id, minted_id) = self.config.netplay.edge_match_for_session();
+        // The URL first: a base or key `spectate_url` refuses publishes
+        // nothing, so the id must not be announced as watchable (#648, agy).
+        let url = rustynes_netplay::spectate_url(&base, &match_id, Some(&key))?;
         if minted_id {
             self.ui.set_status(StatusMessage::info(format!(
                 "Spectators can watch this match through the relay with id {match_id} \
                  (a new id each match)"
             )));
         }
-        rustynes_netplay::spectate_url(&base, &match_id, Some(&key)).map(|url| (url, match_id))
+        Some((url, match_id))
     }
 
     /// v3.7.0 — watch `match_id` through the hosted relay: the same ROM,
