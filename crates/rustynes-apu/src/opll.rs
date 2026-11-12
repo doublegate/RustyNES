@@ -1514,10 +1514,10 @@ impl Opll {
     /// Sum the 6 VRC7 channel outputs into `mix_out`
     /// (emu2413.cpp:1060-1077, chip_type != 0 path).
     fn mix_output(&mut self) {
-        let mut sum: i32 = 0;
-        for ch in 0..6 {
-            sum += i32::from(self.ch_out[ch]);
-        }
+        // Iterator form (same sum, same order): the indexed loop is clippy's
+        // `needless_range_loop` from Rust 1.100, which the beta canary hit.
+        // Six i16 values cannot overflow an i32.
+        let sum: i32 = self.ch_out[..6].iter().map(|&s| i32::from(s)).sum();
         self.mix_out = sum.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
     }
 
