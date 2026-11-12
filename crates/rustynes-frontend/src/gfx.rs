@@ -77,20 +77,68 @@ pub enum GfxError {
 /// Outcome of trying to acquire + present a swapchain frame.
 ///
 /// wgpu 29 replaced the `Result<SurfaceTexture, SurfaceError>` returned by
-/// `get_current_texture` with the [`wgpu::CurrentSurfaceTexture`] enum. This
-/// preserves the two behaviours the frontend cares about: `Reconfigure`
-/// (surface lost / outdated — the caller resizes to rebuild the swapchain)
-/// versus a skip-this-frame status the caller just logs.
-#[derive(Debug, thiserror::Error)]
+/// `get_current_texture` with the [`wgpu::CurrentSurfaceTexture`] enum
+/// (`acquire_frame` maps it, once, for all three render paths). The caller
+/// does one of three things with an error:
+///
+/// * [`Reconfigure`](Self::Reconfigure): resize to rebuild the swapchain;
+/// * [`Occluded`](Self::Occluded) / [`Timeout`](Self::Timeout): skip the frame
+///   SILENTLY ([`Self::is_expected`]). These are states, not faults. macOS
+///   reports `Occluded` for as long as the window is minimised, on another
+///   Space, fully covered or on a sleeping display, and the display-sync
+///   watchdog keeps requesting redraws so emulation, audio and netplay run
+///   on. Until v3.7.1 the caller printed `render error: surface unavailable:
+///   occluded` for every one of those redraws, a line per attempt for as long
+///   as the window stayed hidden (reported on an Apple M5 Max running the
+///   v3.7.0 release);
+/// * [`Validation`](Self::Validation): log it, because it is a real error.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum PresentError {
     /// The surface was lost or outdated; the caller should reconfigure
     /// (resize) the surface and try again next frame.
     #[error("surface lost/outdated; reconfiguring")]
     Reconfigure,
-    /// A transient acquisition status (timeout / occluded / validation); the
-    /// frame is skipped. Carries a static label for logging.
-    #[error("surface unavailable: {0}")]
-    Other(&'static str),
+    /// The window cannot be seen (minimised, covered, another Space, display
+    /// asleep); the frame is skipped.
+    #[error("surface unavailable: occluded")]
+    Occluded,
+    /// No swapchain image became available within the backend's timeout; the
+    /// frame is skipped and the next redraw tries again.
+    #[error("surface unavailable: timeout")]
+    Timeout,
+    /// wgpu reported a validation error acquiring the frame: a defect, not a
+    /// state, so the caller logs it.
+    #[error("surface unavailable: validation error")]
+    Validation,
+}
+
+impl PresentError {
+    /// Whether this is an expected skip-this-frame state (the window is
+    /// hidden, or a frame was not ready in time) that the caller should not
+    /// report as an error.
+    #[must_use]
+    pub const fn is_expected(&self) -> bool {
+        matches!(self, Self::Occluded | Self::Timeout)
+    }
+}
+
+/// Map wgpu's [`wgpu::CurrentSurfaceTexture`] to the frame to draw into, or to
+/// the [`PresentError`] the caller acts on. One mapping for the three render
+/// paths, which carried three identical copies of it until v3.7.1.
+fn acquire_frame(
+    status: wgpu::CurrentSurfaceTexture,
+) -> Result<wgpu::SurfaceTexture, PresentError> {
+    match status {
+        wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => {
+            Ok(t)
+        }
+        wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+            Err(PresentError::Reconfigure)
+        }
+        wgpu::CurrentSurfaceTexture::Timeout => Err(PresentError::Timeout),
+        wgpu::CurrentSurfaceTexture::Occluded => Err(PresentError::Occluded),
+        wgpu::CurrentSurfaceTexture::Validation => Err(PresentError::Validation),
+    }
 }
 
 const SHADER_SRC: &str = r"
@@ -1187,6 +1235,16 @@ impl Gfx {
             (u32, u32),
         ),
     {
+        // Acquire the frame FIRST (v3.7.1, Antigravity on #655): every upload
+        // below is staged by wgpu until the next `queue.submit`. A hidden
+        // window (`Occluded`) returns before that submit on every redraw, and
+        // the display-sync watchdog keeps redrawing, so uploading first
+        // staged a ~240 KB frame per redraw that nothing ever submitted, for
+        // as long as the window stayed hidden. Skipping before the uploads
+        // also leaves the upload-skip shadow untouched, so the first visible
+        // frame uploads the latest picture. (wgpu 29: `get_current_texture`
+        // returns the `CurrentSurfaceTexture` enum; `acquire_frame` maps it.)
+        let frame = acquire_frame(self.surface.get_current_texture())?;
         // v1.7.1 — `debug_assert` keeps dev builds honest, but a release build
         // must NEVER hand a mismatched-length slice to `write_texture`: wgpu
         // validation aborts the process (SIGABRT) when the source buffer is
@@ -1255,22 +1313,6 @@ impl Gfx {
             );
         }
 
-        // wgpu 29: `get_current_texture` returns the `CurrentSurfaceTexture`
-        // enum instead of a `Result`. Map it to the same behaviour as before:
-        // use the texture from `Success`/`Suboptimal`, reconfigure on
-        // `Lost`/`Outdated`, and skip the frame for any other status.
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                return Err(PresentError::Reconfigure);
-            }
-            wgpu::CurrentSurfaceTexture::Timeout => return Err(PresentError::Other("timeout")),
-            wgpu::CurrentSurfaceTexture::Occluded => return Err(PresentError::Other("occluded")),
-            wgpu::CurrentSurfaceTexture::Validation => {
-                return Err(PresentError::Other("validation"));
-            }
-        };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1411,6 +1453,16 @@ impl Gfx {
             (u32, u32),
         ),
     {
+        // Acquire the frame FIRST (v3.7.1, Antigravity on #655): every upload
+        // below is staged by wgpu until the next `queue.submit`. A hidden
+        // window (`Occluded`) returns before that submit on every redraw, and
+        // the display-sync watchdog keeps redrawing, so uploading first
+        // staged a ~240 KB frame per redraw that nothing ever submitted, for
+        // as long as the window stayed hidden. Skipping before the uploads
+        // also leaves the upload-skip shadow untouched, so the first visible
+        // frame uploads the latest picture. (wgpu 29: `get_current_texture`
+        // returns the `CurrentSurfaceTexture` enum; `acquire_frame` maps it.)
+        let frame = acquire_frame(self.surface.get_current_texture())?;
         // v1.7.1 — same size guard as `render_with_overlay`: never feed a
         // mismatched-length slice to `write_texture` in a release build (it
         // aborts the process via wgpu validation). Skip the upload on mismatch
@@ -1454,22 +1506,6 @@ impl Gfx {
             )),
         );
 
-        // wgpu 29: `get_current_texture` returns the `CurrentSurfaceTexture`
-        // enum instead of a `Result`. Map it to the same behaviour as before:
-        // use the texture from `Success`/`Suboptimal`, reconfigure on
-        // `Lost`/`Outdated`, and skip the frame for any other status.
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                return Err(PresentError::Reconfigure);
-            }
-            wgpu::CurrentSurfaceTexture::Timeout => return Err(PresentError::Other("timeout")),
-            wgpu::CurrentSurfaceTexture::Occluded => return Err(PresentError::Other("occluded")),
-            wgpu::CurrentSurfaceTexture::Validation => {
-                return Err(PresentError::Other("validation"));
-            }
-        };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1618,6 +1654,16 @@ impl Gfx {
             (u32, u32),
         ),
     {
+        // Acquire the frame FIRST (v3.7.1, Antigravity on #655): every upload
+        // below is staged by wgpu until the next `queue.submit`. A hidden
+        // window (`Occluded`) returns before that submit on every redraw, and
+        // the display-sync watchdog keeps redrawing, so uploading first
+        // staged a ~240 KB frame per redraw that nothing ever submitted, for
+        // as long as the window stayed hidden. Skipping before the uploads
+        // also leaves the upload-skip shadow untouched, so the first visible
+        // frame uploads the latest picture. (wgpu 29: `get_current_texture`
+        // returns the `CurrentSurfaceTexture` enum; `acquire_frame` maps it.)
+        let frame = acquire_frame(self.surface.get_current_texture())?;
         debug_assert_eq!(dual_rgba.len(), (dual_w * dual_h * 4) as usize);
         let ok = dual_rgba.len() == (dual_w * dual_h * 4) as usize;
         self.ensure_dual_blit(dual_w, dual_h);
@@ -1653,18 +1699,6 @@ impl Gfx {
                 dual_h,
             )),
         );
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                return Err(PresentError::Reconfigure);
-            }
-            wgpu::CurrentSurfaceTexture::Timeout => return Err(PresentError::Other("timeout")),
-            wgpu::CurrentSurfaceTexture::Occluded => return Err(PresentError::Other("occluded")),
-            wgpu::CurrentSurfaceTexture::Validation => {
-                return Err(PresentError::Other("validation"));
-            }
-        };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -2102,6 +2136,48 @@ pub fn window_to_nes_pixel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// v3.7.1: a hidden window (`Occluded`) and a frame not ready in time
+    /// (`Timeout`) are expected states the caller skips without printing;
+    /// `Lost`/`Outdated` reconfigure; `Validation` is the one acquisition
+    /// status still reported. Before, every status but the reconfigure pair
+    /// became `Other(label)`, which the caller printed on every redraw, a line
+    /// per attempt for as long as a macOS window stayed hidden.
+    #[test]
+    fn a_hidden_window_is_an_expected_skip_not_an_error() {
+        let cases = [
+            (
+                wgpu::CurrentSurfaceTexture::Occluded,
+                PresentError::Occluded,
+                true,
+            ),
+            (
+                wgpu::CurrentSurfaceTexture::Timeout,
+                PresentError::Timeout,
+                true,
+            ),
+            (
+                wgpu::CurrentSurfaceTexture::Lost,
+                PresentError::Reconfigure,
+                false,
+            ),
+            (
+                wgpu::CurrentSurfaceTexture::Outdated,
+                PresentError::Reconfigure,
+                false,
+            ),
+            (
+                wgpu::CurrentSurfaceTexture::Validation,
+                PresentError::Validation,
+                false,
+            ),
+        ];
+        for (status, want, expected) in cases {
+            let got = acquire_frame(status).expect_err("not a frame");
+            assert_eq!(got, want);
+            assert_eq!(got.is_expected(), expected, "{got}");
+        }
+    }
 
     /// The upload skip (v3.4.0): the first frame uploads, a repeat does not,
     /// any one-byte change does, and the shadow follows what was uploaded.

@@ -12361,8 +12361,14 @@ impl ApplicationHandler<AppEvent> for App {
                 // produce hook, the script/watchpoint pumps, the egui pass and
                 // the GPU work: the full budget one display refresh has to fit
                 // into. `gfx.last_gpu_pass_ms()` supplies the GPU phase.
+                // Only a frame that was presented is a sample (v3.7.1,
+                // Antigravity on #655). A skipped redraw (a hidden window, a
+                // frame not ready) put nothing on screen, so its near-zero
+                // work, the previous frame's GPU time and a "produce ->
+                // VISIBLE" latency for a frame nobody saw would each skew the
+                // percentiles this exists to report.
                 #[cfg(not(target_arch = "wasm32"))]
-                {
+                if render_result.is_ok() {
                     if let Some(d) = ui_cost {
                         self.render_perf.record_ui(d);
                     }
@@ -12424,6 +12430,13 @@ impl ApplicationHandler<AppEvent> for App {
                             gfx.resize(size.width, size.height);
                         }
                     }
+                    // v3.7.1: a hidden window (macOS reports `Occluded` while
+                    // it is minimised, covered, on another Space or on a
+                    // sleeping display) and a frame not ready in time are
+                    // states, not faults. The display-sync watchdog keeps
+                    // redrawing so emulation, audio and netplay run on, and
+                    // each of those redraws used to print a line here.
+                    Err(e) if e.is_expected() => {}
                     Err(e) => eprintln!("rustynes: render error: {e}"),
                 }
 
