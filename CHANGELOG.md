@@ -41,6 +41,25 @@ cycle-accurate core later replaced.
   it does not keep being reused after the upgrade. The panel shows the id
   with a "Copy match id" button while the host waits for its peer, as well
   as in game.
+- **Every dependency at its newest compatible release**, in one change in
+  place of four Dependabot pull requests (#642, #643, #645, #647). Rust:
+  rfd 0.18 (the native file dialogs; an "All files" filter now also matches
+  names with no extension when Linux falls back from the desktop portal to
+  zenity, and the duplicate
+  `pollster` 0.4 it carried is gone), rusqlite 0.42 (bundled SQLite 3.54.1
+  for Lua's key-value store), object 0.41 (the source-level debugger's ELF
+  reader), plus a lockfile refresh (zip 9.5.1, toml 1.2.1, cc 1.11.1, syn
+  3.0.10 and others). The web build moves to trunk 0.22.1, whose output
+  names the wasm and its JavaScript glue by separate content hashes.
+  Android: the Android Gradle Plugin 9.5.1, Gradle 9.9.1 (its wrapper jar
+  too) and UI Automator 2.4.1 for the baseline-profile module. The hosted
+  services: wrangler 4.160.1, the Workers vitest plugin 1.8.0 and current
+  Workers types; CI tests them on Node 26, now the active LTS. The RA proxy
+  image moves to Python 3.15. CI: taiki-e/install-action 2.90.3; the ruff
+  pre-commit hook 0.17.4. The Rust toolchain stays at 1.99.1, still the
+  newest stable release, and nothing user-visible changes in emulation:
+  the full suite with the commercial corpus passes with no golden,
+  snapshot or frame moved, so the emulation epoch stays 10.
 
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 

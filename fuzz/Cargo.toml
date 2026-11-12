@@ -3,7 +3,11 @@ name = "rustynes-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
-rust-version = "1.86"
+# The fuzz crate sits outside the workspace (cargo-fuzz convention), so it
+# cannot inherit `rust-version.workspace`. It tracks the workspace MSRV by
+# hand: the path crates below need 1.99 anyway, and a stale 1.86 here made
+# the MSRV-aware resolver hold sha2 / ctutils at older releases in this lock.
+rust-version = "1.99"
 
 [package.metadata]
 cargo-fuzz = true

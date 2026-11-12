@@ -33,7 +33,7 @@ base64 = "0.23"
 # ELF reader (gimli-rs, Apache-2.0 OR MIT). Read-only features only: no
 # writer, no Mach-O / PE / COFF / archive support compiled in.
 gimli = { version = "0.34", default-features = false, features = ["read", "std"] }
-object = { version = "0.40", default-features = false, features = ["read_core", "elf", "std"] }
+object = { version = "0.41", default-features = false, features = ["read_core", "elf", "std"] }
 
 [lints]
 workspace = true

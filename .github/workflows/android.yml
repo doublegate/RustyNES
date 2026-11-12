@@ -235,7 +235,7 @@ jobs:
       # v3.0.1: Temurin 25, the newest LTS (was 17). This is the JDK that RUNS
       # Gradle; the bytecode target stays JVM 17 (`jvmTarget` and
       # `sourceCompatibility` in app/build.gradle.kts), which is AGP 9.4's
-      # floor. Gradle 9.8 supports running on Java 25 (9.1.0 and later).
+      # floor. Gradle 9.9 supports running on Java 25 (9.1.0 and later).
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -305,7 +305,7 @@ jobs:
       # v3.0.1: Temurin 25, the newest LTS (was 17). This is the JDK that RUNS
       # Gradle; the bytecode target stays JVM 17 (`jvmTarget` and
       # `sourceCompatibility` in app/build.gradle.kts), which is AGP 9.4's
-      # floor. Gradle 9.8 supports running on Java 25 (9.1.0 and later).
+      # floor. Gradle 9.9 supports running on Java 25 (9.1.0 and later).
       - uses: actions/setup-java@v6
         with:
           distribution: temurin

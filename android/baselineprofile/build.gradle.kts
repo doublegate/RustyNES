@@ -90,7 +90,7 @@ baselineProfile {
 dependencies {
     implementation("androidx.test.ext:junit:1.3.0")
     implementation("androidx.test.espresso:espresso-core:3.7.0")
-    implementation("androidx.test.uiautomator:uiautomator:2.4.0")
+    implementation("androidx.test.uiautomator:uiautomator:2.4.1")
     // MUST equal the `androidx.baselineprofile` plugin version pinned in the root
     // build.gradle.kts — the 1.4.1 stable line's module guard rejects an AGP-9 app.
     // Deliberately no version named in this comment: it said "1.5.0-rc01" while the

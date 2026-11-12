@@ -11,7 +11,7 @@
 # reach it. Pair with a STUN/TURN server (coturn) for NAT traversal.
 
 # --- build stage ---------------------------------------------------------------
-# Match the workspace toolchain (rust-toolchain.toml channel = 1.99.0, v3.0.1).
+# Match the workspace toolchain (rust-toolchain.toml channel = 1.99.1; the `1.99` tag tracks the patch).
 # rustup inside the image reads that file from the copied workspace and
 # installs the pinned channel regardless, so this tag mainly saves the
 # download; keep the two equal. (It said 1.86 for two years after the pin

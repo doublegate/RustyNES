@@ -89,8 +89,11 @@ env:
   # unset on purpose: hosted.rs's default-behaviour test needs it absent.
   RUSTYNES_HOSTED_BASE: "https://rustynes-hosted.parobek.workers.dev"
   # Pin trunk for reproducible builds. Bump deliberately; keep in sync
-  # with the local toolchain note in Trunk.toml.
-  TRUNK_VERSION: "0.21.14"
+  # with the local toolchain note in Trunk.toml. 0.22 (2026-11) hashes the
+  # wasm and its JS glue by their own contents (two hashes where 0.21 used
+  # one); nothing here or in sw.js matches on the hash, and the size budget
+  # globs the files.
+  TRUNK_VERSION: "0.22.1"
   # Repository ("project") Pages serve under /<repo>/, so every asset
   # URL trunk emits must be prefixed. Overrides Trunk.toml's local "/"
   # without editing it (local `trunk serve` stays root-mounted).

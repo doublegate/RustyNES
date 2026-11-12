@@ -58,5 +58,5 @@ mlua = { workspace = true, optional = true }
 piccolo = { workspace = true, optional = true }
 # rusqlite (bundled SQLite C): the optional `script-sqlite` userdata backing.
 # `bundled` vendors SQLite so no system lib is needed. Optional + off by default.
-rusqlite = { version = "0.41", optional = true, features = ["bundled"] }
+rusqlite = { version = "0.42", optional = true, features = ["bundled"] }
 thiserror = { workspace = true }
