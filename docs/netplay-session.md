@@ -432,7 +432,14 @@ session and sends them as `ConfirmedInputs` (tag 10) in batches of
 `BATCH_FRAMES` (8): the player count, the first frame, and every port's input
 for up to 64 consecutive frames. Its first message is the match's `Sync`
 (identity: ROM, configuration, emulation epoch), and `flush` sends the last,
-shorter batch when the session ends. At 60 Hz that is 7.5 messages a second,
+shorter batch when the session ends. "Ends" means every way it ends: the
+desktop frontend (`NetplayUi::finish_edge_publish`) polls once more and
+flushes when the player leaves *and* when the session fails (a peer timeout,
+a transport error, a desync, including a desync whose forensics exchange
+ends later), so relay viewers see every confirmed frame the players did.
+v3.7.0 flushed only on leave, and a session that ended in an error left
+viewers up to seven frames short (Cursor Bugbot on #646). A desync does not
+make its confirmed inputs wrong; the viewer replays them on its own core. At 60 Hz that is 7.5 messages a second,
 a quarter of what the relay admits; one message per tick (v3.7.0 before
 the PR #646 review) was twice it, and the relay stalled two seconds in. The relay
 appends a batch only if it continues the log (storing only its new frames),
@@ -477,6 +484,16 @@ encoding):
 - `hosted_spectate_vectors_match_the_encoder`: pins the byte layouts the
   Worker classifies (`services/hosted/test/vectors/spectate-vectors.json`,
   which `spectate.test.ts` replays).
+
+`rustynes-frontend`'s `an_ended_session_relays_every_confirmed_frame` (two
+loopback `NetplayUi`s, the host publishing to an unreachable relay, a
+test-only record of what was handed to the relay client): with a tail held,
+`fail` from `InGame`, entering `Investigating` (which sends the tail at
+once, so the later `fail` sends nothing), `fail` after frames the publisher
+never polled, dropping the panel, a `start_*` call on a publishing panel and
+`leave` each leave the relayed frames contiguous from 0 through the last
+confirmed frame. Removing the helper call from `fail`, from
+`begin_investigating` or from `Drop` fails it.
 
 `services/hosted/test/spectate.test.ts` (vitest in workerd): the classifier;
 a mid-session viewer gets the backlog then the live feed; inputs only (a

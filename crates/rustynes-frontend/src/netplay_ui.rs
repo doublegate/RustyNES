@@ -259,6 +259,12 @@ pub struct NetplayUi {
         rustynes_netplay::EdgeRelayClient,
         rustynes_netplay::EdgePublisher,
     )>,
+    /// Test-only record of every message handed to the relay client, in
+    /// order, so a test can check which confirmed frames a relay viewer
+    /// would have received. Nothing else observes the relay's outbound
+    /// stream; release builds carry no such field.
+    #[cfg(test)]
+    edge_sent: Vec<rustynes_netplay::NetMessage>,
 }
 
 impl Default for NetplayUi {
@@ -275,8 +281,34 @@ impl Default for NetplayUi {
             desync_forensics: false,
             edge_publish_url: None,
             edge_publisher: None,
+            #[cfg(test)]
+            edge_sent: Vec::new(),
         }
     }
+}
+
+/// Closing the window mid-match drops the panel without `leave`; the tail
+/// still reaches the relay before the client's own `Drop` drains and closes
+/// the socket (Antigravity on #653). Every other end has already taken the
+/// publisher, so this is a no-op for them.
+impl Drop for NetplayUi {
+    fn drop(&mut self) {
+        self.finish_edge_publish();
+        // Only a panel that published records: a non-publishing peer dropped
+        // later in the same test must not clobber the host's record.
+        #[cfg(test)]
+        if !self.edge_sent.is_empty() {
+            DROPPED_EDGE_SENT.with(|d| *d.borrow_mut() = core::mem::take(&mut self.edge_sent));
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What a dropped panel had handed its relay client: the only window a
+    /// test has onto `Drop`'s flush, since `edge_sent` goes with the panel.
+    static DROPPED_EDGE_SENT: std::cell::RefCell<Vec<rustynes_netplay::NetMessage>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 impl NetplayUi {
@@ -315,6 +347,9 @@ impl NetplayUi {
     /// machine, as for a direct spectate; the viewer starts the match from
     /// the deterministic power-on and catches up from frame 0.
     pub fn start_edge_spectate(&mut self, url: &str, identity: SessionIdentity) {
+        // A publishing session this replaces sends its tail first, and its
+        // relay client goes with it (Antigravity on #653).
+        self.finish_edge_publish();
         self.is_host = false;
         self.identity = identity;
         self.state = NetplayState::EdgeSpectating {
@@ -441,6 +476,9 @@ impl NetplayUi {
     /// shares its own listening `IP:port` and the joiner dials in (see
     /// [`NetplayConnection::host`]).
     pub fn start_host(&mut self, local_port: u16, num_players: u8, identity: SessionIdentity) {
+        // A publishing session this replaces sends its tail first, and its
+        // relay client goes with it (Antigravity on #653).
+        self.finish_edge_publish();
         let local = SocketAddr::from(([0, 0, 0, 0], local_port));
         self.is_host = true;
         self.identity = identity;
@@ -493,6 +531,9 @@ impl NetplayUi {
     /// same call joins a 2-player host (as player 1 of 2) and a 3-4 player
     /// host (as the player its roster assigns); see the module docs.
     pub fn start_join(&mut self, remote: SocketAddr, identity: SessionIdentity) {
+        // A publishing session this replaces sends its tail first, and its
+        // relay client goes with it (Antigravity on #653).
+        self.finish_edge_publish();
         let local = SocketAddr::from(([0, 0, 0, 0], 0));
         self.is_host = false;
         self.identity = identity;
@@ -532,6 +573,9 @@ impl NetplayUi {
     /// test. The local emulator is power-cycled to the deterministic cold-boot
     /// so frame 0 matches the players' canonical timeline.
     pub fn start_spectate(&mut self, remote: SocketAddr, identity: SessionIdentity) {
+        // A publishing session this replaces sends its tail first, and its
+        // relay client goes with it (Antigravity on #653).
+        self.finish_edge_publish();
         let local = SocketAddr::from(([0, 0, 0, 0], 0));
         self.is_host = false;
         self.identity = identity;
@@ -580,17 +624,8 @@ impl NetplayUi {
 
     /// Tear the session down and return to single-player. No-op if idle.
     pub fn leave(&mut self) {
-        // v3.7.0 — the publisher sends in batches; hand the relay the last,
-        // shorter one so viewers see the match to its end. Dropping the
-        // client then closes the connection after its queue drains.
-        if let (NetplayState::InGame(session), Some((client, publisher))) =
-            (&self.state, self.edge_publisher.as_mut())
-            && let Some(msg) = publisher.flush(session.num_players())
-        {
-            client.send(&msg);
-        }
+        self.finish_edge_publish();
         self.state = NetplayState::Idle;
-        self.edge_publisher = None;
         self.status = NetplayStatus::default();
     }
 
@@ -714,6 +749,8 @@ impl NetplayUi {
                 rustynes_netplay::EdgePublisher::new(self.identity),
             )
         });
+        #[cfg(test)]
+        self.edge_sent.clear();
         let relay_match = publish.map(|(_, id)| id.clone()).unwrap_or_default();
         self.state = NetplayState::InGame(Box::new(session));
         self.last_peer_activity = std::time::Instant::now();
@@ -843,6 +880,8 @@ impl NetplayUi {
                     }
                     for msg in publisher.poll(session) {
                         client.send(&msg);
+                        #[cfg(test)]
+                        self.edge_sent.push(msg);
                     }
                 }
                 NetplayTick {
@@ -879,13 +918,7 @@ impl NetplayUi {
                     && !matches!(session.forensics_status(), ForensicsStatus::Off)
                     && let NetplayState::InGame(session) = std::mem::take(&mut self.state)
                 {
-                    self.status.phase = NetplayPhase::Error;
-                    self.status.message = format!("{why}; collecting desync forensics");
-                    self.state = NetplayState::Investigating {
-                        session,
-                        why,
-                        since: std::time::Instant::now(),
-                    };
+                    self.begin_investigating(session, why);
                     return NetplayTick {
                         active: true,
                         produced_frame: false,
@@ -963,6 +996,28 @@ impl NetplayUi {
         }
     }
 
+    /// v3.7.0 — move a desynced session (forensics on) to `Investigating`,
+    /// and hand the relay its tail now. The session no longer advances there
+    /// (`tick_investigating` only pumps the forensics exchange), so no frame
+    /// can be confirmed after this point, and waiting for `fail` held the
+    /// last batch, and the relay socket, for the whole exchange: up to
+    /// [`FORENSICS_DEADLINE`] when the peer has not opted in (Antigravity on
+    /// #653).
+    fn begin_investigating(
+        &mut self,
+        session: Box<RollbackSession<SessionTransport>>,
+        why: String,
+    ) {
+        self.status.phase = NetplayPhase::Error;
+        self.status.message = format!("{why}; collecting desync forensics");
+        self.state = NetplayState::Investigating {
+            session,
+            why,
+            since: std::time::Instant::now(),
+        };
+        self.finish_edge_publish();
+    }
+
     /// v3.7.0 — drive an ended session's forensics exchange one tick, and end
     /// it with the report (or with why there is none).
     fn tick_investigating(&mut self) -> NetplayTick {
@@ -995,9 +1050,60 @@ impl NetplayUi {
         }
     }
 
+    /// v3.7.0 — end the relay publish: send every confirmed frame the
+    /// publisher has not yet sent, then drop the client, which closes the
+    /// connection once its queue drains. Both ways a session ends, `leave`
+    /// and [`fail`](Self::fail), call this before they replace the state.
+    ///
+    /// The publisher sends in batches of `EdgePublisher::BATCH_FRAMES`, so
+    /// up to seven confirmed frames are normally held for the next batch.
+    /// Before this helper only `leave` sent them; a session that ended in an
+    /// error (a peer timeout, a desync, a transport failure) dropped them,
+    /// and relay viewers stopped short of the players (Cursor Bugbot on
+    /// #646). It also polls once more first: the tick that ends a session
+    /// returns before its own poll (the peer-timeout and error branches of
+    /// `tick_in_game`), so frames confirmed on that tick would otherwise be
+    /// lost too.
+    ///
+    /// Sending on an error is correct, a desync included. A confirmed frame
+    /// is one whose input every player has acknowledged; the inputs are
+    /// facts about the match whatever ends it afterwards. A desync means the
+    /// two peers' *machines* disagreed on the result of those inputs, not
+    /// that the inputs are wrong, and the viewer replays the inputs on its
+    /// own core, exactly as it would have had the batch filled first.
+    ///
+    /// The session is reachable in two states: `InGame`, and
+    /// `Investigating`. A desync with forensics on moves the session there
+    /// through `begin_investigating`, which sends the tail at once, since no
+    /// frame confirms after the desync; `leave` and `fail` then find the
+    /// publisher already gone. In any other state there is no session to
+    /// read, and the publisher is simply dropped. The publisher is created
+    /// only by `enter_game`; the session leaves `InGame` only through
+    /// `leave`, `fail`, `begin_investigating` or a `start_*` call made while
+    /// it runs (the panel does not offer that, but each `start_*` comes here
+    /// first), and dropping the panel (closing the window mid-match) comes
+    /// here too, through `Drop`, so the tail is sent on every end.
+    fn finish_edge_publish(&mut self) {
+        let Some((client, mut publisher)) = self.edge_publisher.take() else {
+            return;
+        };
+        let (NetplayState::InGame(session) | NetplayState::Investigating { session, .. }) =
+            &self.state
+        else {
+            return;
+        };
+        let mut msgs = publisher.poll(session);
+        msgs.extend(publisher.flush(session.num_players()));
+        for msg in msgs {
+            client.send(&msg);
+            #[cfg(test)]
+            self.edge_sent.push(msg);
+        }
+    }
+
     /// Transition to the terminal `Error` phase with a message.
     fn fail(&mut self, message: String) {
-        self.edge_publisher = None;
+        self.finish_edge_publish();
         self.status = NetplayStatus {
             phase: NetplayPhase::Error,
             is_host: self.is_host,
@@ -1288,6 +1394,214 @@ mod tests {
         let t = failing_tick.expect("the host gives up on a silent peer");
         assert!(t.active, "the failing tick is the session's");
         assert!(!t.produced_frame);
+    }
+
+    /// Two loopback peers in `InGame`, the host publishing to a spectate
+    /// relay that is not there (port 9 on loopback refuses at once, so the
+    /// client's worker exits without blocking and its sends are dropped,
+    /// which is what a relay that is down does in a real match).
+    fn publishing_pair() -> (NetplayUi, NetplayUi, Nes, Nes) {
+        let rom = synth_nrom();
+        let hash = SessionIdentity::of(&Nes::from_rom(&rom).unwrap());
+        let probe = UdpSocket::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).unwrap();
+        let host_addr = probe.local_addr().unwrap();
+        drop(probe);
+        let mut host = NetplayUi::default();
+        host.set_edge_publish(Some((
+            "ws://127.0.0.1:9/spectate/m?role=publish&key=00".to_string(),
+            "m".to_string(),
+        )));
+        host.start_host(host_addr.port(), 2, hash);
+        let mut join = NetplayUi::default();
+        join.start_join(host_addr, hash);
+        let mut nes_host = Nes::from_rom(&rom).unwrap();
+        let mut nes_join = Nes::from_rom(&rom).unwrap();
+        let mut rounds = 0;
+        while !(host.phase() == NetplayPhase::InGame && join.phase() == NetplayPhase::InGame)
+            && rounds < 500
+        {
+            host.tick(&mut nes_host, Buttons::empty());
+            join.tick(&mut nes_join, Buttons::empty());
+            rounds += 1;
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(host.phase(), NetplayPhase::InGame);
+        assert_eq!(join.phase(), NetplayPhase::InGame);
+        assert!(host.edge_publisher.is_some(), "the host publishes");
+        (host, join, nes_host, nes_join)
+    }
+
+    /// The frames `sent` covers: its `ConfirmedInputs` must run contiguously
+    /// from frame 0 (a gap or an overlap is a publisher defect, and a viewer
+    /// could not run it), and this is where they end.
+    fn relayed_through(sent: &[rustynes_netplay::NetMessage]) -> u32 {
+        let mut next = 0u32;
+        for msg in sent {
+            if let rustynes_netplay::NetMessage::ConfirmedInputs {
+                start_frame,
+                inputs,
+                ..
+            } = msg
+            {
+                assert_eq!(*start_frame, next, "relayed frames are contiguous");
+                next += u32::try_from(inputs.len()).unwrap();
+            }
+        }
+        next
+    }
+
+    /// Advance the pair until the host's session has confirmed at least one
+    /// full batch and is holding a shorter tail for the next one, and return
+    /// how many frames the session has confirmed (`last + 1`).
+    fn advance_to_a_pending_tail(
+        host: &mut NetplayUi,
+        join: &mut NetplayUi,
+        nes_host: &mut Nes,
+        nes_join: &mut Nes,
+    ) -> u32 {
+        for _ in 0..600 {
+            host.tick(nes_host, Buttons::empty());
+            join.tick(nes_join, Buttons::empty());
+            let NetplayState::InGame(session) = &host.state else {
+                panic!("the host left InGame while advancing");
+            };
+            if let Some(last) = session.last_confirmed_frame() {
+                let confirmed = last + 1;
+                let relayed = relayed_through(&host.edge_sent);
+                if relayed >= 8 && relayed < confirmed {
+                    return confirmed;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("the host never held a pending tail");
+    }
+
+    /// Cursor Bugbot on #646: `leave` flushed the publisher's held tail but
+    /// `fail` dropped it, so a session that ended in an error (a peer
+    /// timeout, a desync) left relay viewers short of the players' last
+    /// confirmed frames. Every way a session ends must hand the relay every
+    /// confirmed frame: `fail` from `InGame`, `fail` from `Investigating`
+    /// (the forensics path, where the session has moved out of `InGame`),
+    /// and `leave`.
+    #[test]
+    fn an_ended_session_relays_every_confirmed_frame() {
+        // `fail` while in game (the peer-timeout and session-error paths).
+        let (mut host, mut join, mut nes_host, mut nes_join) = publishing_pair();
+        let confirmed =
+            advance_to_a_pending_tail(&mut host, &mut join, &mut nes_host, &mut nes_join);
+        host.fail("peer connection lost (test)".to_string());
+        assert_eq!(host.phase(), NetplayPhase::Error);
+        assert!(host.edge_publisher.is_none());
+        assert_eq!(
+            relayed_through(&host.edge_sent),
+            confirmed,
+            "fail sent the held tail"
+        );
+
+        // `fail` from `Investigating`: `tick_in_game` moves a desynced
+        // session there (forensics on) and fails it later; a real desync is
+        // not reachable on one core, so make the same move it makes.
+        let (mut host, mut join, mut nes_host, mut nes_join) = publishing_pair();
+        let confirmed =
+            advance_to_a_pending_tail(&mut host, &mut join, &mut nes_host, &mut nes_join);
+        let NetplayState::InGame(session) = core::mem::take(&mut host.state) else {
+            unreachable!("advance_to_a_pending_tail leaves the host in game");
+        };
+        host.begin_investigating(session, "desync at frame 1 (test)".to_string());
+        assert!(
+            host.edge_publisher.is_none(),
+            "entering Investigating ends the publish"
+        );
+        assert_eq!(
+            relayed_through(&host.edge_sent),
+            confirmed,
+            "entering Investigating sent the held tail, before the exchange"
+        );
+        let sent = host.edge_sent.len();
+        host.fail("desync at frame 1 (test); no report".to_string());
+        assert_eq!(
+            host.edge_sent.len(),
+            sent,
+            "fail found nothing left to send"
+        );
+
+        // Frames the session confirmed after the publisher's last poll.
+        // `tick` polls the publisher every round, so the cases above reach
+        // only `flush`; `flush` sees the frames already polled, never the
+        // session, so frames confirmed since the last tick reach the relay
+        // only through teardown's own `poll` (CodeRabbit on #653). Detach
+        // the publisher while the pair advances, so the session confirms
+        // frames it never saw, then end the session.
+        let (mut host, mut join, mut nes_host, mut nes_join) = publishing_pair();
+        advance_to_a_pending_tail(&mut host, &mut join, &mut nes_host, &mut nes_join);
+        let polled = {
+            let NetplayState::InGame(session) = &host.state else {
+                unreachable!("advance_to_a_pending_tail leaves the host in game");
+            };
+            session.last_confirmed_frame().unwrap() + 1
+        };
+        let detached = host.edge_publisher.take();
+        let mut confirmed = polled;
+        for _ in 0..600 {
+            host.tick(&mut nes_host, Buttons::empty());
+            join.tick(&mut nes_join, Buttons::empty());
+            let NetplayState::InGame(session) = &host.state else {
+                panic!("the host left InGame while advancing unpolled");
+            };
+            confirmed = session.last_confirmed_frame().unwrap() + 1;
+            if confirmed >= polled + 4 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(confirmed > polled, "the session confirmed unpolled frames");
+        host.edge_publisher = detached;
+        host.fail("peer connection lost (test)".to_string());
+        assert_eq!(
+            relayed_through(&host.edge_sent),
+            confirmed,
+            "teardown polled the frames confirmed since the last tick"
+        );
+
+        // Dropping the panel mid-match (closing the window) sends it.
+        let (mut host, mut join, mut nes_host, mut nes_join) = publishing_pair();
+        let confirmed =
+            advance_to_a_pending_tail(&mut host, &mut join, &mut nes_host, &mut nes_join);
+        drop(host);
+        let sent = DROPPED_EDGE_SENT.with(|d| core::mem::take(&mut *d.borrow_mut()));
+        assert_eq!(
+            relayed_through(&sent),
+            confirmed,
+            "dropping the panel sent the held tail"
+        );
+
+        // A `start_*` call on a publishing panel sends it before replacing
+        // the session, and the stale relay client goes with it.
+        let (mut host, mut join, mut nes_host, mut nes_join) = publishing_pair();
+        let confirmed =
+            advance_to_a_pending_tail(&mut host, &mut join, &mut nes_host, &mut nes_join);
+        let hash = host.identity;
+        host.start_spectate(SocketAddr::from((Ipv4Addr::LOCALHOST, 9)), hash);
+        assert!(host.edge_publisher.is_none(), "start_* ends the publish");
+        assert_eq!(
+            relayed_through(&host.edge_sent),
+            confirmed,
+            "start_spectate on a publishing panel sent the held tail"
+        );
+
+        // `leave` still sends it.
+        let (mut host, mut join, mut nes_host, mut nes_join) = publishing_pair();
+        let confirmed =
+            advance_to_a_pending_tail(&mut host, &mut join, &mut nes_host, &mut nes_join);
+        host.leave();
+        assert_eq!(host.phase(), NetplayPhase::Idle);
+        assert!(host.edge_publisher.is_none());
+        assert_eq!(
+            relayed_through(&host.edge_sent),
+            confirmed,
+            "leave sent the held tail"
+        );
     }
 
     /// v2.9.0 (`CodeRabbit` on #561): v2.9.0 made a power cycle keep battery
