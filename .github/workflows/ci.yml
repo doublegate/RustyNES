@@ -124,6 +124,7 @@ jobs:
       accuracy: ${{ steps.filter-accuracy.outputs.accuracy }}
       libretro: ${{ steps.filter-targets.outputs.libretro }}
       nostd: ${{ steps.filter-targets.outputs.nostd }}
+      platform: ${{ steps.filter-targets.outputs.platform }}
     steps:
       # Full history: on `push`, dorny/paths-filter diffs against the before-SHA
       # using local git, so the default shallow clone (fetch-depth: 1) can miss
@@ -257,6 +258,71 @@ jobs:
               - 'crates/rustynes-ppu/**'
               - 'crates/rustynes-apu/**'
               - 'crates/rustynes-mappers/**'
+            # `full-build` (macOS + Windows) on a regular PR (2026-11-12). NOT
+            # everything the job compiles -- `lint` and `test` compile all of
+            # that on Linux already -- but everything that compiles or links
+            # DIFFERENTLY on those two systems:
+            #   * *shared: the dependency graph (Cargo.lock, where a crate
+            #     update that breaks MSVC or Apple clang arrives), the
+            #     toolchain, `.cargo/` (per-target config) and the CI plumbing
+            #     those runners execute (this file, rust-setup, the scripts);
+            #   * rustynes-cheevos whole: vendored rcheevos C built by `cc`
+            #     through build.rs, and an OS-specific http.rs;
+            #   * every source file of the full build that carries an
+            #     OS-specific `cfg` (target_os / target_vendor / target_family
+            #     / windows / unix), and the manifest of every crate in it
+            #     (a `windows-sys` feature change moves no Cargo.lock line).
+            # `.github/scripts/check-platform-filter.sh`, run by `lint`, derives
+            # both lists from the tree (`cargo tree --target all`, then a grep
+            # for those cfgs) and FAILS if this list misses a file, so a new
+            # `#[cfg(windows)]` cannot slip outside it the way a new workspace
+            # dependency slipped outside android.yml's list (2026-09-23).
+            #
+            # Measured before adopting it, over the 141 full-build runs per OS
+            # of 2026-10-13..11-12: it keeps 119 and skips 22 (117 macOS and
+            # 184 Windows runner-minutes), and every skipped PR is one that
+            # cannot change either build: Gradle, npm, cosim and actions-only
+            # Dependabot bumps, and two docs/fix branches. (`clock.rs` was
+            # added after that measurement, when the audit's wider regex found
+            # its `cfg(all(..., unix, ...))`; it can only keep more.) `memif.rs`
+            # carries no OS cfg of its own but stays listed: the job runs its
+            # `memif::` tests by name on both systems. Free runner time on
+            # this public repository, not wall time: full-build was never the
+            # critical path (8.5 min Windows median against `test`'s 17.7).
+            # A narrower five-path list measured in another session (2026-11-12,
+            # the 91-runs-in-24-days figure) would have skipped 54, but it left
+            # out ten of the thirteen OS-specific files and every dependency
+            # change.
+            platform:
+              - *shared
+              - 'crates/rustynes-cheevos/**'
+              - 'crates/rustynes-frontend/src/atomic_write.rs'
+              - 'crates/rustynes-frontend/src/battery_save.rs'
+              - 'crates/rustynes-frontend/src/bounded_read.rs'
+              - 'crates/rustynes-frontend/src/bundle.rs'
+              - 'crates/rustynes-frontend/src/clock.rs'
+              - 'crates/rustynes-frontend/src/config.rs'
+              - 'crates/rustynes-frontend/src/debugger/header_editor.rs'
+              - 'crates/rustynes-frontend/src/dump_check.rs'
+              - 'crates/rustynes-frontend/src/emu_thread.rs'
+              - 'crates/rustynes-frontend/src/lib.rs'
+              - 'crates/rustynes-frontend/src/memif.rs'
+              - 'crates/rustynes-frontend/src/presentation_clock.rs'
+              - 'crates/rustynes-frontend/src/script_host.rs'
+              - 'crates/rustynes-frontend/src/shm.rs'
+              - 'crates/rustynes-apu/Cargo.toml'
+              - 'crates/rustynes-core/Cargo.toml'
+              - 'crates/rustynes-cpu/Cargo.toml'
+              - 'crates/rustynes-frontend/Cargo.toml'
+              - 'crates/rustynes-gamedb/Cargo.toml'
+              - 'crates/rustynes-gfx-shaders/Cargo.toml'
+              - 'crates/rustynes-hdpack/Cargo.toml'
+              - 'crates/rustynes-mappers/Cargo.toml'
+              - 'crates/rustynes-netplay/Cargo.toml'
+              - 'crates/rustynes-ppu/Cargo.toml'
+              - 'crates/rustynes-probe/Cargo.toml'
+              - 'crates/rustynes-ra/Cargo.toml'
+              - 'crates/rustynes-script/Cargo.toml'
 
   # fmt + clippy + rustdoc share one runner + one compile of the workspace's
   # dependency graph (clippy and rustdoc differ only in the final pass), so
@@ -363,6 +429,11 @@ jobs:
           components: rustfmt,clippy
       - name: rustfmt
         run: cargo fmt --all -- --check
+      # The `platform` filter decides whether a regular PR builds on macOS and
+      # Windows at all, and a skipped job passes `CI success`, so the list is
+      # derived and checked here rather than trusted (see the filter's note).
+      - name: the platform filter lists every OS-specific file of the full build
+        run: .github/scripts/check-platform-filter.sh
       - name: clippy (-D warnings)
         run: cargo clippy --workspace --all-targets -- -D warnings
       # `rustynes-cosim` is EXCLUDED from the workspace, so `--workspace` above
@@ -611,11 +682,26 @@ jobs:
   # on Linux only. rcheevos and Lua are vendored C built by `cc`, which is
   # exactly the kind of thing that builds on one toolchain and not another
   # (MSVC vs clang vs gcc), so a release would have been the first time. This
-  # builds it on both, on every ready PR, so a failure lands on the PR.
+  # builds it on both, so a failure lands before a release.
+  #
+  # 2026-11-12 -- WHEN: every FULL run (each push to `main`, `release/*` PRs,
+  # dispatch, the weekly cron), plus any ready PR the `platform` filter in
+  # `changes` matches: what compiles or links differently on macOS and Windows
+  # (see that filter for the derivation and the measurement). It used to run on
+  # every ready PR. A PR outside the filter changes nothing either build does
+  # differently from the Linux `lint` / `test` jobs; anything it does miss
+  # still shows up on the `main` push that merges it, the same trade the
+  # macOS / Windows legs of `test` already make. A skipped full-build passes
+  # `CI success` like any skipped job, which is why the filter is derived and
+  # audited rather than written by hand.
   full-build:
     name: full build (${{ matrix.os }})
     needs: [changes, setup]
-    if: ${{ needs.changes.outputs.code == 'true' && needs.setup.outputs.heavy == 'true' }}
+    if: >-
+      ${{ needs.changes.outputs.code == 'true'
+      && needs.setup.outputs.heavy == 'true'
+      && (needs.setup.outputs.full == 'true'
+      || needs.changes.outputs.platform == 'true') }}
     runs-on: ${{ matrix.os }}
     # Typical: ~6 min macOS / ~10 min Windows (a debug build of the frontend).
     timeout-minutes: 45

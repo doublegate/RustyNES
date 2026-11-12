@@ -67,7 +67,11 @@ cycle-accurate core later replaced.
   `docs/agents/ci-and-release.md`. The weekly full run (and a dispatched
   one) now always tests: it had been deciding from the last commit alone,
   and on 2026-10-19, when that commit was documentation, it skipped every
-  gate and passed.
+  gate and passed. A regular pull request now builds on macOS and Windows
+  only when it changes something that builds differently there (the
+  dependency graph, the toolchain, CI, the vendored rcheevos C, or a source
+  file with an OS-specific `cfg`); a lint step keeps that list complete.
+  Release PRs and every push to `main` build both, as before.
 
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 
