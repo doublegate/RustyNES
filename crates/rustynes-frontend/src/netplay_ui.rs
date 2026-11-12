@@ -1467,6 +1467,44 @@ mod tests {
             "fail from Investigating sent the held tail"
         );
 
+        // Frames the session confirmed after the publisher's last poll.
+        // `tick` polls the publisher every round, so the cases above reach
+        // only `flush`; `flush` sees the frames already polled, never the
+        // session, so frames confirmed since the last tick reach the relay
+        // only through teardown's own `poll` (CodeRabbit on #653). Detach
+        // the publisher while the pair advances, so the session confirms
+        // frames it never saw, then end the session.
+        let (mut host, mut join, mut nes_host, mut nes_join) = publishing_pair();
+        advance_to_a_pending_tail(&mut host, &mut join, &mut nes_host, &mut nes_join);
+        let polled = {
+            let NetplayState::InGame(session) = &host.state else {
+                unreachable!("advance_to_a_pending_tail leaves the host in game");
+            };
+            session.last_confirmed_frame().unwrap() + 1
+        };
+        let detached = host.edge_publisher.take();
+        let mut confirmed = polled;
+        for _ in 0..600 {
+            host.tick(&mut nes_host, Buttons::empty());
+            join.tick(&mut nes_join, Buttons::empty());
+            let NetplayState::InGame(session) = &host.state else {
+                panic!("the host left InGame while advancing unpolled");
+            };
+            confirmed = session.last_confirmed_frame().unwrap() + 1;
+            if confirmed >= polled + 4 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(confirmed > polled, "the session confirmed unpolled frames");
+        host.edge_publisher = detached;
+        host.fail("peer connection lost (test)".to_string());
+        assert_eq!(
+            relayed_through(&host.edge_sent),
+            confirmed,
+            "teardown polled the frames confirmed since the last tick"
+        );
+
         // `leave` still sends it.
         let (mut host, mut join, mut nes_host, mut nes_join) = publishing_pair();
         let confirmed =
