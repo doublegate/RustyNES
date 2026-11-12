@@ -31,6 +31,13 @@ inputs:
   cache-key:
     description: "Extra Swatinem/rust-cache key suffix (distinguishes target matrices)."
     default: ""
+  shared-key:
+    description: >-
+      Pass-through to Swatinem/rust-cache `shared-key`: one cache entry for
+      every job that names the same value, in place of one per job id. Only
+      for jobs that compile the same thing (android.yml's three jobs all run
+      the same cargo-ndk build); leave empty otherwise.
+    default: ""
   cache-on-failure:
     description: >-
       Pass-through to Swatinem/rust-cache `cache-on-failure`. Enable on jobs
@@ -137,11 +144,52 @@ runs:
         sudo apt-get install -y --no-install-recommends \
           libxkbcommon-dev libwayland-dev libxkbcommon-x11-dev libasound2-dev libudev-dev
 
+    # THE CACHE WAS EMPTY UNTIL 2026-11 (see cargo-metadata-shim.cjs for the
+    # whole account). rust-cache keeps what `cargo metadata --all-features`
+    # lists, this workspace cannot resolve `--all-features`, and rust-cache
+    # answers that failure by keeping NOTHING: 150 entries held 65 MB between
+    # them and every Rust job compiled its dependency graph cold, under a
+    # "Cache restored successfully" line. The shim re-runs only that listing
+    # with every member feature except the one that switches on the
+    # `rustynes-script-wasm` alias. It is self-tested here first; if Node or
+    # the shim is unusable the step warns and rust-cache runs unwrapped, which
+    # is the old (empty-cache) behaviour, visibly rather than silently.
+    - name: Check the rust-cache metadata shim
+      id: shim
+      if: inputs.cache == 'true'
+      shell: bash
+      run: |
+        set -uo pipefail
+        shim="$GITHUB_ACTION_PATH/cargo-metadata-shim.cjs"
+        # The one feature `--all-features` must leave out, and why: it is the
+        # wasm32 alias of `rustynes-script` (rustynes-frontend/Cargo.toml),
+        # and cargo refuses the same package under two names. The self-test
+        # fails if it stops being a feature, so this cannot go stale quietly.
+        exclude="rustynes-frontend/script-wasm"
+        if out="$(node "$shim" --self-test --exclude="$exclude" 2>&1)"; then
+          echo "$out"
+          # Quoted: rust-cache splits this with @actions/exec's parser, which
+          # keeps a Windows path's backslashes inside quotes.
+          echo "cmd-format=node \"$shim\" --exclude=$exclude {0}" >> "$GITHUB_OUTPUT"
+        else
+          # One line: a workflow command ends at the first newline.
+          echo "::warning title=rust-cache::the cargo metadata shim is unusable, so this job's cache saves no dependencies: ${out//$'\n'/ }"
+          echo "cmd-format={0}" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Cargo cache
       if: inputs.cache == 'true'
       uses: Swatinem/rust-cache@v2
       with:
+        # `v1-rust`, not the default `v0-rust`: every existing entry is one of
+        # the empty ones, and its key still matches exactly, and rust-cache
+        # does not re-save on an exact match ("Cache up-to-date."). Without a
+        # new prefix the fix would wait for the next Cargo.lock change to take
+        # effect. The old entries expire after 7 days unread.
+        prefix-key: v1-rust
+        cmd-format: ${{ steps.shim.outputs.cmd-format || '{0}' }}
         key: ${{ inputs.cache-key }}
+        shared-key: ${{ inputs.shared-key }}
         # Only WRITE the cache from the default branch. A PR-branch save is
         # scoped to that branch (no other PR can read it) yet still counts
         # against the 10 GB repo cache budget and LRU-evicts the shared `main`

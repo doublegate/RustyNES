@@ -60,6 +60,11 @@ cycle-accurate core later replaced.
   newest stable release, and nothing user-visible changes in emulation:
   the full suite with the commercial corpus passes with no golden,
   snapshot or frame moved, so the emulation epoch stays 10.
+- **CI (contributors): the cargo cache keeps dependencies again.** It had
+  stored nothing since v1.2.0 (rust-cache cannot list this workspace's
+  dependencies with `--all-features`), so every Rust job compiled its whole
+  dependency graph on every run. Nothing about what is tested changes; see
+  `docs/agents/ci-and-release.md`.
 
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 
