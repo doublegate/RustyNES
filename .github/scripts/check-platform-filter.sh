@@ -89,7 +89,9 @@ fi
 
 # An OS predicate inside a cfg attribute, cfg_attr or cfg! macro, or any
 # target_os / target_vendor / target_family token.
-OS_CFG='target_os|target_vendor|target_family|cfg(_attr)?!?\s*\([^\]]{0,400}?\b(windows|unix)\b'
+# An attribute's span may not cross `]`; a `cfg!(...)` call's may not cross
+# `;`, `{` or `}`, which keeps it inside one expression (PR #650 review).
+OS_CFG='target_os|target_vendor|target_family|cfg(_attr)?\s*\([^\]]{0,400}?\b(windows|unix)\b|cfg!\s*\([^;{}]{0,200}?\b(windows|unix)\b'
 # The name of a module whose declaration sits under such a cfg.
 OS_MOD='#\[cfg(_attr)?\s*\([^\]]{0,400}?\b(windows|unix|target_os|target_vendor|target_family)\b[^\]]*\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?mod\s+\K[A-Za-z0-9_]+(?=\s*;)'
 scanned=0
@@ -121,11 +123,24 @@ for c in "${crates[@]}"; do
     esac
     while IFS= read -r m; do
       [ -n "$m" ] || continue
+      # The module's own file, and EVERY file of its subtree: a child module
+      # of an OS-gated module usually carries no cfg of its own, so neither
+      # scan above would see it (PR #650 review). A gated declaration that
+      # resolves to no file (a `#[path = ...]` module) fails closed rather
+      # than passing unchecked.
+      found=0
       for cand in "$dir/$m.rs" "$dir/$m/mod.rs"; do
-        [ -f "$cand" ] || continue
-        scanned=$((scanned + 1))
-        matched "$cand" || { echo "::error file=$cand::module '$m' is declared under an OS cfg in $f, and the platform filter in $ci does not list it"; fail=1; }
+        [ -f "$cand" ] && found=1
       done
+      if [ "$found" -eq 0 ]; then
+        echo "::error file=$f::module '$m' is declared under an OS cfg but neither $dir/$m.rs nor $dir/$m/mod.rs exists (a #[path] module?); list its file in the platform filter in $ci and teach this audit where it lives"
+        fail=1
+        continue
+      fi
+      while IFS= read -r cand; do
+        scanned=$((scanned + 1))
+        matched "$cand" || { echo "::error file=$cand::module '$m' (or its subtree) is declared under an OS cfg in $f, and the platform filter in $ci does not list this file"; fail=1; }
+      done < <({ for x in "$dir/$m.rs" "$dir/$m/mod.rs"; do [ -f "$x" ] && echo "$x"; done; [ -d "$dir/$m" ] && find "$dir/$m" -name '*.rs'; } | sort -u)
     done < <(grep -ozP "$OS_MOD" "$f" | tr '\0' '\n')
   done < <(grep -rlzP "$OS_MOD" "$c/src" --include='*.rs' | sort)
 done
