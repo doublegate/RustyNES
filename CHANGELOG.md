@@ -90,14 +90,6 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
-- **A hidden window no longer floods the terminal with `render error:
-  surface unavailable: occluded`.** macOS reports the window's surface as
-  occluded while it is minimised, covered, on another Space or on a
-  sleeping display. RustyNES keeps emulating then (the display-sync watchdog
-  goes on requesting redraws), and printed that line on every redraw, for as
-  long as the window stayed hidden. A hidden window, and a frame not ready in
-  time, now skip the frame silently; a validation error is still reported.
-  Reported on a MacBook Pro M5 Max running the v3.7.0 release.
 Found by re-reading every bot review on the pull requests closed since
 v3.4.1 (#618 to #649) for findings that never got an answer; nothing here
 moves a frame, a sample or a bus cycle, so the emulation epoch stays 10.
@@ -142,6 +134,18 @@ moves a frame, a sample or a bus cycle, so the emulation epoch stays 10.
   session now sends them, closing the window mid-match included, and a
   desync with forensics on sends them as it happens rather than after the
   up-to-ten-second forensics exchange (Cursor Bugbot on #646; #653 review).
+- **A hidden window no longer floods the terminal with `render error:
+  surface unavailable: occluded`, or stages frames it never shows.** macOS
+  reports the window's surface as occluded while it is minimised, covered,
+  on another Space or on a sleeping display. RustyNES keeps emulating then
+  (the display-sync watchdog goes on requesting redraws), and printed that
+  line on every redraw for as long as the window stayed hidden. Each of
+  those redraws also uploaded the frame before finding it could not draw, so
+  the uploads piled up unsubmitted until the window came back. A hidden
+  window, and a frame not ready in time, now skip the frame silently before
+  any upload, and are no longer counted in the performance overlay's
+  figures; a validation error is still reported. Reported on a MacBook Pro
+  M5 Max running the v3.7.0 release.
 
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 

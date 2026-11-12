@@ -1235,6 +1235,16 @@ impl Gfx {
             (u32, u32),
         ),
     {
+        // Acquire the frame FIRST (v3.7.1, Antigravity on #655): every upload
+        // below is staged by wgpu until the next `queue.submit`. A hidden
+        // window (`Occluded`) returns before that submit on every redraw, and
+        // the display-sync watchdog keeps redrawing, so uploading first
+        // staged a ~240 KB frame per redraw that nothing ever submitted, for
+        // as long as the window stayed hidden. Skipping before the uploads
+        // also leaves the upload-skip shadow untouched, so the first visible
+        // frame uploads the latest picture. (wgpu 29: `get_current_texture`
+        // returns the `CurrentSurfaceTexture` enum; `acquire_frame` maps it.)
+        let frame = acquire_frame(self.surface.get_current_texture())?;
         // v1.7.1 — `debug_assert` keeps dev builds honest, but a release build
         // must NEVER hand a mismatched-length slice to `write_texture`: wgpu
         // validation aborts the process (SIGABRT) when the source buffer is
@@ -1303,9 +1313,6 @@ impl Gfx {
             );
         }
 
-        // wgpu 29: `get_current_texture` returns the `CurrentSurfaceTexture`
-        // enum instead of a `Result`; `acquire_frame` maps it.
-        let frame = acquire_frame(self.surface.get_current_texture())?;
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1446,6 +1453,16 @@ impl Gfx {
             (u32, u32),
         ),
     {
+        // Acquire the frame FIRST (v3.7.1, Antigravity on #655): every upload
+        // below is staged by wgpu until the next `queue.submit`. A hidden
+        // window (`Occluded`) returns before that submit on every redraw, and
+        // the display-sync watchdog keeps redrawing, so uploading first
+        // staged a ~240 KB frame per redraw that nothing ever submitted, for
+        // as long as the window stayed hidden. Skipping before the uploads
+        // also leaves the upload-skip shadow untouched, so the first visible
+        // frame uploads the latest picture. (wgpu 29: `get_current_texture`
+        // returns the `CurrentSurfaceTexture` enum; `acquire_frame` maps it.)
+        let frame = acquire_frame(self.surface.get_current_texture())?;
         // v1.7.1 — same size guard as `render_with_overlay`: never feed a
         // mismatched-length slice to `write_texture` in a release build (it
         // aborts the process via wgpu validation). Skip the upload on mismatch
@@ -1489,9 +1506,6 @@ impl Gfx {
             )),
         );
 
-        // wgpu 29: `get_current_texture` returns the `CurrentSurfaceTexture`
-        // enum instead of a `Result`; `acquire_frame` maps it.
-        let frame = acquire_frame(self.surface.get_current_texture())?;
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1640,6 +1654,16 @@ impl Gfx {
             (u32, u32),
         ),
     {
+        // Acquire the frame FIRST (v3.7.1, Antigravity on #655): every upload
+        // below is staged by wgpu until the next `queue.submit`. A hidden
+        // window (`Occluded`) returns before that submit on every redraw, and
+        // the display-sync watchdog keeps redrawing, so uploading first
+        // staged a ~240 KB frame per redraw that nothing ever submitted, for
+        // as long as the window stayed hidden. Skipping before the uploads
+        // also leaves the upload-skip shadow untouched, so the first visible
+        // frame uploads the latest picture. (wgpu 29: `get_current_texture`
+        // returns the `CurrentSurfaceTexture` enum; `acquire_frame` maps it.)
+        let frame = acquire_frame(self.surface.get_current_texture())?;
         debug_assert_eq!(dual_rgba.len(), (dual_w * dual_h * 4) as usize);
         let ok = dual_rgba.len() == (dual_w * dual_h * 4) as usize;
         self.ensure_dual_blit(dual_w, dual_h);
@@ -1675,7 +1699,6 @@ impl Gfx {
                 dual_h,
             )),
         );
-        let frame = acquire_frame(self.surface.get_current_texture())?;
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
