@@ -138,14 +138,11 @@ jobs:
       # composite installs it explicitly, and its cargo cache saves from `main`
       # only.
       #
-      # `shared-key`, not `cache-key` (2026-11): all three jobs in this file
-      # compile the same thing -- `cargo ndk -t arm64-v8a -t x86_64 build
-      # --profile release-mobile -p rustynes-mobile -p rustynes-android`, here
-      # directly and in the other two through Gradle's `cargoNdkBuild`, plus
-      # the host `uniffi-bindgen` -- so one entry serves all three instead of
-      # three copies of it in the 10 GB repository cache. This job saves it on
-      # `main`; the other two need this one, so they find it already saved and
-      # restore it.
+      # `shared-key` (2026-11): a stable cache name for the Android build. This
+      # job is now the ONLY one that compiles Rust: `kotlin-unit-tests` and
+      # `gradle-bundle` take its uploaded libraries and bindings
+      # (`-PrustynesPrebuiltLibs`) and never invoke cargo. The key is kept so a
+      # later job that does need the NDK build can share this entry.
       - uses: ./.github/actions/rust-setup
         with:
           targets: aarch64-linux-android,x86_64-linux-android
@@ -182,18 +179,26 @@ jobs:
           echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$ndk" >> "$GITHUB_ENV"
 
+      # `-o` copies each library into `jniLibs/<abi>/` as well, the layout
+      # Gradle's `cargoNdkBuild` writes into `app/src/main/jniLibs/`; together
+      # with the bindings below that directory is what the two Gradle jobs
+      # consume through `-PrustynesPrebuiltLibs` (app/build.gradle.kts), so this
+      # is the only job that compiles the Rust. The `-t` list must cover the
+      # ABIs Gradle packages by default (`rustAbis`: arm64-v8a + x86_64); Gradle
+      # refuses a prebuilt directory that lacks one.
       - name: Cross-compile mobile + android (arm64 + x86_64)
         run: |
           cargo ndk -t arm64-v8a -t x86_64 --platform 26 \
+            -o target/android-prebuilt/jniLibs \
             build --profile release-mobile -p rustynes-mobile -p rustynes-android
 
-      - name: Generate Kotlin bindings (UniFFI smoke)
+      - name: Generate Kotlin bindings (UniFFI)
         run: |
           cargo run -q -p rustynes-mobile --bin uniffi-bindgen -- \
             generate \
             --library target/aarch64-linux-android/release-mobile/librustynes_mobile.so \
-            --language kotlin --out-dir target/uniffi-kotlin --no-format
-          test -f target/uniffi-kotlin/uniffi/rustynes_mobile/rustynes_mobile.kt
+            --language kotlin --out-dir target/android-prebuilt/kotlin --no-format
+          test -s target/android-prebuilt/kotlin/uniffi/rustynes_mobile/rustynes_mobile.kt
 
       # 16 KB page-alignment check on the shipped arm64 library. Every PT_LOAD
       # segment must be aligned to at least 2**14; r27+ does this by default but
@@ -210,13 +215,16 @@ jobs:
           fi
           echo "All LOAD segments >= 16 KB aligned."
 
-      - name: Upload cross-built libraries
+      # `jniLibs/<abi>/*.so` + `kotlin/uniffi/...`, rooted at
+      # `target/android-prebuilt/` (a single directory, so the artifact keeps
+      # that layout). `if-no-files-found: error`: an empty artifact here would
+      # otherwise surface only as Gradle's own refusal in the next two jobs.
+      - name: Upload cross-built libraries + bindings
         uses: actions/upload-artifact@v7
         with:
-          name: rustynes-android-so
-          path: |
-            target/aarch64-linux-android/release-mobile/librustynes_*.so
-            target/x86_64-linux-android/release-mobile/librustynes_*.so
+          name: rustynes-android-prebuilt
+          path: target/android-prebuilt/
+          if-no-files-found: error
 
   kotlin-unit-tests:
     name: Kotlin unit tests (foss debug, JVM)
@@ -225,8 +233,10 @@ jobs:
     # A GATE, unlike the bundle job below. Until v2.9.3 nothing in CI ran the
     # app's JVM tests (`android/app/src/test/`: SocdTest, PersistenceTest), so
     # they had only ever run by hand -- and v2.9.2 added SocdTest precisely to pin
-    # a mobile behaviour. `preBuild` depends on the cargo-ndk cross-build and the
-    # UniFFI binding generation, so this needs the same toolchain as the bundle.
+    # a mobile behaviour. `preBuild` needs the Rust libraries and the UniFFI
+    # bindings; since v3.7.0 it takes them from cross-build's artifact
+    # (`-PrustynesPrebuiltLibs`) instead of re-running cargo-ndk, which had
+    # been about 10 of this job's minutes on every run.
     needs: cross-build
     # Every `main` push and dispatch, and a PR that changes the app, the UniFFI
     # bridge it compiles against, or this workflow (the `kotlin` filter above).
@@ -237,15 +247,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: ./.github/actions/rust-setup
+      # No Rust toolchain or cargo-ndk here: the libraries and bindings come
+      # from cross-build (see the gradle-bundle job for the whole note).
+      - name: Download cross-built libraries + bindings
+        uses: actions/download-artifact@v8
         with:
-          targets: aarch64-linux-android,x86_64-linux-android
-          apt: "false"
-          # One entry for all three jobs; see the cross-build job.
-          shared-key: android-ndk
-      - uses: taiki-e/cache-cargo-install-action@v3
-        with:
-          tool: cargo-ndk@4
+          name: rustynes-android-prebuilt
+          path: ${{ runner.temp }}/android-prebuilt
       # v3.0.1: Temurin 25, the newest LTS (was 17). This is the JDK that RUNS
       # Gradle; the bytecode target stays JVM 17 (`jvmTarget` and
       # `sourceCompatibility` in app/build.gradle.kts), which is AGP 9.4's
@@ -273,7 +281,11 @@ jobs:
           cache-provider: basic
       - name: Run the JVM unit tests
         working-directory: android
-        run: ./gradlew :app:testFossDebugUnitTest --no-daemon --warning-mode all
+        env:
+          PREBUILT: ${{ runner.temp }}/android-prebuilt
+        run: >-
+          ./gradlew :app:testFossDebugUnitTest --no-daemon --warning-mode all
+          "-PrustynesPrebuiltLibs=$PREBUILT"
       - name: Upload the test report on failure
         if: failure()
         uses: actions/upload-artifact@v7
@@ -304,19 +316,26 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: ./.github/actions/rust-setup
+      # v3.7.0: the Rust is compiled once, in cross-build. Until then this job
+      # and kotlin-unit-tests each re-ran the same cargo-ndk build (and the
+      # host uniffi-bindgen) through Gradle's `cargoNdkBuild` / `uniffiBindgen`,
+      # which `preBuild` depends on: a median ~11 minutes of this job and ~10
+      # of the unit-test job, measured from the `> Task :app:cargoNdkBuild` to
+      # `> Task :app:preBuild` span of ten runs, 2026-11-07..12. Now both
+      # download cross-build's artifact and pass `-PrustynesPrebuiltLibs`,
+      # under which those two tasks are not wired into the build and Gradle
+      # copies the files into place instead (app/build.gradle.kts). Gradle
+      # refuses the build if the directory is missing, empty or lacks an ABI
+      # the app packages, so an APK without native libraries cannot come out
+      # of here. The "Resolve NDK" step below stays, deliberately: it was
+      # installed for cargo-ndk, but AGP's native strip and the release
+      # SYMBOL_TABLE may also find it, and whether they do was not established
+      # when this changed. Dropping it is a separate change with its own check.
+      - name: Download cross-built libraries + bindings
+        uses: actions/download-artifact@v8
         with:
-          targets: aarch64-linux-android,x86_64-linux-android
-          apt: "false"
-          # One entry for all three jobs; see the cross-build job.
-          shared-key: android-ndk
-      # Cached compiled binary instead of `cargo install` on every run (it
-      # compiled cargo-ndk from source, in both jobs, every time). `--locked` is
-      # the action's default. cargo-ndk publishes no prebuilt binary that
-      # `taiki-e/install-action` knows, which is why this is the caching form.
-      - uses: taiki-e/cache-cargo-install-action@v3
-        with:
-          tool: cargo-ndk@4
+          name: rustynes-android-prebuilt
+          path: ${{ runner.temp }}/android-prebuilt
       # v3.0.1: Temurin 25, the newest LTS (was 17). This is the JDK that RUNS
       # Gradle; the bytecode target stays JVM 17 (`jvmTarget` and
       # `sourceCompatibility` in app/build.gradle.kts), which is AGP 9.4's
@@ -371,7 +390,11 @@ jobs:
         #
         # A warning that cannot be attributed is a warning nobody acts on, and
         # this one has a deadline attached to it.
-        run: ./gradlew :app:bundleFossRelease :app:bundlePlayRelease --no-daemon --warning-mode all
+        env:
+          PREBUILT: ${{ runner.temp }}/android-prebuilt
+        run: >-
+          ./gradlew :app:bundleFossRelease :app:bundlePlayRelease --no-daemon --warning-mode all
+          "-PrustynesPrebuiltLibs=$PREBUILT"
       - name: Upload AABs
         uses: actions/upload-artifact@v7
         with:

@@ -42,6 +42,53 @@ val shipAbi = "arm64-v8a"
 // on #571). The debug variant still PACKAGES `builtAbis` only.
 val rustAbis: List<String> = (builtAbis + shipAbi).distinct()
 
+// The cdylibs cargo-ndk writes into `jniLibs/<abi>/`, one per crate it builds.
+val rustLibs = listOf("librustynes_mobile.so", "librustynes_android.so")
+
+// v3.7.0: `-PrustynesPrebuiltLibs=<dir>` takes the Rust libraries and the UniFFI
+// Kotlin bindings from a directory instead of building them, so CI compiles the
+// Rust once (android.yml's `cross-build`, which uploads exactly this layout) and
+// its two Gradle jobs no longer repeat that ~10-minute cargo-ndk build each:
+//
+//     <dir>/jniLibs/<abi>/librustynes_mobile.so      (every ABI in `rustAbis`)
+//     <dir>/jniLibs/<abi>/librustynes_android.so
+//     <dir>/kotlin/uniffi/rustynes_mobile/rustynes_mobile.kt
+//
+// A relative path resolves against the workspace root. Unset (every local
+// build), nothing changes: `cargoNdkBuild` and `uniffiBindgen` run as before.
+// Set, nothing depends on those two tasks (`preBuild` depends on
+// `usePrebuiltRust` instead, below), and the directory is checked here, at
+// configuration time, so a missing, empty or partial directory fails
+// the build before anything is packaged rather than producing an APK with no
+// native library in it (System.loadLibrary would then fail only on a device).
+val prebuiltRustDir: File? = (findProperty("rustynesPrebuiltLibs") as? String)?.let { raw ->
+    val path = raw.trim()
+    if (path.isEmpty()) {
+        throw GradleException("-PrustynesPrebuiltLibs is set but empty; name the directory cross-build produced, or drop the property to build the Rust here")
+    }
+    File(path).let { if (it.isAbsolute) it else workspaceRoot.resolve(path) }
+}
+// Every file the prebuilt directory must hold, non-empty, for the ABIs this
+// build packages (`builtAbis` for debug, `shipAbi` for release: `rustAbis` is
+// their union, the same set `cargoNdkBuild` would compile).
+val prebuiltRustFiles: List<String> =
+    rustAbis.flatMap { abi -> rustLibs.map { "jniLibs/$abi/$it" } } +
+        "kotlin/uniffi/rustynes_mobile/rustynes_mobile.kt"
+if (prebuiltRustDir != null) {
+    if (!prebuiltRustDir.isDirectory) {
+        throw GradleException("-PrustynesPrebuiltLibs=$prebuiltRustDir is not a directory")
+    }
+    val missing = prebuiltRustFiles.filter { rel ->
+        prebuiltRustDir.resolve(rel).let { !it.isFile || it.length() == 0L }
+    }
+    if (missing.isNotEmpty()) {
+        throw GradleException(
+            "-PrustynesPrebuiltLibs=$prebuiltRustDir lacks (or has empty) " +
+                missing.joinToString(", ") + "; the build packages ABIs " + rustAbis.joinToString(","),
+        )
+    }
+}
+
 android {
     namespace = "com.doublegate.rustynes"
     // v1.8.8 "Atlas" (Workstream A): compile against API 37 (Android 17; the
@@ -351,7 +398,56 @@ val uniffiBindgen = tasks.register<Exec>("uniffiBindgen") {
     }
 }
 
-tasks.named("preBuild") { dependsOn(uniffiBindgen) }
+// `-PrustynesPrebuiltLibs` (see `prebuiltRustDir` above): copy the prebuilt
+// libraries into `jniLibs/` and the bindings into the UniFFI output directory,
+// the two places `cargoNdkBuild` and `uniffiBindgen` write, so everything
+// downstream of `preBuild` sees the same files either way. Like those two Exec
+// tasks it declares no outputs (it always runs; the copy takes well under a
+// second), which keeps the source-set directories out of Gradle's
+// implicit-dependency validation, as they are today. It re-checks the directory before
+// copying, because a configuration-cache hit skips the configuration-time
+// check. Only registered when the property is set.
+val usePrebuiltRust = prebuiltRustDir?.let { dir ->
+    tasks.register("usePrebuiltRust") {
+        group = "rust"
+        description = "Use the prebuilt Rust libraries + UniFFI bindings from -PrustynesPrebuiltLibs instead of cargo-ndk."
+        // Task locals, not script properties: the configuration cache cannot
+        // serialize a reference to the build script (see `uniffiBindgen`).
+        val src = dir
+        val required = prebuiltRustFiles
+        val jniOut = jniLibsDir
+        val ktOut = uniffiGenDir
+        doLast {
+            val missing = required.filter { rel -> src.resolve(rel).let { !it.isFile || it.length() == 0L } }
+            if (missing.isNotEmpty()) {
+                throw GradleException("-PrustynesPrebuiltLibs=$src lacks (or has empty) " + missing.joinToString(", "))
+            }
+            for (rel in required) {
+                val from = src.resolve(rel)
+                val to = if (rel.startsWith("jniLibs/")) {
+                    jniOut.resolve(rel.removePrefix("jniLibs/"))
+                } else {
+                    ktOut.resolve(rel.removePrefix("kotlin/"))
+                }
+                from.copyTo(to, overwrite = true)
+            }
+            // The same UNUSED_EXPRESSION suppression `uniffiBindgen` applies;
+            // cross-build uploads the bindings exactly as UniFFI wrote them.
+            val kt = ktOut.resolve("uniffi/rustynes_mobile/rustynes_mobile.kt")
+            val anchor = "@file:Suppress(\"NAME_SHADOWING\")"
+            val text = kt.readText()
+            if (text.contains(anchor)) {
+                kt.writeText(text.replace(anchor, "@file:Suppress(\"NAME_SHADOWING\", \"UNUSED_EXPRESSION\")"))
+            } else {
+                logger.warn("usePrebuiltRust: @file:Suppress header not found in ${kt.name}; UNUSED_EXPRESSION not suppressed")
+            }
+        }
+    }
+}
+
+// `cargoNdkBuild` and `uniffiBindgen` stay registered either way (so they can
+// be run by hand), but with the property set nothing depends on them.
+tasks.named("preBuild") { dependsOn(usePrebuiltRust ?: uniffiBindgen) }
 
 dependencies {
     // v1.8.8 "Atlas": the Compose BOM is tracked on its stable line, for the
