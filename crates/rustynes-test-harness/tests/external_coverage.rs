@@ -716,8 +716,10 @@ fn apply_filter(all: Vec<String>) -> Vec<String> {
 ///
 /// v3.7.1: the boots run on `RUSTYNES_COVERAGE_JOBS` worker threads
 /// (default: the available parallelism; `1` is the old serial sweep), and
-/// the outcomes are reported in corpus order, so the log and the failure
-/// list read the same either way.
+/// the outcomes are reported in corpus order, so the reported SKIP lines,
+/// the failure list and the ratchet read the same either way. A line a
+/// worker prints itself while booting (`load_nes`'s "FDS disk but no BIOS"
+/// SKIP) appears in completion order, and can interleave.
 ///
 /// Skips cleanly (prints a SKIP line, passes) when no ROMs are staged,
 /// so a fresh checkout without the gitignored dumps stays green.
@@ -744,8 +746,10 @@ fn external_coverage_boot_smoke() {
     // Each builds its own `Nes` and determinism holds per ROM, so the order
     // they run in changes no result; `parallel_map_ordered` hands them out by
     // index and returns the outcomes in the corpus order, so everything below
-    // (the SKIP lines, the failure list, the ratchet) reads exactly as the
-    // serial sweep's did. `RUSTYNES_COVERAGE_JOBS=1` runs it serially.
+    // (the SKIP lines this loop prints, the failure list, the ratchet) reads
+    // exactly as the serial sweep's did. Lines a worker prints during its own
+    // boot (`load_nes`'s missing-BIOS SKIP) come out in completion order.
+    // `RUSTYNES_COVERAGE_JOBS=1` runs it serially.
     let jobs = coverage_jobs();
     eprintln!("[external_coverage] {jobs} worker thread(s)");
     let outcomes = parallel_map_ordered(&roms, jobs, |rom_rel| boot_one(rom_rel));
