@@ -294,8 +294,12 @@ impl Default for NetplayUi {
 impl Drop for NetplayUi {
     fn drop(&mut self) {
         self.finish_edge_publish();
+        // Only a panel that published records: a non-publishing peer dropped
+        // later in the same test must not clobber the host's record.
         #[cfg(test)]
-        DROPPED_EDGE_SENT.with(|d| *d.borrow_mut() = core::mem::take(&mut self.edge_sent));
+        if !self.edge_sent.is_empty() {
+            DROPPED_EDGE_SENT.with(|d| *d.borrow_mut() = core::mem::take(&mut self.edge_sent));
+        }
     }
 }
 
@@ -343,6 +347,9 @@ impl NetplayUi {
     /// machine, as for a direct spectate; the viewer starts the match from
     /// the deterministic power-on and catches up from frame 0.
     pub fn start_edge_spectate(&mut self, url: &str, identity: SessionIdentity) {
+        // A publishing session this replaces sends its tail first, and its
+        // relay client goes with it (Antigravity on #653).
+        self.finish_edge_publish();
         self.is_host = false;
         self.identity = identity;
         self.state = NetplayState::EdgeSpectating {
@@ -469,6 +476,9 @@ impl NetplayUi {
     /// shares its own listening `IP:port` and the joiner dials in (see
     /// [`NetplayConnection::host`]).
     pub fn start_host(&mut self, local_port: u16, num_players: u8, identity: SessionIdentity) {
+        // A publishing session this replaces sends its tail first, and its
+        // relay client goes with it (Antigravity on #653).
+        self.finish_edge_publish();
         let local = SocketAddr::from(([0, 0, 0, 0], local_port));
         self.is_host = true;
         self.identity = identity;
@@ -521,6 +531,9 @@ impl NetplayUi {
     /// same call joins a 2-player host (as player 1 of 2) and a 3-4 player
     /// host (as the player its roster assigns); see the module docs.
     pub fn start_join(&mut self, remote: SocketAddr, identity: SessionIdentity) {
+        // A publishing session this replaces sends its tail first, and its
+        // relay client goes with it (Antigravity on #653).
+        self.finish_edge_publish();
         let local = SocketAddr::from(([0, 0, 0, 0], 0));
         self.is_host = false;
         self.identity = identity;
@@ -560,6 +573,9 @@ impl NetplayUi {
     /// test. The local emulator is power-cycled to the deterministic cold-boot
     /// so frame 0 matches the players' canonical timeline.
     pub fn start_spectate(&mut self, remote: SocketAddr, identity: SessionIdentity) {
+        // A publishing session this replaces sends its tail first, and its
+        // relay client goes with it (Antigravity on #653).
+        self.finish_edge_publish();
         let local = SocketAddr::from(([0, 0, 0, 0], 0));
         self.is_host = false;
         self.identity = identity;
@@ -1063,11 +1079,10 @@ impl NetplayUi {
     /// publisher already gone. In any other state there is no session to
     /// read, and the publisher is simply dropped. The publisher is created
     /// only by `enter_game`; the session leaves `InGame` only through
-    /// `leave`, `fail` or `begin_investigating`, and dropping the panel
-    /// (closing the window mid-match) comes here too, through `Drop`, so
-    /// the tail is sent on every end. A `start_*` call made while a session
-    /// runs replaces the state directly and does not come here; the panel
-    /// does not offer that.
+    /// `leave`, `fail`, `begin_investigating` or a `start_*` call made while
+    /// it runs (the panel does not offer that, but each `start_*` comes here
+    /// first), and dropping the panel (closing the window mid-match) comes
+    /// here too, through `Drop`, so the tail is sent on every end.
     fn finish_edge_publish(&mut self) {
         let Some((client, mut publisher)) = self.edge_publisher.take() else {
             return;
@@ -1559,6 +1574,20 @@ mod tests {
             relayed_through(&sent),
             confirmed,
             "dropping the panel sent the held tail"
+        );
+
+        // A `start_*` call on a publishing panel sends it before replacing
+        // the session, and the stale relay client goes with it.
+        let (mut host, mut join, mut nes_host, mut nes_join) = publishing_pair();
+        let confirmed =
+            advance_to_a_pending_tail(&mut host, &mut join, &mut nes_host, &mut nes_join);
+        let hash = host.identity;
+        host.start_spectate(SocketAddr::from((Ipv4Addr::LOCALHOST, 9)), hash);
+        assert!(host.edge_publisher.is_none(), "start_* ends the publish");
+        assert_eq!(
+            relayed_through(&host.edge_sent),
+            confirmed,
+            "start_spectate on a publishing panel sent the held tail"
         );
 
         // `leave` still sends it.

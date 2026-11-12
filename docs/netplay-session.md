@@ -488,9 +488,12 @@ encoding):
 `rustynes-frontend`'s `an_ended_session_relays_every_confirmed_frame` (two
 loopback `NetplayUi`s, the host publishing to an unreachable relay, a
 test-only record of what was handed to the relay client): with a tail held,
-`fail` from `InGame`, `fail` from `Investigating` and `leave` each leave the
-relayed frames contiguous from 0 through the last confirmed frame. Removing
-the helper call from `fail` fails it.
+`fail` from `InGame`, entering `Investigating` (which sends the tail at
+once, so the later `fail` sends nothing), `fail` after frames the publisher
+never polled, dropping the panel, a `start_*` call on a publishing panel and
+`leave` each leave the relayed frames contiguous from 0 through the last
+confirmed frame. Removing the helper call from `fail`, from
+`begin_investigating` or from `Drop` fails it.
 
 `services/hosted/test/spectate.test.ts` (vitest in workerd): the classifier;
 a mid-session viewer gets the backlog then the live feed; inputs only (a
