@@ -394,8 +394,18 @@ fn overwrite_header(path: &std::path::Path, header: &[u8; HEADER_LEN]) -> std::i
     // since (Antigravity on #630; the closed-PR review sweep).
     crate::bounded_read::regular_file_metadata(path)?;
     let mut file = std::fs::OpenOptions::new().write(true).open(path)?;
+    let meta = file.metadata()?;
+    // The pre-open check above keeps a FIFO from blocking `open`; this one, on
+    // the opened descriptor, refuses a non-blocking device or directory
+    // swapped in between the two (#654 review).
+    if !meta.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
     // Guard against truncated files: the body after the header must exist.
-    if file.metadata()?.len() < HEADER_LEN as u64 {
+    if meta.len() < HEADER_LEN as u64 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
             "file too short to hold a header",

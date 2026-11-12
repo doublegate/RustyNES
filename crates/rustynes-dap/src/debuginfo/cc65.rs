@@ -102,7 +102,14 @@ impl<'a> Record<'a> {
             .or_else(|| v.strip_prefix("0X"))
             .map_or_else(
                 || v.parse::<i64>().ok(),
-                |h| i64::from_str_radix(h, 16).ok(),
+                // `from_str_radix` takes a sign too, so `0x-5` read as -5.
+                |h| {
+                    if h.starts_with(['-', '+']) {
+                        None
+                    } else {
+                        i64::from_str_radix(h, 16).ok()
+                    }
+                },
             )?;
         if neg { n.checked_neg() } else { Some(n) }
     }
@@ -661,6 +668,11 @@ csym\tid=2,name=\"q\",scope=1,type=0,sc=auto,offs=-2
         assert_eq!(r.num("c"), None);
         assert_eq!(r.num("d"), None, "a leading + is no cc65 number either");
         assert_eq!(r.num("e"), Some(-9_223_372_036_854_775_807));
+        let r = Record::parse("sym\tid=0,f=0x-5,g=0x+5,h=-0x-5,i=-0x5").expect("record");
+        assert_eq!(r.num("f"), None, "a sign after the 0x prefix");
+        assert_eq!(r.num("g"), None);
+        assert_eq!(r.num("h"), None);
+        assert_eq!(r.num("i"), Some(-5));
     }
 
     #[test]
