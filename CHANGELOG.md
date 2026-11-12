@@ -90,6 +90,14 @@ cycle-accurate core later replaced.
 
 ### Fixed
 
+- **A hidden window no longer floods the terminal with `render error:
+  surface unavailable: occluded`.** macOS reports the window's surface as
+  occluded while it is minimised, covered, on another Space or on a
+  sleeping display. RustyNES keeps emulating then (the display-sync watchdog
+  goes on requesting redraws), and printed that line on every redraw, for as
+  long as the window stayed hidden. A hidden window, and a frame not ready in
+  time, now skip the frame silently; a validation error is still reported.
+  Reported on a MacBook Pro M5 Max running the v3.7.0 release.
 Found by re-reading every bot review on the pull requests closed since
 v3.4.1 (#618 to #649) for findings that never got an answer; nothing here
 moves a frame, a sample or a bus cycle, so the emulation epoch stays 10.
