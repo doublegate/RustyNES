@@ -1514,8 +1514,8 @@ impl EmuCore {
         if let Some(dual) = self.dual.as_mut() {
             let frame = dual.main().frame();
             let turbo = |b| apply_turbo(b, frame, inputs.turbo_mask, inputs.turbo_period);
-            for port in 0..4 {
-                dual.set_buttons(port, turbo(inputs.buttons[port]));
+            for (port, &b) in inputs.buttons.iter().enumerate() {
+                dual.set_buttons(port, turbo(b));
             }
             return;
         }

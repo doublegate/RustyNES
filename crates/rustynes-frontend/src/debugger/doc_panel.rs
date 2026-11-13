@@ -102,10 +102,7 @@ impl Default for DocPanelState {
     fn default() -> Self {
         Self {
             // Land on the first shared topic (Controls), like the CLI.
-            selected: HELP_TOPICS
-                .first()
-                .map(|t| t.id.to_string())
-                .unwrap_or_default(),
+            selected: HELP_TOPICS.first().map_or_default(|t| t.id.to_string()),
             filter: String::new(),
             changelog_idx: 0,
         }

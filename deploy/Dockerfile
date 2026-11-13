@@ -11,12 +11,12 @@
 # reach it. Pair with a STUN/TURN server (coturn) for NAT traversal.
 
 # --- build stage ---------------------------------------------------------------
-# Match the workspace toolchain (rust-toolchain.toml channel = 1.99.1; the `1.99` tag tracks the patch).
+# Match the workspace toolchain (rust-toolchain.toml channel = 1.100.0; the `1.100` tag tracks the patch).
 # rustup inside the image reads that file from the copied workspace and
 # installs the pinned channel regardless, so this tag mainly saves the
 # download; keep the two equal. (It said 1.86 for two years after the pin
 # moved to 1.96; the build was still correct only because of that override.)
-FROM rust:1.99-trixie AS build
+FROM rust:1.100-trixie AS build
 WORKDIR /src
 
 # Copy the whole workspace (the example depends on the rustynes-netplay crate +

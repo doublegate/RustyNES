@@ -2013,8 +2013,7 @@ impl NesController {
         self.lock()
             .dual
             .as_ref()
-            .map(|cab| cab.system.sub_framebuffer().to_vec())
-            .unwrap_or_default()
+            .map_or_default(|cab| cab.system.sub_framebuffer().to_vec())
     }
 
     /// v2.9.7 — drop a coin into acceptor `acceptor` of a Vs. System machine.
@@ -2159,7 +2158,7 @@ impl NesController {
     /// recording). The caller writes them to storage.
     pub fn movie_stop_recording(&self) -> Vec<u8> {
         let rec = self.lock().recorder.take();
-        rec.map(|r| r.finish().serialize()).unwrap_or_default()
+        rec.map_or_default(|r| r.finish().serialize())
     }
 
     /// Load + play a `.rnm` movie: seek the emulator to its start point and drive
@@ -2355,8 +2354,7 @@ impl NesController {
         self.lock()
             .script
             .as_ref()
-            .map(rustynes_script::ScriptEngine::drain_log)
-            .unwrap_or_default()
+            .map_or_default(rustynes_script::ScriptEngine::drain_log)
     }
 
     // --- RetroAchievements (v1.8.6) --------------------------------------
@@ -2532,8 +2530,7 @@ impl NesController {
         let mut g = self.lock();
         let blob =
             g.ra.as_mut()
-                .map(rustynes_ra::RaSession::serialize_progress)
-                .unwrap_or_default();
+                .map_or_default(rustynes_ra::RaSession::serialize_progress);
         drop(g);
         blob
     }
@@ -2563,10 +2560,7 @@ impl NesController {
     /// The current rich-presence string (empty if none).
     pub fn ra_rich_presence(&self) -> String {
         let g = self.lock();
-        let rp =
-            g.ra.as_ref()
-                .map(|ra| ra.rich_presence.clone())
-                .unwrap_or_default();
+        let rp = g.ra.as_ref().map_or_default(|ra| ra.rich_presence.clone());
         drop(g);
         rp
     }
@@ -2598,7 +2592,7 @@ impl NesController {
     /// if no game is loaded). A flat `Vec<u32>` keeps the FFI shape minimal.
     pub fn ra_game_summary(&self) -> Vec<u32> {
         let g = self.lock();
-        let s = g.ra.as_ref().map(|ra| ra.summary).unwrap_or_default();
+        let s = g.ra.as_ref().map_or_default(|ra| ra.summary);
         drop(g);
         vec![
             s.num_core_achievements,

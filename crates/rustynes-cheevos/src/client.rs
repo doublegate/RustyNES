@@ -837,8 +837,7 @@ mod tests {
         Box::new(move |req: &crate::http::Request<'_>| {
             let post = req
                 .post
-                .map(|p| String::from_utf8_lossy(p).into_owned())
-                .unwrap_or_default();
+                .map_or_default(|p| String::from_utf8_lossy(p).into_owned());
             let body = match method(req.url, &post).as_str() {
                 "login2" => LOGIN,
                 "achievementsets" => PATCH,

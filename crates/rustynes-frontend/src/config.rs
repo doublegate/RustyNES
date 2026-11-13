@@ -570,8 +570,7 @@ impl NetplayConfig {
             return self.signaling_url.clone();
         }
         self.hosted_base()
-            .map(|b| rustynes_netplay::hosted::signaling_url(&b))
-            .unwrap_or_default()
+            .map_or_default(|b| rustynes_netplay::hosted::signaling_url(&b))
     }
 
     /// Remember the signaling URL the browser lobby connected with, as a

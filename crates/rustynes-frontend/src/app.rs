@@ -1702,7 +1702,7 @@ impl App {
         let Some(first) = images.first() else {
             return;
         };
-        let dir = first.parent().map(Path::to_path_buf).unwrap_or_default();
+        let dir = first.parent().map_or_default(Path::to_path_buf);
         let stem = first
             .file_stem()
             .map_or_else(|| "bundle".to_owned(), |s| s.to_string_lossy().into_owned());
@@ -1718,7 +1718,7 @@ impl App {
         let name = manifest
             .file_stem()
             .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-        let manifest_dir = manifest.parent().map(Path::to_path_buf).unwrap_or_default();
+        let manifest_dir = manifest.parent().map_or_default(Path::to_path_buf);
         let text = match crate::bundle::manifest_text_for(&name, &manifest_dir, &images) {
             Ok(text) => text,
             Err(e) => {
@@ -3818,13 +3818,12 @@ impl App {
             .debugger
             .as_ref()
             .and_then(crate::debugger::DebuggerOverlay::tas_editor)
-            .map(|editor| {
+            .map_or_default(|editor| {
                 editor
                     .markers()
                     .map(|(f, l)| (f as u64, l.to_owned()))
                     .collect()
-            })
-            .unwrap_or_default();
+            });
         if markers.iter().all(|(_, l)| l.trim().is_empty()) {
             self.ui.set_status(StatusMessage::info(
                 "Subtitle export: no TAStudio markers to export",
@@ -6176,8 +6175,7 @@ impl App {
         let pairs = self
             .debugger
             .as_ref()
-            .map(crate::debugger::DebuggerOverlay::symbol_pairs)
-            .unwrap_or_default();
+            .map_or_default(crate::debugger::DebuggerOverlay::symbol_pairs);
         engine.set_symbols(&pairs);
     }
 
@@ -6461,7 +6459,7 @@ impl App {
             .debugger
             .as_ref()
             .and_then(crate::debugger::DebuggerOverlay::tas_editor)
-            .map(|ed| {
+            .map_or_default(|ed| {
                 let wanted: std::collections::HashSet<&str> = cmds
                     .iter()
                     .filter_map(|c| match c {
@@ -6473,8 +6471,7 @@ impl App {
                     .filter(|(_, l)| wanted.contains(l))
                     .map(|(f, l)| (l.to_owned(), f))
                     .collect()
-            })
-            .unwrap_or_default();
+            });
         let mut guard = self.emu.lock();
         let Some(nes) = guard.nes.as_mut() else {
             return;
@@ -6847,8 +6844,7 @@ impl App {
                 let label = self
                     .debugger
                     .as_mut()
-                    .map(|d| d.script_panel().loaded_label().to_owned())
-                    .unwrap_or_default();
+                    .map_or_default(|d| d.script_panel().loaded_label().to_owned());
                 if !label.is_empty() {
                     self.load_script_from_path(&PathBuf::from(label));
                 }
@@ -10667,8 +10663,7 @@ impl App {
         let desired: Vec<&'static str> = self
             .debugger
             .as_ref()
-            .map(|d| d.detached_panels().iter().copied().collect())
-            .unwrap_or_default();
+            .map_or_default(|d| d.detached_panels().iter().copied().collect());
         // Open windows for panels detached since the last reconcile.
         //
         // On failure the panel is REATTACHED rather than left pending. Without
@@ -11037,10 +11032,7 @@ impl ApplicationHandler<AppEvent> for App {
                     // extension (case-insensitive). v2.2.0 added `.fds`; v1.6.0
                     // (E2) added the UNIF container. v3.5.0: the list lives in
                     // `drop_route::is_rom_name`, shared with the browser drop.
-                    let name = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy())
-                        .unwrap_or_default();
+                    let name = path.file_name().map_or_default(|n| n.to_string_lossy());
                     // v3.5.0 (`FE-04`): a Multi-Disk bundle drops like a ROM
                     // (desktop only; the browser has no paths to resolve).
                     let ok = crate::drop_route::is_rom_name(&name)
@@ -12556,8 +12548,7 @@ impl ApplicationHandler<AppEvent> for App {
                 let settings = self
                     .debugger
                     .as_mut()
-                    .map(DebuggerOverlay::take_settings_apply)
-                    .unwrap_or_default();
+                    .map_or_default(DebuggerOverlay::take_settings_apply);
                 if settings.ntsc_filter
                     && let Some(gfx) = self.gfx.as_mut()
                 {

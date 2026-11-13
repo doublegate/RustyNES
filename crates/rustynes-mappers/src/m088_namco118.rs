@@ -329,9 +329,8 @@ impl Mapper for Namco118 {
             .push(("R6".into(), format!("{:#04x}", self.regs[6])));
         info.prg_banks
             .push(("R7".into(), format!("{:#04x}", self.regs[7])));
-        for i in 0..6 {
-            info.chr_banks
-                .push((format!("R{i}"), format!("{:#04x}", self.regs[i])));
+        for (i, r) in self.regs.iter().take(6).enumerate() {
+            info.chr_banks.push((format!("R{i}"), format!("{r:#04x}")));
         }
         info
     }

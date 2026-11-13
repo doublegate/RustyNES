@@ -74,14 +74,12 @@ impl GameDbPanelState {
         self.mapper = entry
             .as_ref()
             .and_then(|e| e.mapper)
-            .map(|m| m.to_string())
-            .unwrap_or_default();
+            .map_or_default(|m| m.to_string());
         self.submapper = entry
             .as_ref()
             .and_then(|e| e.submapper)
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-        self.title = entry.map(|e| e.title).unwrap_or_default();
+            .map_or_default(|s| s.to_string());
+        self.title = entry.map_or_default(|e| e.title);
         // v1.7.0 "Forge" Workstream H4 — load the per-game DIP override (if any)
         // from the `<rom>.json` overlay. No sibling path here (the editor only
         // ever reads/writes the config-dir overlay), so pass `None`.

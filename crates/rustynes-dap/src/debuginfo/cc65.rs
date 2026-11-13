@@ -125,8 +125,7 @@ impl<'a> Record<'a> {
 
     fn ids(&self, key: &str) -> Vec<u32> {
         self.raw(key)
-            .map(|v| v.split('+').filter_map(|s| s.parse().ok()).collect())
-            .unwrap_or_default()
+            .map_or_default(|v| v.split('+').filter_map(|s| s.parse().ok()).collect())
     }
 }
 

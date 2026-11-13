@@ -48,10 +48,23 @@ pub const TOOL_NAMES: [&str; 25] = [
     "movie_verify",
 ];
 
-/// No arguments. Still `deny_unknown_fields`, so `{"x": 1}` is refused.
-#[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct NoArgs {}
+pub use no_args::NoArgs;
+
+// `empty_enums` (clippy 1.100) fires inside serde's `Deserialize` expansion: for
+// a struct with no fields the derive emits a field-identifier enum with no
+// variants. The derive's output is a sibling item, so an `allow` on the struct
+// does not reach it (measured); a module-scoped allow does, and the module holds
+// nothing else. Nothing in this crate declares an empty enum.
+#[allow(clippy::empty_enums)]
+mod no_args {
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    /// No arguments. Still `deny_unknown_fields`, so `{"x": 1}` is refused.
+    #[derive(Debug, Default, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct NoArgs {}
+}
 
 /// `resume`: run the main machine in real time.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
