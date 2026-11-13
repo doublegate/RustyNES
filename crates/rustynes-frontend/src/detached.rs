@@ -366,19 +366,30 @@ impl DetachedManager {
         );
         let texture_frees = crate::debugger::take_texture_frees(&mut prepared.textures_delta);
 
-        // Acquire the swapchain image (wgpu `CurrentSurfaceTexture` enum), with
-        // the same reconfigure-on-lost / skip-otherwise policy as `Gfx`. Frees are
-        // deferred to the end so a bail-out cannot drop a texture the next frame
-        // still references.
-        let frame = match w.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                w.surface.configure(device, &w.config);
-                Self::free_textures(&mut w.renderer, texture_frees);
-                return;
-            }
-            _ => {
+        // Acquire the swapchain image through `Gfx`'s own mapping
+        // (`acquire_frame`), with the same policy: reconfigure on lost/outdated,
+        // skip a hidden window or a late frame silently, and REPORT a
+        // validation error, which this window's own match used to swallow in a
+        // wildcard arm (v3.7.1, `T-FRONTEND-HIDDEN-REDRAW`). Frees are deferred
+        // to the end, so a bail-out cannot drop a texture the next frame still
+        // references.
+        //
+        // On every bail-out the texture uploads above have been STAGED but
+        // nothing submits them, and a hidden detached window bails out on every
+        // redraw. An empty `queue.submit` schedules them now, so they do not
+        // pile up for as long as the window stays hidden (wgpu's `Queue` docs
+        // give `queue.submit([])` as the way to schedule staged writes).
+        let frame = match crate::gfx::acquire_frame(w.surface.get_current_texture()) {
+            Ok(t) => t,
+            Err(e) => {
+                queue.submit([]);
+                match e {
+                    crate::gfx::PresentError::Reconfigure => {
+                        w.surface.configure(device, &w.config);
+                    }
+                    e if e.is_expected() => {}
+                    e => eprintln!("rustynes: detached window render error: {e}"),
+                }
                 Self::free_textures(&mut w.renderer, texture_frees);
                 return;
             }
