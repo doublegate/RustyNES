@@ -165,6 +165,12 @@ moves a frame, a sample or a bus cycle, so the emulation epoch stays 10.
   are submitted rather than left to accumulate, and a detached window now
   reports a validation error it used to discard. Reported on a MacBook Pro
   M5 Max running the v3.7.0 release.
+- **On Android and iOS, a desync whose peer never sends its forensics is
+  given up on after 10 seconds**, as on the desktop. A session that ended in
+  a desync with desync forensics on was kept, with its network socket, until
+  the player left netplay, because a peer that had not opted in never
+  answers. The forensics report now says the peer sent no state, and the
+  session is released.
 
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 

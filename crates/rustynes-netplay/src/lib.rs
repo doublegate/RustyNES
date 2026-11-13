@@ -182,8 +182,8 @@ pub use edge::{EdgeConfig, EdgePublisher, EdgeSpectator, SeekError, View, checkp
 #[cfg(all(not(target_arch = "wasm32"), feature = "netplay-client"))]
 pub use edge_client::{EdgeEvent, EdgeRelayClient, spectate_url};
 pub use forensics::{
-    ForensicReport, ForensicsConfig, ForensicsStatus, SECTION_ORDER, SectionDiff, SectionDigests,
-    StateLocation, section_digests,
+    FORENSICS_DEADLINE, ForensicReport, ForensicsConfig, ForensicsStatus, NO_PEER_STATE,
+    SECTION_ORDER, SectionDiff, SectionDigests, StateLocation, section_digests,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use mesh_net::{MeshError, MeshHost, MeshJoiner, UdpMeshTransport};

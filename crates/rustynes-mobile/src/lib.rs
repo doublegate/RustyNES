@@ -1118,9 +1118,13 @@ struct Inner {
     /// desync forensics ([`NesController::np_set_desync_forensics`]).
     netplay_forensics: bool,
     /// v3.7.0 — a session that ended in a desync with forensics on, kept so
-    /// [`NesController::np_forensics`] can finish the exchange. Dropped on
-    /// `np_leave` and when a session starts.
-    netplay_ended: Option<Box<RollbackSession<UdpTransport>>>,
+    /// [`NesController::np_forensics`] can finish the exchange, and when it
+    /// ended. Dropped on `np_leave`, when a session starts, and (v3.7.1,
+    /// `T-MOBILE-FORENSICS-DEADLINE`) once [`rustynes_netplay::FORENSICS_DEADLINE`]
+    /// passes with no report: a peer that never opted in never answers, and
+    /// until then the bridge held the session, its UDP socket and its forensic
+    /// buffers for good.
+    netplay_ended: Option<(Box<RollbackSession<UdpTransport>>, std::time::Instant)>,
     /// Sticky flag: the live session fell back to a TURN relay (symmetric NAT),
     /// so gameplay rides the relay rather than a direct / hole-punched socket
     /// (v1.8.7). Set when `np_tick_negotiating` hands a relayed connection off;
@@ -2856,11 +2860,34 @@ impl NesController {
     /// desync also keeps that session's exchange going, so the app calls it
     /// each frame until it returns a report or it gives up. `None` with
     /// forensics off or nothing found.
+    ///
+    /// v3.7.1: a session that ended in a desync is released once this has
+    /// returned its report, or, if the peer sends nothing for
+    /// [`rustynes_netplay::FORENSICS_DEADLINE`] (10 s), after it has returned
+    /// [`rustynes_netplay::NO_PEER_STATE`] once, as the desktop does. Either
+    /// way later calls return `None`.
     pub fn np_forensics(&self) -> Option<String> {
         let mut g = self.lock();
-        if let Some(ended) = g.netplay_ended.as_mut() {
+        if let Some((ended, since)) = g.netplay_ended.as_mut() {
             ended.pump_forensics();
-            return ended.forensics_report().map(ToString::to_string);
+            // A report ends the exchange, so the session goes with it, as the
+            // desktop's `tick_investigating` ends it with `fail` (Antigravity
+            // on #659: only the deadline released it). Returned once; later
+            // calls return `None`.
+            if let Some(report) = ended.forensics_report() {
+                let report = report.to_string();
+                g.netplay_ended = None;
+                return Some(report);
+            }
+            // v3.7.1 (`T-MOBILE-FORENSICS-DEADLINE`): give up on the peer as
+            // the desktop does (`NetplayUi::tick_investigating`), on the same
+            // shared deadline. Reported once, as the "report"; the session,
+            // its socket and its buffers are released here.
+            if since.elapsed() > rustynes_netplay::FORENSICS_DEADLINE {
+                g.netplay_ended = None;
+                return Some(rustynes_netplay::NO_PEER_STATE.to_string());
+            }
+            return None;
         }
         match &g.netplay {
             Some(NetplaySession::InGame(session, _)) => {
@@ -3648,7 +3675,7 @@ fn np_tick_in_game(
                     rustynes_netplay::ForensicsStatus::Off
                 )
             {
-                g.netplay_ended = Some(Box::new(session));
+                g.netplay_ended = Some((Box::new(session), std::time::Instant::now()));
             }
             g.netplay = None;
             g.netplay_error = Some(format!("netplay error: {e}"));
@@ -5395,6 +5422,73 @@ mod tests {
         ctrl.load_rom(rom, DEFAULT_SAMPLE_RATE)
             .expect("the corrected image loads through load_rom()");
         check(&ctrl, "load_rom");
+    }
+
+    /// v3.7.1 (`T-MOBILE-FORENSICS-DEADLINE`): a session that ended in a
+    /// desync with forensics on, whose peer never answers, is released once
+    /// `FORENSICS_DEADLINE` passes: `np_forensics` returns the no-state text
+    /// once, the ended session is gone, and its UDP socket with it (the port
+    /// binds again). Before, the bridge held all of it until `np_leave`. A real
+    /// desync is not reachable on one core, so the test makes the move
+    /// `np_advance_frame` makes on one, then backdates its end.
+    #[test]
+    fn an_ended_desync_session_is_released_at_the_forensics_deadline() {
+        use std::net::{Ipv4Addr, UdpSocket};
+
+        let host = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("host load");
+        let join = NesController::new(tiny_nrom(), DEFAULT_SAMPLE_RATE).expect("join load");
+        host.np_set_desync_forensics(true); // the joiner never opts in
+        let host_port = host.np_host(0, 2).expect("host bind");
+        join.np_join(SocketAddr::from((Ipv4Addr::LOCALHOST, host_port)).to_string())
+            .expect("join connect");
+        for _ in 0..500 {
+            if host.np_status().phase == NpPhase::InGame
+                && join.np_status().phase == NpPhase::InGame
+            {
+                break;
+            }
+            host.np_advance_frame(0);
+            join.np_advance_frame(0);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(host.np_status().phase, NpPhase::InGame);
+        drop(join); // the peer goes away, as one that never answers
+
+        {
+            let mut g = host.lock();
+            let Some(NetplaySession::InGame(session, _)) = g.netplay.take() else {
+                panic!("the host is in game");
+            };
+            assert!(!matches!(
+                session.forensics_status(),
+                rustynes_netplay::ForensicsStatus::Off
+            ));
+            // Within the deadline: kept, nothing to report yet.
+            g.netplay_ended = Some((session, std::time::Instant::now()));
+        }
+        assert_eq!(host.np_forensics(), None, "within the deadline");
+        assert!(
+            host.lock().netplay_ended.is_some(),
+            "kept within the deadline"
+        );
+
+        // Past it: reported once, released, socket closed.
+        let past = std::time::Instant::now()
+            .checked_sub(rustynes_netplay::FORENSICS_DEADLINE + std::time::Duration::from_secs(1))
+            .expect("a past instant");
+        host.lock().netplay_ended.as_mut().expect("still ended").1 = past;
+        assert_eq!(
+            host.np_forensics().as_deref(),
+            Some(rustynes_netplay::NO_PEER_STATE),
+            "the deadline reports that the peer sent no state"
+        );
+        assert!(
+            host.lock().netplay_ended.is_none(),
+            "the session is released"
+        );
+        assert_eq!(host.np_forensics(), None, "reported once");
+        UdpSocket::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, host_port)))
+            .expect("the ended session's socket is closed, so its port binds again");
     }
 
     /// End-to-end loopback: two `NesController`s over `127.0.0.1` complete the

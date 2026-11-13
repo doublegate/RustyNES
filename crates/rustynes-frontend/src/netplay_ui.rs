@@ -86,9 +86,9 @@ type SessionTransport = Box<dyn Transport>;
 
 /// v3.7.0 (`T-NETPLAY-DESYNC-FORENSICS`) — how long a session that ended in a
 /// desync keeps exchanging forensics material before it gives up on the
-/// peer's half. The exchange itself takes a few ticks on a working link; a
-/// peer that has not opted in never answers.
-const FORENSICS_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+/// peer's half. Defined in `rustynes_netplay` since v3.7.1, so the mobile
+/// bridge ends its sessions on the same deadline.
+use rustynes_netplay::{FORENSICS_DEADLINE, NO_PEER_STATE};
 
 /// Default local UDP port a host binds when none is specified.
 pub const DEFAULT_HOST_PORT: u16 = 7000;
@@ -1032,10 +1032,7 @@ impl NetplayUi {
         session.pump_forensics();
         let done = match session.forensics_report() {
             Some(report) => Some(format!("{why}; {report}")),
-            None if since.elapsed() > FORENSICS_DEADLINE => Some(format!(
-                "{why}; desync forensics: the peer sent no state (it may not have \
-                 opted in)"
-            )),
+            None if since.elapsed() > FORENSICS_DEADLINE => Some(format!("{why}; {NO_PEER_STATE}")),
             None => None,
         };
         self.status.diagnostics.forensics = Some(forensics_text(session));
