@@ -562,3 +562,15 @@ windows-sys = { version = "0.61", optional = true, features = [
     "Win32_Security_Authorization",
     "Win32_System_Threading",
 ] }
+
+# v3.7.1: `build.rs` embeds the icon pack's `RustyNES.ico` into `rustynes.exe`
+# as a Windows resource, so Explorer, the taskbar and shortcuts show it (the
+# winit window icon covers only the open window). Unconditional on purpose: a
+# platform-gated `[target.'cfg(windows)'.build-dependencies]` table is decided
+# by Cargo, while `build.rs` runs on the HOST, so gating the call by the host
+# could name a crate Cargo did not provide (a non-Windows target built on a
+# Windows host). `build.rs` decides by the target alone, and `winresource`
+# drives `rc.exe` on Windows and `windres`/`llvm-rc` elsewhere. Small (its
+# `toml` and `version_check` are already in the graph). MIT.
+[build-dependencies]
+winresource = "0.1.34"

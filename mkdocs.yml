@@ -38,6 +38,10 @@ hooks:
 theme:
   name: material
   language: en
+  # v3.7.1: the icon pack's art (`assets/RustyNES_Icon_Pack/`), copied into
+  # `docs/assets/branding/` because MkDocs serves only files under `docs_dir`.
+  logo: assets/branding/rustynes-icon.png
+  favicon: assets/branding/favicon-32x32.png
   icon:
     repo: fontawesome/brands/github
   features:

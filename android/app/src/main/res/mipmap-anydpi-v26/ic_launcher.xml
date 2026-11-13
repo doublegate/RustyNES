@@ -4,6 +4,8 @@
     <foreground android:drawable="@mipmap/ic_launcher_foreground" />
     <!-- v1.8.8 "Atlas" (Workstream K): Material You themed icon. The system tints
          this layer to the wallpaper palette on API 33+ when the user enables themed
-         icons; the foreground silhouette's alpha drives the shape. -->
-    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
+         icons; the layer's alpha drives the shape. v3.7.1: its own drawable, because
+         the colour foreground's cartridge is opaque throughout and would tint to a
+         featureless block (make_platform_icons.py, `_monochrome`). -->
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
 </adaptive-icon>

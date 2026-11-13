@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#1C1F24</color>
+    <!-- v3.7.1: the icon pack art's own field (assets/RustyNES_Icon_Pack,
+         make_platform_icons.py), so the adaptive foreground sits on its colour. -->
+    <color name="ic_launcher_background">#000214</color>
 </resources>

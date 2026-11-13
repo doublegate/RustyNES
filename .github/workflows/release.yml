@@ -188,7 +188,13 @@ jobs:
       # the wasm build and a plain `cargo build` keep today's defaults.
       # CI's `full-build` job compiles this feature set on macOS and Windows on
       # every ready PR, so a release is never the first build of it there.
+      # v3.7.1: on Windows, `crates/rustynes-frontend/build.rs` embeds the icon
+      # pack's `RustyNES.ico` into `rustynes.exe`. Local builds only warn if the
+      # resource compiler is missing; a release must not ship without the
+      # icon, so this makes that failure a build error.
       - name: Build release binary
+        env:
+          RUSTYNES_REQUIRE_EXE_ICON: "1"
         run: cargo build --release -p rustynes-frontend --features full --target ${{ matrix.target }}
 
       - name: Strip binary (Unix)
@@ -203,6 +209,32 @@ jobs:
           cp "target/${{ matrix.target }}/release/${{ matrix.bin_name }}" "$stage/"
           cp README.md LICENSE NOTICE CHANGELOG.md "$stage/"
           echo "stage=${stage}" >> "$GITHUB_ENV"
+
+      # v3.7.1: the icon on each desktop, from `assets/RustyNES_Icon_Pack/`.
+      # Linux: a freedesktop `.desktop` entry and the hicolor icon theme sizes
+      # under `share/`, laid out as `~/.local/share` or `/usr/share` expect them
+      # (copy `share/` there). The PGO job's archive repeats this, as its layout
+      # must equal this one's.
+      - name: Stage desktop entry and icons (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$stage/share/applications" "$stage/share/icons"
+          cp assets/RustyNES_Icon_Pack/linux/rustynes.desktop "$stage/share/applications/"
+          cp -R assets/RustyNES_Icon_Pack/linux/hicolor "$stage/share/icons/"
+
+      # macOS: `RustyNES.app` (Info.plist + the pack's `.icns`, signed ad hoc),
+      # beside the bare binary. Not a Developer ID and not notarized, so a
+      # downloaded copy needs allowing once (the script's header and the
+      # release notes say how). `codesign --verify` inside the script fails the
+      # step on a malformed bundle.
+      - name: Stage RustyNES.app (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/package/macos-app.sh "$stage/${{ matrix.bin_name }}" "${{ steps.tag.outputs.tag }}" "$stage"
 
       - name: Create archive (tar.gz)
         if: matrix.archive_ext == 'tar.gz'
@@ -383,6 +415,10 @@ jobs:
           chmod +x "$stage/rustynes"
           strip "$stage/rustynes"
           cp README.md LICENSE NOTICE CHANGELOG.md "$stage/"
+          # The same desktop entry and icons as the plain Linux archive (v3.7.1).
+          mkdir -p "$stage/share/applications" "$stage/share/icons"
+          cp assets/RustyNES_Icon_Pack/linux/rustynes.desktop "$stage/share/applications/"
+          cp -R assets/RustyNES_Icon_Pack/linux/hicolor "$stage/share/icons/"
           tar -czf "${stage}.tar.gz" "$stage"
           echo "asset=${stage}.tar.gz" >> "$GITHUB_ENV"
 

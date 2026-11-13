@@ -9,9 +9,19 @@ renders by `generate_icons.py`.
 > (`RustyNES_CrossPlatform_Icons` and `RustyNES_Platform_Icon_Pack`) into one. It
 > takes the *union of the best* of both — every size and variant either produced —
 > regenerated in a single pass so nothing is mixed from two different render runs.
-> It is **not yet wired into the build**; the app currently uses the separate
-> geometric icon in `assets/RustyNES_Icon/` (winit window icon, About dialog,
-> README header). Adopting this pack is a follow-up decision.
+> **Wired into every build since v3.7.1** (maintainer's decision). It supplies:
+>
+> - the desktop window icon (`crates/rustynes-frontend/src/icon.rs`);
+> - the Windows `.exe` icon (`crates/rustynes-frontend/build.rs`, `windows/RustyNES.ico`);
+> - macOS `RustyNES.app` (`scripts/package/macos-app.sh`, `macos/RustyNES.icns`);
+> - the Linux archive's `share/` (the `.desktop` entry and `linux/hicolor/`);
+> - the web favicons and PWA icons (`web/`);
+> - the Android launcher, adaptive, round and TV-banner icons, and the iOS
+>   `AppIcon` (`make_platform_icons.py`);
+> - the README header and the docs site's logo and favicon.
+>
+> The ONE exception is **Help -> About**, which keeps the earlier
+> gear-and-peripherals artwork in `assets/RustyNES_Icon/`.
 
 ## The art
 
