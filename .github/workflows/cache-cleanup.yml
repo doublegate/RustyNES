@@ -47,13 +47,25 @@ jobs:
               --jq '"\(.active_caches_count) caches, \(.active_caches_size_in_bytes) bytes"'
           }
           echo "before: $(usage)" | tee -a "$GITHUB_STEP_SUMMARY"
-          ids=$(gh cache list --ref "$REF" --limit 100 --json id --jq '.[].id')
+          # Every page: a long-lived PR can hold more than one page's worth.
+          ids=$(gh api --paginate "repos/$GH_REPO/actions/caches?ref=$REF&per_page=100" \
+            --jq '.actions_caches[].id')
           n=0
+          gone=0
           for id in $ids; do
             # A cache can be evicted between the list and the delete; that is
-            # the outcome wanted, so a 404 is not a failure.
-            gh cache delete "$id" || echo "cache $id already gone"
-            n=$((n + 1))
+            # the outcome wanted, so a 404 is not a failure. Anything else (a
+            # 403 from a permission change, a 429, a 5xx) fails the job rather
+            # than reading as a deletion (Antigravity on #658).
+            if err=$(gh api -X DELETE "repos/$GH_REPO/actions/caches/$id" 2>&1); then
+              n=$((n + 1))
+            elif [[ "$err" == *"HTTP 404"* ]]; then
+              echo "cache $id already gone"
+              gone=$((gone + 1))
+            else
+              echo "::error::deleting cache $id failed: $err"
+              exit 1
+            fi
           done
-          echo "deleted $n cache(s) under $REF" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "deleted $n cache(s) under $REF ($gone already gone)" | tee -a "$GITHUB_STEP_SUMMARY"
           echo "after: $(usage)" | tee -a "$GITHUB_STEP_SUMMARY"
