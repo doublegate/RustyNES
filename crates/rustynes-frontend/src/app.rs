@@ -11509,6 +11509,13 @@ impl ApplicationHandler<AppEvent> for App {
                 // `None` and only the GPU + total phases are recorded.
                 #[cfg(not(target_arch = "wasm32"))]
                 let mut ui_cost: Option<Duration> = None;
+                // v3.7.1 (`T-FRONTEND-HIDDEN-REDRAW`): the lock-gap observation
+                // is taken at the egui pass but RECORDED only once the frame is
+                // known to have been presented, below: its question is the
+                // debugger read's consistency with the PRESENTED frame, and a
+                // skipped redraw (a hidden window) presents none.
+                #[cfg(feature = "debug-hooks")]
+                let mut lock_gap_sample: Option<bool> = None;
                 // v1.0.0 — Save-States manager inputs, captured BEFORE the
                 // render branches so the `extra` egui closure can render it
                 // without re-locking the emu (the locked branch holds the
@@ -11850,7 +11857,7 @@ impl ApplicationHandler<AppEvent> for App {
                             cycle_at_fb,
                             guard.nes.as_ref().map(rustynes_core::Nes::cycle),
                         ) {
-                            self.render_perf.record_lock_gap(before != now);
+                            lock_gap_sample = Some(before != now);
                         }
                         #[cfg(not(target_arch = "wasm32"))]
                         let t_ui = Instant::now();
@@ -12409,6 +12416,27 @@ impl ApplicationHandler<AppEvent> for App {
                     if let Some(published) = present_stamp {
                         self.render_perf.record_present_latency(published.elapsed());
                     }
+                }
+                #[cfg(feature = "debug-hooks")]
+                if render_result.is_ok()
+                    && let Some(advanced) = lock_gap_sample
+                {
+                    self.render_perf.record_lock_gap(advanced);
+                }
+                // A frame that was not drawn still had uploads staged for it:
+                // the debugger panels' shell textures, which egui hands over
+                // exactly once and which must therefore be applied before the
+                // acquire, not skipped (`detached.rs` has the same rule). wgpu
+                // stages a write until the next `queue.submit`, and a hidden
+                // window returns before its submit on every redraw, so an empty
+                // submit schedules them now instead of letting them pile up for
+                // as long as the window stays hidden (v3.7.1,
+                // `T-FRONTEND-HIDDEN-REDRAW`; wgpu's `Queue` docs give
+                // `queue.submit([])` as the way to schedule staged writes).
+                if render_result.is_err()
+                    && let Some(gfx) = self.gfx.as_ref()
+                {
+                    gfx.queue.submit([]);
                 }
                 match render_result {
                     Ok(()) => {

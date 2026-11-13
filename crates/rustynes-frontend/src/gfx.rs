@@ -125,7 +125,7 @@ impl PresentError {
 /// Map wgpu's [`wgpu::CurrentSurfaceTexture`] to the frame to draw into, or to
 /// the [`PresentError`] the caller acts on. One mapping for the three render
 /// paths, which carried three identical copies of it until v3.7.1.
-fn acquire_frame(
+pub(crate) fn acquire_frame(
     status: wgpu::CurrentSurfaceTexture,
 ) -> Result<wgpu::SurfaceTexture, PresentError> {
     match status {

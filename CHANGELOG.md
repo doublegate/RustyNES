@@ -160,7 +160,10 @@ moves a frame, a sample or a bus cycle, so the emulation epoch stays 10.
   the uploads piled up unsubmitted until the window came back. A hidden
   window, and a frame not ready in time, now skip the frame silently before
   any upload, and are no longer counted in the performance overlay's
-  figures; a validation error is still reported. Reported on a MacBook Pro
+  figures; a validation error is still reported. The same holds for the
+  debugger's panels and for detached tool windows, whose texture updates
+  are submitted rather than left to accumulate, and a detached window now
+  reports a validation error it used to discard. Reported on a MacBook Pro
   M5 Max running the v3.7.0 release.
 
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
