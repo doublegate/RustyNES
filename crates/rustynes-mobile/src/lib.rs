@@ -2861,16 +2861,23 @@ impl NesController {
     /// each frame until it returns a report or it gives up. `None` with
     /// forensics off or nothing found.
     ///
-    /// v3.7.1: if the peer sends nothing for
-    /// [`rustynes_netplay::FORENSICS_DEADLINE`] (10 s) after the desync, this
-    /// returns [`rustynes_netplay::NO_PEER_STATE`] once and releases the ended
-    /// session, as the desktop does; later calls return `None`.
+    /// v3.7.1: a session that ended in a desync is released once this has
+    /// returned its report, or, if the peer sends nothing for
+    /// [`rustynes_netplay::FORENSICS_DEADLINE`] (10 s), after it has returned
+    /// [`rustynes_netplay::NO_PEER_STATE`] once, as the desktop does. Either
+    /// way later calls return `None`.
     pub fn np_forensics(&self) -> Option<String> {
         let mut g = self.lock();
         if let Some((ended, since)) = g.netplay_ended.as_mut() {
             ended.pump_forensics();
+            // A report ends the exchange, so the session goes with it, as the
+            // desktop's `tick_investigating` ends it with `fail` (Antigravity
+            // on #659: only the deadline released it). Returned once; later
+            // calls return `None`.
             if let Some(report) = ended.forensics_report() {
-                return Some(report.to_string());
+                let report = report.to_string();
+                g.netplay_ended = None;
+                return Some(report);
             }
             // v3.7.1 (`T-MOBILE-FORENSICS-DEADLINE`): give up on the peer as
             // the desktop does (`NetplayUi::tick_investigating`), on the same
@@ -5417,14 +5424,6 @@ mod tests {
         check(&ctrl, "load_rom");
     }
 
-    /// End-to-end loopback: two `NesController`s over `127.0.0.1` complete the
-    /// host/join handshake (the host LISTENS and adopts the joiner's address from
-    /// its first `Sync`), reach `InGame`, and advance ~120 frames with fixed
-    /// inputs. Asserts both reach `InGame`, neither errors/desyncs, and their
-    /// `confirmed_entering_digest` agree at a confirmed frame — the determinism /
-    /// no-desync check. Real 2-device play needs two devices on the same LAN; the
-    /// rollback/transport correctness itself is proven by `rustynes-netplay`'s
-    /// own suites.
     /// v3.7.1 (`T-MOBILE-FORENSICS-DEADLINE`): a session that ended in a
     /// desync with forensics on, whose peer never answers, is released once
     /// `FORENSICS_DEADLINE` passes: `np_forensics` returns the no-state text
@@ -5492,6 +5491,14 @@ mod tests {
             .expect("the ended session's socket is closed, so its port binds again");
     }
 
+    /// End-to-end loopback: two `NesController`s over `127.0.0.1` complete the
+    /// host/join handshake (the host LISTENS and adopts the joiner's address from
+    /// its first `Sync`), reach `InGame`, and advance ~120 frames with fixed
+    /// inputs. Asserts both reach `InGame`, neither errors/desyncs, and their
+    /// `confirmed_entering_digest` agree at a confirmed frame — the determinism /
+    /// no-desync check. Real 2-device play needs two devices on the same LAN; the
+    /// rollback/transport correctness itself is proven by `rustynes-netplay`'s
+    /// own suites.
     #[test]
     fn two_controllers_handshake_and_stay_in_sync() {
         use std::net::{Ipv4Addr, UdpSocket};
