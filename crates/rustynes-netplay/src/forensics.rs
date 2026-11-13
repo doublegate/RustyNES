@@ -77,6 +77,19 @@
 //! [`RollbackSession::enable_forensics`]: crate::RollbackSession::enable_forensics
 //! [`RollbackSession::pump_forensics`]: crate::RollbackSession::pump_forensics
 
+/// How long a session that ended in a desync waits for the peer's forensics.
+///
+/// The exchange itself takes a few ticks on a working link; a peer that has
+/// not opted in never answers. Both the desktop
+/// (`NetplayUi::tick_investigating`) and, since v3.7.1, the mobile bridge
+/// (`np_forensics`, `T-MOBILE-FORENSICS-DEADLINE`) end the session on it, so
+/// it lives here once.
+pub const FORENSICS_DEADLINE: core::time::Duration = core::time::Duration::from_secs(10);
+
+/// The report text when [`FORENSICS_DEADLINE`] passes with no report.
+pub const NO_PEER_STATE: &str =
+    "desync forensics: the peer sent no state (it may not have opted in)";
+
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 
