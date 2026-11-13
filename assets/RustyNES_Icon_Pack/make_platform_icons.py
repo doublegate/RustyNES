@@ -19,8 +19,8 @@ Design rules it follows, each from the platform's own documentation:
 
 * **Adaptive foreground** (Android): a 108 x 108 dp layer of which the system
   shows at most the central 72 dp and guarantees only a 66 dp circle, so the
-  art (the transparent "RN" cartridge, trimmed to its own bounds) is scaled to
-  fit 66 dp and centred. The background is the colour
+  art (the transparent "RN" cartridge, trimmed to its own bounds) is scaled
+  until its farthest opaque pixel lies on that circle, and centred. The background is the colour
   `@color/ic_launcher_background`, set to the art's own field, `#000214`.
 * **Monochrome** (Android 13 themed icons): the system tints the layer by its
   ALPHA alone. The colour foreground's cartridge is opaque throughout, so it
@@ -88,12 +88,31 @@ def _round(size: int) -> Image.Image:
     return out
 
 
+def _farthest_opaque(img: Image.Image) -> float:
+    """The distance from the image's centre to its farthest pixel with any
+    opacity, in pixels."""
+    w, h = img.size
+    cx, cy = (w - 1) / 2, (h - 1) / 2
+    a = img.getchannel("A").load()
+    r2 = 0.0
+    for y in range(h):
+        for x in range(w):
+            if a[x, y]:
+                r2 = max(r2, (x - cx) ** 2 + (y - cy) ** 2)
+    return r2**0.5
+
+
 def _foreground(canvas: int) -> Image.Image:
-    """The adaptive foreground: the glyph trimmed to its bounds, fitted to the
-    66/108 safe circle's bounding square, centred on a transparent canvas."""
+    """The adaptive foreground: the glyph trimmed to its bounds, scaled so its
+    FARTHEST opaque pixel lies on the 66 dp safe circle (a launcher may mask
+    to that circle), centred on a transparent canvas. Fitting the bounding box
+    to a 66 dp square instead left the cartridge's corners outside the circle
+    (CodeRabbit on #656: 306 opaque pixels at xxxhdpi)."""
     glyph = Image.open(GLYPH).convert("RGBA")
     glyph = glyph.crop(glyph.getbbox())
-    art = _fit(glyph, round(canvas * 66 / 108))
+    radius = canvas * 33 / 108  # the 66 dp safe circle's radius
+    s = radius / _farthest_opaque(glyph)
+    art = glyph.resize((round(glyph.width * s), round(glyph.height * s)), Image.LANCZOS)
     out = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
     out.paste(art, ((canvas - art.width) // 2, (canvas - art.height) // 2), art)
     return out

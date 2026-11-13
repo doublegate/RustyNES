@@ -35,12 +35,17 @@ bin="${1:?usage: macos-app.sh <rustynes-binary> <version> <out-dir>}"
 version="${2:?usage: macos-app.sh <rustynes-binary> <version> <out-dir>}"
 out="${3:?usage: macos-app.sh <rustynes-binary> <version> <out-dir>}"
 version="${version#v}"
-# Strict, because the version is written into the Info.plist XML below: a
-# glob such as [0-9]*.[0-9]*.[0-9]* would let `<` or `&` through.
-if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "macos-app.sh: version '$version' is not X.Y.Z" >&2
+# The tag may be a prerelease (`release.yml` builds `v*`, e.g. v1.0.1-rc1), so
+# accept X.Y.Z with an optional `-<prerelease>` of letters, digits, dots and
+# hyphens -- and nothing else, because the version is written into the
+# Info.plist XML below (a glob such as [0-9]*.[0-9]*.[0-9]* let `<` or `&`
+# through). The plist takes the numeric X.Y.Z only: CFBundleShortVersionString
+# and CFBundleVersion are period-separated integers on Apple's side.
+if ! [[ "$version" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+  echo "macos-app.sh: version '$version' is not X.Y.Z or X.Y.Z-<prerelease>" >&2
   exit 2
 fi
+plist_version="${BASH_REMATCH[1]}"
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 icns="$root/assets/RustyNES_Icon_Pack/macos/RustyNES.icns"
@@ -79,9 +84,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>${version}</string>
+  <string>${plist_version}</string>
   <key>CFBundleVersion</key>
-  <string>${version}</string>
+  <string>${plist_version}</string>
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.games</string>
   <key>LSMinimumSystemVersion</key>

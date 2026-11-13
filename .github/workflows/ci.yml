@@ -736,7 +736,10 @@ jobs:
       - name: RustyNES.app assembles, lints and verifies (macOS)
         if: runner.os == 'macOS'
         shell: bash
-        run: scripts/package/macos-app.sh target/debug/rustynes 0.0.0 "$RUNNER_TEMP"
+        # A prerelease-shaped version on purpose: `release.yml` builds `v*`
+        # tags, rc tags included, and a plain 0.0.0 never exercised that path
+        # (CodeRabbit on #656).
+        run: scripts/package/macos-app.sh target/debug/rustynes v0.0.0-ci.1 "$RUNNER_TEMP"
       # 2026-10-23 (after v3.5.0) — the OS shared-memory store (`shm.rs`,
       # `script-ipc`) has a Windows implementation and an Apple one
       # (`target_vendor = "apple"`: variadic `shm_open`, `PSHMNAMLEN`, a `u16`
