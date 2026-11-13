@@ -28,6 +28,10 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **A pull request's CI caches are deleted when it closes**
+  (`.github/workflows/cache-cleanup.yml`). They could never be restored
+  again, but counted against the repository's 10 GB cache limit until
+  evicted, and pushed `main`'s warm caches out first.
 - **New icons everywhere but Help -> About.** The icon pack's "RN" cartridge
   art (`assets/RustyNES_Icon_Pack/`) is now the icon of every build:
   - the desktop window icon;

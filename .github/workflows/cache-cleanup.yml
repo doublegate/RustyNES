@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Delete a pull request's Actions caches when it closes (v3.7.1,
+# `T-CI-CACHE-PR-EVICT`).
+#
+# WHY. The repository's Actions cache is capped at 10 GB and evicts least
+# recently used entries first. A PR's runs save caches under the PR's own
+# merge ref (`refs/pull/<n>/merge`), which no later run can restore once the
+# PR is closed, yet they count against the cap until eviction reaches them,
+# and by being newer they push `main`'s warm caches out first. Measured: 103
+# caches, 9.42 GB (2026-11-12, mid-afternoon, PR caches included); later
+# that day `main` alone held 21 caches, 9.86 GB, every PR cache already
+# evicted, which is the eviction this job makes deliberate rather than
+# incidental.
+#
+# WHY `pull_request_target`. On `pull_request`, a Dependabot or fork PR gets a
+# read-only token, and deleting a cache needs `actions: write`; those PRs
+# create caches too. `pull_request_target` runs this workflow as it is on the
+# base branch with a write token. That is safe here only because the job never
+# checks out or runs the PR's code: it calls the cache API for the closed
+# PR's own ref, and nothing else. Do not add a checkout to this job.
+name: Cache cleanup (closed PR)
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  actions: write
+
+jobs:
+  delete-pr-caches:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: delete the caches saved under this PR's merge ref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          REF: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: |
+          set -euo pipefail
+          # Before/after usage in the step summary, so each run records what it
+          # freed (the ticket's gate).
+          usage() {
+            gh api "repos/$GH_REPO/actions/cache/usage" \
+              --jq '"\(.active_caches_count) caches, \(.active_caches_size_in_bytes) bytes"'
+          }
+          echo "before: $(usage)" | tee -a "$GITHUB_STEP_SUMMARY"
+          ids=$(gh cache list --ref "$REF" --limit 100 --json id --jq '.[].id')
+          n=0
+          for id in $ids; do
+            # A cache can be evicted between the list and the delete; that is
+            # the outcome wanted, so a 404 is not a failure.
+            gh cache delete "$id" || echo "cache $id already gone"
+            n=$((n + 1))
+          done
+          echo "deleted $n cache(s) under $REF" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "after: $(usage)" | tee -a "$GITHUB_STEP_SUMMARY"
