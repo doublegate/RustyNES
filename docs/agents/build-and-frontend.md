@@ -1,6 +1,6 @@
 # Build gotchas, frontend aliases, keys and WebAssembly
 
-> Moved out of `AGENTS.md` (2026-11-14) to keep that file under agy's 24,000-byte rule-file limit. The content is verbatim; relative links in it were written relative to the repository root.
+> Moved out of `AGENTS.md` (2026-11-14) to keep that file under agy's 24,000-byte rule-file limit. The content is verbatim, with one correction made in review (#663): the `full` feature list gains `memif`, and the backtick key is described as it has worked since v1.7.0; relative links in it were written relative to the repository root.
 >
 > **Read this file when the task runs `cargo clippy --fix`, the maximal native build, the default key map, or the WebAssembly / Pages build.**
 

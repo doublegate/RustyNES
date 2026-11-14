@@ -1,6 +1,6 @@
 # Architecture primer and crate inventory
 
-> Moved out of `AGENTS.md` (2026-11-14) to keep that file under agy's 24,000-byte rule-file limit. The content is verbatim; relative links in it were written relative to the repository root.
+> Moved out of `AGENTS.md` (2026-11-14) to keep that file under agy's 24,000-byte rule-file limit. The content is verbatim, with one correction made in review (#663): the backtick key is described as it has worked since v1.7.0 (it toggles the RetroAchievements read-out; the debugger panels open from the Debug menu); relative links in it were written relative to the repository root.
 >
 > **Read this file when the task touches the scheduler, the bus, mapper IRQs, the frontend shell, or needs the full crate list.**
 

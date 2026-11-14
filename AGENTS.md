@@ -41,7 +41,7 @@ Enforcement lives alongside the prose: `/ref-proj/` is gitignored/`.dockerignore
 
 RustyNES is a cycle-accurate Nintendo Entertainment System emulator written in pure Rust. The accuracy bar is Mesen2 / higan / ares: tight lockstep scheduling at PPU-dot resolution on a master-clock-precise timebase, sub-instruction PPU events visible to subsequent CPU code, and a lookup-table non-linear audio mixer with band-limited synthesis. The frontend is pure Rust (`winit` + `wgpu` + `cpal` + `egui`).
 
-**Current release: v3.7.0 "Spindle"** (2026-11-10) — the Famicom Disk System on the MiSTer core, spectators who join a match through the hosted relay, opt-in desync forensics, live ROM edits recorded as BPS patches, and the mobile extras. Built on **v3.6.2 "Latchkey"** (2026-11-06) — AccuracyCoin 147 of 147 and a per-game *Rad Racer* correction (epoch 10). **No hardware has run any MiSTer bitstream** (ADR 0043). The full release-line chain back to v3.0.0 is in `docs/agents/release-line.md`; suite counts, the mapper matrix and per-release detail live in `docs/STATUS.md`, `CHANGELOG.md` and the GitHub releases.
+**Current release: v3.7.0 "Spindle"** (2026-11-10). **No hardware has run any MiSTer bitstream** (ADR 0043). What each release added, and the full release-line chain back to v3.0.0, are in `docs/agents/release-line.md`; suite counts, the mapper matrix and per-release detail live in `docs/STATUS.md`, `CHANGELOG.md` and the GitHub releases.
 
 Platform builds (Android sideload, iOS TestFlight, the libretro core), the 208-family mapper breadth and release automation: `docs/agents/release-line.md`.
 
@@ -170,7 +170,7 @@ Measured findings live in topic files, verbatim, read on demand:
 | a dependency bump, or why one is blocked | [`docs/agents/dependencies.md`](docs/agents/dependencies.md) | 5 |
 | a performance claim, or a debugger panel that outlives its `Nes` | [`docs/agents/perf-and-panels.md`](docs/agents/perf-and-panels.md) | 9 |
 
-Moved from this file on 2026-11-14 (paragraphs, verbatim):
+Moved from this file on 2026-11-14 (paragraphs, verbatim except the review corrections each file's header names):
 
 - `docs/agents/release-line.md` — release chain, platform apps, format epochs, lineage
 - `docs/agents/provenance-firewall.md` — TriCNES exception, HDL firewall, escalation ladder
@@ -185,7 +185,7 @@ re-derives is a hypothesis that stopped being tested. A paraphrase loses
 exactly the part that makes it checkable.
 
 **Adding a finding:** put it in the topic file, not here. If it fits no file,
-that is a reason to add a tenth — not a reason to grow this section back.
+that is a reason to add a new topic file — not a reason to grow this section back.
 
 - `docs/STATUS.md` and the "Current release" summary above are the current-state source of truth; `CHANGELOG.md` and the `docs/audit/` logs carry the deep engine-lineage history.
 - `ref-docs/` is immutable. Research updates go in dated supplemental files.
