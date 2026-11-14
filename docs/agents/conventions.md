@@ -1,0 +1,24 @@
+# Conventions: performance, markdownlint, RetroAchievements identity, plans
+
+> Moved out of `AGENTS.md` (2026-11-14) to keep that file under agy's 24,000-byte rule-file limit. The content is verbatim; relative links in it were written relative to the repository root.
+>
+> **Read this file when the task makes a performance change, touches markdownlint, the RA User-Agent, or the to-dos/ plans.**
+
+## Hot paths and the frame-cost number
+
+- Hot paths (`Cpu::tick`, `Ppu::tick`, mapper register access): no allocations, prefer fixed arrays, profile (`cargo bench` + `perf record`) before adding abstractions. **On the frame-cost number:** the `≤ 2 ms/frame headless` figure in `docs/performance.md` is a **design-phase aspiration** (written before the cycle-accurate core existed, for 2018-era Skylake) — it is NOT a live gate. `docs/performance.md` §"Current figures" holds the measured numbers and records them as knowingly accepted for the master-clock design (the stock `full_frame` benches select the exact path explicitly). The dominant costs are work the accuracy model *requires* — `cpu_clock` is APU BLEP synthesis + the non-linear mixer (mixer ceiling measured ≤1.9%), and `Ppu::tick` is the per-dot lockstep loop — and the obvious levers were already measured and **rejected** (`emit_pixel` bounds-check elision was *slower*; the SIMD blitter was *slower*). Do not "optimize toward 2 ms" by trading away accuracy; the real-world multiplier on frame cost is **run-ahead**, not the per-frame core cost. Any optimization must be **byte-identical**, and must pass the adoption rule in `scripts/perf/ab_check.sh`: **the bar is evidence quality, not effect size** (maintainer decision, v2.3.1) — a consistent, reproduced, statistically clean gain is adoptable even below 3%. What is not negotiable is the second independent run (a single run has already produced a p = 0.00 result on all four workloads that was pure artifact), and a mixed-sign result across workloads is a rejection, not an average. Read the A/B/A order-bias control before the candidate column.
+
+## Planning, lint and client identity
+
+- **Forward plans + roadmap live in `to-dos/`.** `to-dos/ROADMAP.md` (updated in #129) is the planning entry point and frames the release line + "the path to v2.0.0 and beyond"; `to-dos/plans/` holds the per-release plan docs (through `v1.7.0-forge-plan.md` on `main`, plus the staged-forward `v1.8.0-android-plan.md` / `v1.9.0-ios-plan.md` / `v2.0.0-master-clock-plan.md`) + the `to-dos/plans/engine-lineage/` history archive + a `to-dos/plans/research/` reference-mining archive.
+- **Markdownlint is a CI gate** (pre-commit, pinned `markdownlint-cli v0.50.0` since v3.6.1, measured clean on the whole corpus before the move; v0.49.1 before it). The pin was v0.39.0 until the v2.6.3 dependency refresh, held because the newer local binary reported rules the pin lacked — chiefly **MD060** (`table-column-style`), which was therefore NOT gated. That is now measured and resolved: MD060's inferred default reads this corpus as style `compact` and reports **1,936 findings across 122 files** and nothing else, so `.markdownlint.json` pins `MD060` to the style actually in use (`leading_and_trailing`), which measures **zero** and rewrites no document. It IS a gate now. Still verify with `pre-commit run markdownlint --all-files` rather than the bare binary — the pin and the local build can drift apart again. `.markdownlint.json` also keeps `MD013`/`MD033`/`MD041` disabled by design (long technical tables, the README HTML banner/`<img>`, the HTML-led README). `.markdownlintignore` exempts `ref-docs/`, `ref-proj/` (the reference-emulator clone, now removed from disk but kept in the ignore lists as a firewall guard so it can never re-enter the tree — see the MOST IMPORTANT RULE section of `AGENTS.md`), the vendored `tricnes/` + upstream READMEs, and the frozen `docs/archive/` + `to-dos/archive/` trees — don't lint or reformat those.
+- **RetroAchievements client identity:** the RA HTTP User-Agent (how RA authenticates/identifies/allowlists the client) is `RustyNES/<crate version> (<OS> <arch>) rcheevos/<rcheevos version>` (RA's documented `Name/v1.0.0 (OS) core/v0.5.0` shape; the system clause since v3.4.0) — the `RA_USER_AGENT` const in `crates/rustynes-cheevos/src/http.rs`; the rcheevos version auto-syncs from the vendored `rc_version.h` via `build.rs` (`RCHEEVOS_VERSION`). Keep the leading `RustyNES/` token (a regression test guards it).
+
+## About `docs/agents/`
+
+This section used to carry **110 bullets / 115,606 bytes** inline — every
+measured finding this project has made, loaded into every session whether or
+not the task touched any of it. It is now topic files under `docs/agents/`,
+verbatim, read on demand. The pointers and the release anchors stay in
+`AGENTS.md`, because they are what a session needs before it knows what it is
+doing.
