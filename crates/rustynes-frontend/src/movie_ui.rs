@@ -646,8 +646,7 @@ mod tests {
         // Linear replay to frame 7.
         let mut linear = Nes::from_rom(&rom).unwrap();
         movie.seek_to_start(&mut linear).unwrap();
-        for i in 0..7 {
-            let f = movie.frames[i];
+        for &f in &movie.frames[..7] {
             f.apply_to(&mut linear);
             linear.run_frame();
         }

@@ -755,15 +755,15 @@ impl Mapper for SuperMagicCard {
         self.mode_2m4m_enabled = byte() != 0;
         self.mode_2m = byte() != 0;
         self.chr_cc = byte() & 0x03;
-        for i in 0..4 {
-            self.reg_2m[i] = byte();
+        for b in &mut self.reg_2m {
+            *b = byte();
         }
-        for i in 0..4 {
-            self.reg_4m[i] = byte();
+        for b in &mut self.reg_4m {
+            *b = byte();
         }
         self.smc_mode = byte();
-        for i in 0..12 {
-            self.chr_1k[i] = byte();
+        for b in &mut self.chr_1k {
+            *b = byte();
         }
         self.mmc4_latch = [byte() != 0, byte() != 0];
         self.irq_counter = u16::from_le_bytes([byte(), byte()]);

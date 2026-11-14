@@ -85,7 +85,7 @@ fn a_reheadered_vs_dump_keeps_its_row() {
         let nes = Nes::from_rom(&bytes).unwrap_or_else(|e| panic!("{rel}: {e}"));
         let row = vs_db::lookup(&nes).unwrap_or_else(|| panic!("{rel}: no row"));
 
-        let mut reheadered = bytes.clone();
+        let mut reheadered = bytes;
         reheadered[10] ^= 0x01;
         let re = Nes::from_rom(&reheadered).unwrap_or_else(|e| panic!("{rel} re-headered: {e}"));
         // The edit is a real header change and nothing else.

@@ -579,8 +579,7 @@ impl HdPack {
         // refs resolve relative to it.
         let prefix = Path::new(&hires_name)
             .parent()
-            .map(std::path::Path::to_path_buf)
-            .unwrap_or_default();
+            .map_or_default(std::path::Path::to_path_buf);
         let hires = read_hires(archive.by_name(&hires_name).ok()?)?;
         let parsed = parse_hires(&hires);
         let mut images = Vec::with_capacity(parsed.image_names.len());
@@ -2393,7 +2392,6 @@ impl HdCompositor {
     /// A region's per-tile condition state is taken from a default (origin) tile:
     /// memory / frameRange conditions don't depend on tile state, and per-tile
     /// conditions on a full-screen background are an unusual pack choice.
-    #[allow(clippy::too_many_arguments)]
     #[allow(
         clippy::too_many_arguments,
         clippy::cast_possible_truncation,

@@ -130,7 +130,7 @@ jobs:
               - 'crates/rustynes-mobile/**'
               - '.github/workflows/android.yml'
 
-      # The project toolchain (rust-toolchain.toml = 1.99) plus the two shipped
+      # The project toolchain (rust-toolchain.toml = 1.100) plus the two shipped
       # Android targets (arm64 ships; x86_64 is the emulator/CI ABI), through
       # the shared composite. A bare `rustup target add` made rustup
       # AUTO-INSTALL the pinned toolchain first, which rustup now deprecates

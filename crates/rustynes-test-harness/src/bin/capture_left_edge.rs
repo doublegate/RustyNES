@@ -117,8 +117,7 @@ fn main() {
     // deterministic.
     let press_frames: Vec<u64> = std::env::var("RUSTYNES_PRESS_START")
         .ok()
-        .map(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect())
-        .unwrap_or_default();
+        .map_or_default(|s| s.split(',').filter_map(|p| p.trim().parse().ok()).collect());
     let press_hold: u64 = std::env::var("RUSTYNES_PRESS_HOLD")
         .ok()
         .and_then(|s| s.parse().ok())

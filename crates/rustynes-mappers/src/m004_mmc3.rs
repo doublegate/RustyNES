@@ -970,9 +970,8 @@ impl Mapper for Mmc3 {
             .push(("R7".into(), format!("{:#04x}", self.regs[7])));
         info.chr_banks
             .push(("mode".into(), format!("{}", u8::from(self.chr_mode))));
-        for i in 0..6 {
-            info.chr_banks
-                .push((format!("R{i}"), format!("{:#04x}", self.regs[i])));
+        for (i, r) in self.regs.iter().take(6).enumerate() {
+            info.chr_banks.push((format!("R{i}"), format!("{r:#04x}")));
         }
         info.irq_state
             .push(("counter".into(), format!("{:#04x}", self.irq_counter)));

@@ -123,7 +123,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # Pinned to the project toolchain (rust-toolchain.toml = 1.99.1), matching
+      # Pinned to the project toolchain (rust-toolchain.toml = 1.100.0), matching
       # the other jobs. PGO needs the llvm-tools-preview component (profdata
       # merge) and the wgpu/winit/cpal apt deps (the optimized rebuild links the
       # full `rustynes-frontend` binary).

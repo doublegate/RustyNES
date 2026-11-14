@@ -2553,8 +2553,8 @@ mod tests {
         for x in 0..512 {
             assert_eq!(w.halfsin[x], w.fullsin[x]);
         }
-        for x in 512..1024 {
-            assert_eq!(w.halfsin[x], 0xfff);
+        for &v in &w.halfsin[512..1024] {
+            assert_eq!(v, 0xfff);
         }
     }
 

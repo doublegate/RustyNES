@@ -1148,8 +1148,7 @@ pub fn shader_stack_section(
             if count == 0 {
                 ui.weak(crate::t!(SetNoPasses));
             }
-            for i in 0..count {
-                let pass = &mut config.graphics.shader_stack.passes[i];
+            for (i, pass) in config.graphics.shader_stack.passes.iter_mut().enumerate() {
                 let label = BuiltinPass::from_id(&pass.id).map_or_else(
                     || crate::tf!(SetUnknownPass, pass.id),
                     |b| b.label().to_string(),

@@ -157,10 +157,7 @@ impl CheevosStatusView {
                 LoginState::Error(e) => e.clone(),
                 _ => String::new(),
             },
-            display_name: user
-                .as_ref()
-                .map(|u| u.display_name.clone())
-                .unwrap_or_default(),
+            display_name: user.as_ref().map_or_default(|u| u.display_name.clone()),
             hardcore: s.hardcore(),
             score: user.as_ref().map_or(0, |u| u.score),
             unlocked: s.summary.num_unlocked_achievements,

@@ -769,8 +769,7 @@ impl AudioOutput {
         // cpal 0.18: the device name is its `Display` form (`to_string()`); the
         // structured `description()` is richer but we only need the picker label.
         host.output_devices()
-            .map(|it| it.map(|d: cpal::Device| d.to_string()).collect())
-            .unwrap_or_default()
+            .map_or_default(|it| it.map(|d: cpal::Device| d.to_string()).collect())
     }
 
     /// Open an output device.
@@ -924,20 +923,17 @@ impl AudioOutput {
             self.log_reopen_failure("no output device yet; retrying");
             return false;
         };
-        let ranges: Vec<_> = device
-            .supported_output_configs()
-            .map(|it| {
-                it.map(|r| {
-                    (
-                        r.channels(),
-                        r.sample_format(),
-                        r.min_sample_rate(),
-                        r.max_sample_rate(),
-                    )
-                })
-                .collect()
+        let ranges: Vec<_> = device.supported_output_configs().map_or_default(|it| {
+            it.map(|r| {
+                (
+                    r.channels(),
+                    r.sample_format(),
+                    r.min_sample_rate(),
+                    r.max_sample_rate(),
+                )
             })
-            .unwrap_or_default();
+            .collect()
+        });
         let Some((channels, format)) =
             reopen_layout(&ranges, self.sample_rate, self.channels, self.format)
         else {

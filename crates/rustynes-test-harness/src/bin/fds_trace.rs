@@ -63,8 +63,7 @@ fn main() {
     let side_base = swap_to * FDS_SIDE_LEN;
     let expected: Vec<u8> = body
         .get(side_base..side_base + INFO_BLOCK_LEN)
-        .map(<[u8]>::to_vec)
-        .unwrap_or_default();
+        .map_or_default(<[u8]>::to_vec);
     println!(
         "expected side {swap_to} disk-info block (raw .fds): side#@0x15={} disk#@0x16={}",
         expected.get(0x15).copied().unwrap_or(0xEE),

@@ -7,7 +7,7 @@ edition = "2021"
 # cannot inherit `rust-version.workspace`. It tracks the workspace MSRV by
 # hand: the path crates below need 1.99 anyway, and a stale 1.86 here made
 # the MSRV-aware resolver hold sha2 / ctutils at older releases in this lock.
-rust-version = "1.99"
+rust-version = "1.100"
 
 [package.metadata]
 cargo-fuzz = true

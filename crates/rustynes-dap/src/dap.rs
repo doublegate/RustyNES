@@ -631,8 +631,7 @@ impl<W: Write> Server<'_, W> {
                 || {
                     arg(args, "lines")
                         .and_then(Value::as_array)
-                        .map(|ls| ls.iter().filter_map(Value::as_u64).collect())
-                        .unwrap_or_default()
+                        .map_or_default(|ls| ls.iter().filter_map(Value::as_u64).collect())
                 },
                 |bps| {
                     bps.iter()
@@ -672,12 +671,11 @@ impl<W: Write> Server<'_, W> {
     ) -> Result<Value, String> {
         let names: Vec<String> = arg(args, "breakpoints")
             .and_then(Value::as_array)
-            .map(|b| {
+            .map_or_default(|b| {
                 b.iter()
                     .filter_map(|x| x.get("name").and_then(Value::as_str).map(str::to_owned))
                     .collect()
-            })
-            .unwrap_or_default();
+            });
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
         let engine = self.engine.as_mut().ok_or("no program launched")?;
         let found = engine.set_function_breakpoints(&refs)?;
@@ -777,7 +775,7 @@ impl<W: Write> Server<'_, W> {
         };
         match r {
             REF_GLOBALS => {
-                let globals = engine.info().map(|i| i.globals.clone()).unwrap_or_default();
+                let globals = engine.info().map_or_default(|i| i.globals.clone());
                 for g in &globals {
                     let value = engine.value(g, None);
                     out.push(var_json(&g.name, &value, &g.ty.name));

@@ -103,10 +103,7 @@ mod inner {
             return true;
         }
         let now_apu_irq = r.irq_pending_apu_at_low || r.irq_pending_apu_at_high;
-        if now_apu_irq != prev_apu_irq {
-            return true;
-        }
-        false
+        now_apu_irq != prev_apu_irq
     }
 
     pub fn run() -> ExitCode {

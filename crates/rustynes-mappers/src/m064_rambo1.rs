@@ -500,9 +500,8 @@ impl Mapper for Rambo1 {
             .push(("K".into(), format!("{}", u8::from(self.chr_1k_mode))));
         info.chr_banks
             .push(("C".into(), format!("{}", u8::from(self.chr_mode))));
-        for i in 0..6 {
-            info.chr_banks
-                .push((format!("R{i}"), format!("{:#04x}", self.regs[i])));
+        for (i, r) in self.regs.iter().take(6).enumerate() {
+            info.chr_banks.push((format!("R{i}"), format!("{r:#04x}")));
         }
         info.chr_banks
             .push(("R8".into(), format!("{:#04x}", self.regs[8])));

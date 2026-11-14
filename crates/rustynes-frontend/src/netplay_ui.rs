@@ -519,8 +519,7 @@ impl NetplayUi {
             self.status.relay_match = self
                 .edge_publish_url
                 .as_ref()
-                .map(|(_, id)| id.clone())
-                .unwrap_or_default();
+                .map_or_default(|(_, id)| id.clone());
         }
     }
 
@@ -751,7 +750,7 @@ impl NetplayUi {
         });
         #[cfg(test)]
         self.edge_sent.clear();
-        let relay_match = publish.map(|(_, id)| id.clone()).unwrap_or_default();
+        let relay_match = publish.map_or_default(|(_, id)| id.clone());
         self.state = NetplayState::InGame(Box::new(session));
         self.last_peer_activity = std::time::Instant::now();
         self.last_confirmed_tracker = 0;

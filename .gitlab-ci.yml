@@ -31,7 +31,7 @@
 # Why every job carries a `before_script` (pipeline #91899 post-mortem)
 # ---------------------------------------------------------------------------
 # (History, 2026-07-20. The mechanism still holds; two details moved since:
-# the pin is whatever `rust-toolchain.toml` says (1.99.0 at v3.0.1, 1.99.1 at v3.4.1), and since
+# the pin is whatever `rust-toolchain.toml` says (1.99.0 at v3.0.1, 1.99.1 at v3.4.1, 1.100.0 at v3.7.1), and since
 # v3.0.1 each job runs `rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile
 # minimal --target ${RUST_TARGET}`, which installs the pinned toolchain WITH
 # its target in one step, where this record says `rustup target add`.)
@@ -88,10 +88,10 @@
     # as no longer supported by rust"), and a test branch built on 1.99.0
     # (pipeline 119614) passed all 15 jobs, the four Apple ones included, so
     # the hold was lifted in the same release.
-    RUSTUP_TOOLCHAIN: "1.99.1"
+    RUSTUP_TOOLCHAIN: "1.100.0"
 
 # Shared `before_script` for the jobs whose upstream template defines none
-# (Windows, Linux, and all four Android). See the post-mortem above.
+# (Linux and all four Android; both Windows jobs write their own). See the post-mortem above.
 .rust-target-install:
   before_script:
     - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}
@@ -139,13 +139,37 @@ stages:
 
 ################################### DESKTOPS #################################
 # Windows 64-bit
+# Linked with the image's GNU MinGW, which is too old to ship
+# `libsynchronization.a`. Rust 1.100's std for this triple links
+# `-lsynchronization` (1.99.1's did not: `--print native-static-libs` on an
+# empty staticlib gains exactly that one library), for `WaitOnAddress`,
+# `WakeByAddressAll` and `WakeByAddressSingle`. Without it the link fails with
+# "cannot find -lsynchronization" (pipelines 135319, 135671, 135681). The
+# `before_script` builds the same import library MinGW-w64 ships, those three
+# functions from `api-ms-win-core-synch-l1-2-0.dll`, and the target's
+# rustflags put it on the search path; the template sets no rustflags. The
+# image's i686 job links with llvm-mingw, which has the library, so it needs
+# nothing. Remove this once the image's MinGW ships the library. The
+# template's own `before_script` is kept via `!reference`, as for i686.
 libretro-build-windows-x64:
   extends:
     - .libretro-rust-windows-x64-default
     - .core-defs
-    - .rust-target-install
   variables:
     RUST_TARGET: x86_64-pc-windows-gnu
+    MINGW_SYNCH_DIR: ${CI_PROJECT_DIR}/target/mingw-synchronization
+    CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS: "-L native=${MINGW_SYNCH_DIR}"
+  before_script:
+    - !reference [.libretro-rust-windows-x64, before_script]
+    - rustup toolchain install ${RUSTUP_TOOLCHAIN} --profile minimal --target ${RUST_TARGET}
+    - mkdir -p "${MINGW_SYNCH_DIR}"
+    - printf 'LIBRARY api-ms-win-core-synch-l1-2-0.dll\nEXPORTS\nWaitOnAddress\nWakeByAddressAll\nWakeByAddressSingle\n' > "${MINGW_SYNCH_DIR}/synchronization.def"
+    - |
+      if command -v x86_64-w64-mingw32-dlltool >/dev/null 2>&1; then
+        x86_64-w64-mingw32-dlltool -d "${MINGW_SYNCH_DIR}/synchronization.def" -l "${MINGW_SYNCH_DIR}/libsynchronization.a"
+      else
+        "${LLVM_MINGW}/bin/llvm-dlltool" -m i386:x86-64 -d "${MINGW_SYNCH_DIR}/synchronization.def" -l "${MINGW_SYNCH_DIR}/libsynchronization.a"
+      fi
 
 # Windows 32-bit
 # The image links this with llvm-mingw (its old i686 MinGW has SJLJ unwinding,

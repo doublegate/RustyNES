@@ -214,8 +214,7 @@ fn parse_row_from(line: &str, zero_mapper_is_unset: bool) -> Option<GameDbEntry>
     let mirroring = parse_mirroring(fields[8]);
     let title = fields
         .get(9)
-        .map(|t| t.trim_matches('"').to_string())
-        .unwrap_or_default();
+        .map_or_default(|t| t.trim_matches('"').to_string());
     Some(GameDbEntry {
         crc,
         region,
@@ -457,8 +456,8 @@ fn serialize_row(e: &GameDbEntry) -> String {
         Some(Region::Dendy) => "Dendy",
         _ => "",
     };
-    let mapper = e.mapper.map(|m| m.to_string()).unwrap_or_default();
-    let sub = e.submapper.map(|s| s.to_string()).unwrap_or_default();
+    let mapper = e.mapper.map_or_default(|m| m.to_string());
+    let sub = e.submapper.map_or_default(|s| s.to_string());
     let mirroring = match e.mirroring {
         Some(Mirroring::Horizontal) => "Horizontal",
         Some(Mirroring::Vertical) => "Vertical",
