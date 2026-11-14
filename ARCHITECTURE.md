@@ -53,7 +53,7 @@ These cross-cutting choices span many files and are not negotiable without re-de
 
 ```text
 rustynes/
-├── Cargo.toml                  # Workspace definition (edition 2024, MSRV 1.99 for every crate)
+├── Cargo.toml                  # Workspace definition (edition 2024, MSRV 1.100 for every crate)
 ├── crates/
 │   ├── rustynes-core/          # Glue: Nes struct, run loop, scheduler, Bus,
 │   │                           #   save state, region config. Re-exports chip crates.
