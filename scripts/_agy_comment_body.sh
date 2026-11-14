@@ -97,6 +97,52 @@ agy_body_archive() {
          }' || true
 }
 
+# Prefix of the hidden line that records when a review was posted. The comment head carries
+# it so that, when the round is archived on the next run, the summary can say when it was
+# REVIEWED; the time of archiving says nothing useful.
+AGY_REVIEWED_AT_PREFIX='<!-- agy-reviewed-at: '
+
+# Assemble the archive for the next comment: the previous head becomes the newest round,
+# ahead of the rounds already archived.
+#
+# Args: $1 previous head, $2 previous archive (may be empty), $3 time to show when the head
+# carries no reviewed-at line (labelled "archived at", because that is all it is).
+#
+# A previous archive with no round marker predates markers. It is wrapped as ONE round behind
+# its own marker; emitted bare, the only marker would be the new round's, and trimming the
+# "oldest round" cut at it and discarded the new round together with the whole legacy history.
+agy_assemble_archive() {
+  local head="$1" archive="$2" fallback="$3" when label
+  # The line sits right under the marker, so only the first lines are read. Here-strings, not
+  # `printf | ...`: the caller runs under `set -o pipefail`, and a reader that stops early makes
+  # printf die of SIGPIPE on a head larger than the pipe buffer, which failed the substitution
+  # and aborted the script (agy review of #6).
+  when="$(awk -v p="$AGY_REVIEWED_AT_PREFIX" '
+    NR > 5 { exit }
+    index($0, p) == 1 { s = substr($0, length(p) + 1); sub(/ -->$/, "", s); print s; exit }' \
+    <<< "$head")"
+  if [ -n "$when" ]; then
+    label="Round reviewed at $when"
+  else
+    label="Round archived at $fallback"
+  fi
+  printf '%s\n' "$AGY_ROUND_MARK"
+  printf '<details>\n<summary>%s</summary>\n\n' "$label"
+  printf '%s\n' "$head"
+  printf '\n</details>\n'
+  [ -n "$archive" ] || return 0
+  # Here-string for the same reason: `grep -q` stops at the first match, and the resulting
+  # SIGPIPE would make the test false for a large archive and wrap it again on every run.
+  if grep -qxF -- "$AGY_ROUND_MARK" <<< "$archive"; then
+    printf '%s\n' "$archive"
+  else
+    printf '%s\n' "$AGY_ROUND_MARK"
+    printf '<details>\n<summary>Earlier rounds (archived before round markers)</summary>\n\n'
+    printf '%s\n' "$archive"
+    printf '\n</details>\n'
+  fi
+}
+
 # Delimits one archived round. Emitted by the caller ahead of each round's `<details>`.
 #
 # A dedicated sentinel, NOT the `<details>` tag itself. Matching `/^<details>$/` looked
