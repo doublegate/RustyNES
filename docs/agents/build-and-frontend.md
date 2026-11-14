@@ -10,7 +10,7 @@
 # After any `cargo clippy --fix`, re-run clippy for EVERY feature combo (incl. retroachievements):
 # --fix compiles only the active feature set, so it can strip cfg-gated code that another feature
 # needs (bit PR #80: an `elidable_lifetime_names` autofix removed a `<'a>` the `retroachievements`
-# `ra` param uses, breaking that build). Wasm clippy commands are in the WebAssembly section below.
+# `ra` param uses, breaking that build). Wasm clippy commands are in the "Frontend aliases, keys and WebAssembly" section below.
 ```
 
 ## Toolchain history
@@ -22,7 +22,7 @@ Toolchain is **Rust 1.100** pinned in `rust-toolchain.toml` (1.86 until v1.3.0, 
 ```bash
 # Maximal NATIVE build — the "cargo --full equivalent" (#54): the `full` feature
 # aggregates every native feature (retroachievements + scripting + script-ipc +
-# hd-pack + debug-hooks + av-record, additive on top of the default set). It is
+# hd-pack + debug-hooks + av-record + memif, additive on top of the default set). It is
 # purely opt-in (shipped/default build + core unchanged). Aliases in .cargo/config.toml:
 cargo full-run path/to/rom.nes                           # run the maximal native binary (alias ends in `--`, so flags forward, e.g. `cargo full-run --fullscreen rom.nes`)
 cargo full-build                                         # build it (= --release -p rustynes-frontend --features full)
@@ -34,7 +34,8 @@ cargo full-baseline                                      # same, pinned to targe
 # Default keys P2: WASD = D-pad, Q = A, E = B, P = Start, R = Select (L before v2.7.3).
 # Famicom microphone: hold N (M before v2.7.3). M toggles the menu bar.
 # System: Esc = quit, F1 = save state, F4 = load state, F5 (held) = rewind,
-# F2 = reset, F3 = power-cycle, F12 = open ROM, F9 = FDS disk-swap, ~ = toggle debugger.
+# F2 = reset, F3 = power-cycle, F12 = open ROM, F9 = FDS disk-swap, ` = RetroAchievements read-out (compact/long);
+# the debugger panels open from the Debug menu.
 # F6/F7/F8 = TAS movie record/play/branch. Drag-and-drop a .nes/.fds to load.
 # USB gamepads auto-bind to P1 (Xbox-style: South=A, West=B, Start, Back/Select, DPad).
 

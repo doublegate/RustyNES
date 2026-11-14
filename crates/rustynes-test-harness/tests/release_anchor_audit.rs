@@ -278,6 +278,24 @@ const ANCHORS: &[Anchor] = &[
         what: "the \"never claim a later version\" guard",
         marker: "**Never claim any version *later* than v",
     },
+    // v3.7.1: the release-line detail moved out of `AGENTS.md` into
+    // `docs/agents/release-line.md` (#663) and carries the same three
+    // current-release lines, so a release cut must move them too.
+    Anchor {
+        path: "docs/agents/release-line.md",
+        what: "the moved current-release block",
+        marker: "**Current release: v",
+    },
+    Anchor {
+        path: "docs/agents/release-line.md",
+        what: "the moved operating-notes current-release bullet",
+        marker: "The current release is **v",
+    },
+    Anchor {
+        path: "docs/agents/release-line.md",
+        what: "the moved \"never claim a later version\" guard",
+        marker: "**Never claim any version *later* than v",
+    },
     Anchor {
         path: "VERSION-PLAN.md",
         what: "the plan header",

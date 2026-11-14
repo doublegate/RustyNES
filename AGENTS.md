@@ -194,7 +194,7 @@ that is a reason to add a tenth — not a reason to grow this section back.
 - Engine-lineage "v2.x" narrative is upstream history, never a current RustyNES release version. The current release is **v3.7.0 "Spindle"** (2026-11-10). **Never claim any version *later* than v3.7.0 is released.** The two distinct "v2.0"s are explained in `docs/agents/release-line.md`.
 - `to-dos/ROADMAP.md` is the planning entry point (detail: `docs/agents/conventions.md`).
 - The v1.0.0 release + GitHub Pages/CI + post-release record is in `docs/v1.0.0-synthesis-handoff-2026-06-13.md` — read it before touching CI, Pages, or release tooling. Full per-release history is in `CHANGELOG.md`.
-- **Markdownlint is a CI gate** (pinned `markdownlint-cli v0.50.0`): verify with `pre-commit run markdownlint --all-files`, and never lint or reformat the `.markdownlintignore` trees. Keep the RetroAchievements User-Agent's leading `RustyNES/` token (`RA_USER_AGENT`, regression-tested). Detail: `docs/agents/conventions.md`.
+- **Markdownlint is a CI gate** (pinned `markdownlint-cli v0.50.0`): verify with `pre-commit run markdownlint --all-files`, and never lint or reformat the `.markdownlintignore` trees (the whitespace hooks still cover our own frozen trees, `docs/archive/` and `to-dos/plans/`, by design: `.pre-commit-config.yaml`). Keep the RetroAchievements User-Agent's leading `RustyNES/` token (`RA_USER_AGENT`, regression-tested). Detail: `docs/agents/conventions.md`.
 - **Symlinked Agent Configs:** Ensure symlinked agent files (like `GEMINI.md` -> `AGENTS.md`) are explicitly removed from `.gitignore` so they are correctly tracked by version control.
 
 <<< MC-PROJECT-END >>>
