@@ -38,7 +38,11 @@ cycle-accurate core later replaced.
   MCP server's empty `NoArgs` gets a module-scoped allow. Cargo 1.100 also
   reported a `readme` workspace field no crate inherited (removed) and a
   test-only dependency of `rustynes-test-harness` (moved to
-  `[dev-dependencies]`). Nothing emulated changes.
+  `[dev-dependencies]`). Nothing emulated changes. Rust 1.100's std for
+  `x86_64-pc-windows-gnu` links `-lsynchronization`, which the buildbot
+  image's MinGW does not ship, so its Windows x64 job now builds that import
+  library (three functions from `api-ms-win-core-synch-l1-2-0.dll`) with
+  `dlltool` before the build.
 - **A pull request's CI caches are deleted when it closes**
   (`.github/workflows/cache-cleanup.yml`). They could never be restored
   again, but counted against the repository's 10 GB cache limit until
