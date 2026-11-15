@@ -95,8 +95,10 @@ cycle-accurate core later replaced.
   its branch is gone and no open pull request uses it. Deleting an environment
   needs the Administration permission, which the workflow's own token cannot
   have, so that job needs an `ENV_CLEANUP_TOKEN` secret (a fine-grained token
-  for this repository with Administration: read and write) and says so in its
-  run summary until it exists.
+  for this repository with Administration: read and write), kept in a
+  `preview-cleanup` environment whose deployment branches are limited to
+  `main`, so GitHub withholds it from any other branch's copy of the
+  workflow; it says so in its run summary until the secret exists.
 - **A pull request's CI caches are deleted when it closes**
   (`.github/workflows/cache-cleanup.yml`). They could never be restored
   again, but counted against the repository's 10 GB cache limit until
