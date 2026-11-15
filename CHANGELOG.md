@@ -28,6 +28,20 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **The Android and iOS apps and the web site carry the licence and the
+  third-party notices.** The desktop archives always shipped `LICENSE` and
+  `NOTICE`; the apps and the site did not, although they run the same core,
+  whose MIT- and ISC-licensed derived code requires its notices in every
+  copy. Android packs both files into the APK at build time (a Gradle task
+  copies them from the repository root, so no second copy can drift, and a
+  JVM test checks the merged assets) and shows them from About ("Open-source
+  licenses"); iOS bundles them as resources from the root and shows them from
+  About; the web site publishes `LICENSE.txt` and `NOTICE.txt`, linked from
+  the demo page, the privacy page and every handbook page. ares is now
+  recorded as ISC (it was misnamed BSD-2-Clause / Apache-2.0), with its notice
+  in `NOTICE`, and Bisqwit's NTSC filter names its author, Joel Yliluoma.
+  The libretro core, built by the libretro buildbot, still ships without
+  them (`T-LIBRETRO-NOTICES`).
 - **The tree is REUSE 3.3 compliant** (<https://reuse.software/spec-3.3/>).
   A root `REUSE.toml` states the copyright holder and licence of every file
   (first-party work: `2025-2026 DoubleGate`, GPL-3.0-or-later), adds the

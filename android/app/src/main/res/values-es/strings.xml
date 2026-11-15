@@ -173,6 +173,10 @@
     <!-- ===== About dialog ===== -->
     <string name="about_close">Cerrar</string>
     <string name="about_body">RustyNES — un emulador de Nintendo Entertainment System de precisión de ciclo escrito en Rust puro.\n\nLicencia: GPL-3.0-or-later\nAutor: DoubleGate\nPrecisión: AccuracyCoin 100%% (141/141); nestest sin diferencias; suites blargg / kevtris en verde.\n\nCaracterísticas: 172 familias de mappers, el Famicom Disk System, Vs. System / PlayChoice-10, juego en red con rollback, RetroAchievements, películas TAS + el editor TAStudio, estados guardados, rebobinado, run-ahead, scripting Lua + automatización, paquetes HD y grabación de A/V — todo bajo un estricto contrato de determinismo de bits.</string>
+    <string name="about_licenses_heading">Licencias de código abierto</string>
+    <string name="about_license_gpl">Licencia (GPL-3.0-or-later)</string>
+    <string name="about_license_notices">Avisos de terceros</string>
+    <string name="about_license_unreadable">(ilegible)</string>
 
     <!-- ===== First-run onboarding dialogs ===== -->
     <string name="onboarding_continue">Continuar…</string>

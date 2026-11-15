@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -20,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -28,19 +30,32 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.core.net.toUri
 import androidx.core.graphics.drawable.toBitmap
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * About + first-run onboarding dialogs (v1.8.3, items 8-9). Pure UI; nothing here
  * touches emulation.
  */
 
-/** The About dialog: the RustyNES icon + the desktop project's About text. */
+/** The About dialog: the RustyNES icon + the desktop project's About text, and
+ *  the bundled license texts ([LicenseAssets]). */
 @Composable
 fun AboutDialog(onDismiss: () -> Unit) {
+    // Which bundled license text is open, if any. It replaces the About dialog
+    // while it is shown, and Close returns to About rather than dismissing both.
+    var openLicense by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    openLicense?.let { (asset, title) ->
+        LicenseTextDialog(asset = asset, title = title, onDismiss = { openLicense = null })
+        return
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.about_close)) } },
@@ -91,6 +106,56 @@ fun AboutDialog(onDismiss: () -> Unit) {
                         }
                     },
                 )
+                // The license text and the third-party notices, packaged into the
+                // APK from the repository root at build time (LicenseAssets.kt).
+                Spacer(Modifier.height(10.dp))
+                Text(stringResource(R.string.about_licenses_heading), fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    stringResource(R.string.about_license_gpl),
+                    color = Color(0xFF4FC3F7),
+                    textDecoration = TextDecoration.Underline,
+                    modifier = Modifier.clickable {
+                        openLicense = LicenseAssets.LICENSE to R.string.about_license_gpl
+                    },
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    stringResource(R.string.about_license_notices),
+                    color = Color(0xFF4FC3F7),
+                    textDecoration = TextDecoration.Underline,
+                    modifier = Modifier.clickable {
+                        openLicense = LicenseAssets.NOTICE to R.string.about_license_notices
+                    },
+                )
+            }
+        },
+    )
+}
+
+/**
+ * One license text bundled in the APK's assets ([LicenseAssets]), shown in full:
+ * read once off the main thread, monospaced so the text's own line layout
+ * survives, and selectable so it can be copied.
+ */
+@Composable
+private fun LicenseTextDialog(asset: String, title: Int, onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    val text by produceState(initialValue = "", asset) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { ctx.assets.open(asset).bufferedReader().use { it.readText() } }
+                .getOrElse { ctx.getString(R.string.about_license_unreadable) }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.about_close)) } },
+        title = { Text(stringResource(title)) },
+        text = {
+            SelectionContainer {
+                Column(modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                    Text(text, fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                }
             }
         },
     )

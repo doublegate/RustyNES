@@ -17,6 +17,14 @@ site_description: >-
   Documentation for RustyNES — a cycle-accurate Nintendo Entertainment System
   emulator written in pure Rust, built to a Mesen2 / higan / ares accuracy bar.
 site_author: DoubleGate
+# The footer of every handbook page. LICENSE.txt and NOTICE.txt are the
+# repository-root LICENSE and NOTICE, which web.yml copies to the Pages root at
+# build time; the links are root-relative because the handbook's pages sit at
+# different depths under /RustyNES/docs/.
+copyright: >-
+  RustyNES is licensed under GPL-3.0-or-later &middot;
+  <a href="/RustyNES/LICENSE.txt">License</a> &middot;
+  <a href="/RustyNES/NOTICE.txt">Third-party notices</a>
 
 repo_url: https://github.com/doublegate/RustyNES
 repo_name: doublegate/RustyNES

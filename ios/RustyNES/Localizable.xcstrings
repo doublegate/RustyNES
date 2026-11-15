@@ -442,6 +442,36 @@
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Créditos" } }
       }
     },
+    "Open-source licenses" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Licencias de código abierto" } }
+      }
+    },
+    "License (GPL-3.0-or-later)" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Licencia (GPL-3.0-or-later)" } }
+      }
+    },
+    "Third-party notices" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Avisos de terceros" } }
+      }
+    },
+    "License" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Licencia" } }
+      }
+    },
+    "Notices" : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Avisos" } }
+      }
+    },
+    "The license RustyNES is distributed under, and the notices of the third-party code it includes." : {
+      "localizations" : {
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "La licencia con la que se distribuye RustyNES y los avisos del código de terceros que incluye." } }
+      }
+    },
     "Custom" : {
       "localizations" : {
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Personalizado" } }
