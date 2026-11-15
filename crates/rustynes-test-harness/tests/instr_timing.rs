@@ -10,7 +10,7 @@
 //! (the ROM advertises "about 25 seconds"); `2-branch_timing` is much
 //! shorter.
 //!
-//! Source: blargg's NES test ROMs (public domain). See `tests/roms/LICENSES.md`.
+//! Source: blargg's NES test ROMs (no licence stated). See `tests/roms/LICENSES.md`.
 
 #![cfg(feature = "test-roms")]
 

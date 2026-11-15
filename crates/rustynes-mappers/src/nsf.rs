@@ -107,7 +107,9 @@ pub struct Nsf {
     pub song_name: Box<str>,
     /// Artist name.
     pub artist: Box<str>,
+    // REUSE-IgnoreStart (an NSF header field, not a notice of this file)
     /// Copyright holder.
+    // REUSE-IgnoreEnd
     pub copyright: Box<str>,
 }
 

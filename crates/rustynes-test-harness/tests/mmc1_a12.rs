@@ -2,7 +2,7 @@
 //!
 //! Source ROM: `tests/roms/mmc1_a12/mmc1_a12.nes`, Bregalad (its title
 //! screen: "MMC1 WRAM DISABLE SCANLINE COUNTER TEST", 2010),
-//! public-domain via the `christopherpow/nes-test-roms` aggregator.
+//! no licence stated, via the `christopherpow/nes-test-roms` aggregator.
 //!
 //! ## What the frame shows (v2.7.2)
 //!

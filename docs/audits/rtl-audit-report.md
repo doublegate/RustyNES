@@ -1119,5 +1119,5 @@ In accordance with the 2026-08-26 provenance audit, 21 files within the RustyNES
 ### 8.3 Provenance & Attribution Facts
 
 - **Licensing Metadata**: The `RustyNES_MiSTer` hardware RTL implementation metadata records the license as **GPL-3.0-or-later**.
-- **Notice Compliance**: All source files carry SPDX license headers (`SPDX-License-Identifier: GPL-3.0-or-later`) and copyright attributions.
+- **Notice Compliance**: All source files carry SPDX license headers (<!-- REUSE-IgnoreStart -->`SPDX-License-Identifier: GPL-3.0-or-later`<!-- REUSE-IgnoreEnd -->) and copyright attributions.
 - **Provenance Fact**: All findings and proposed fixes in this report were developed observing the clean-room constraints. Final determination of license compatibility and code provenance is subject to the project's established maintainer and legal review processes.

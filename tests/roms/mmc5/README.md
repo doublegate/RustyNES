@@ -6,15 +6,16 @@ Bandit Kings of Ancient China, Uchuu Keibitai SDF, and others.
 
 | File | Suite | Mapper | Author | License |
 |------|-------|--------|--------|---------|
-| `mapper_mmc5test_v1.nes` | MMC5 banking | MMC5 (5) | (Various, aggregator) | Public domain |
-| `mapper_mmc5test_v2.nes` | MMC5 banking + IRQ | MMC5 (5) | (Various, aggregator) | Public domain |
-| `mapper_mmc5exram.nes` | MMC5 ExRAM modes | MMC5 (5) | (Various, aggregator) | Public domain |
+| `mapper_mmc5test_v1.nes` | MMC5 banking | MMC5 (5) | (Various, aggregator) | No licence stated |
+| `mapper_mmc5test_v2.nes` | MMC5 banking + IRQ | MMC5 (5) | (Various, aggregator) | No licence stated |
+| `mapper_mmc5exram.nes` | MMC5 ExRAM modes | MMC5 (5) | Quietust (on screen: "Written by Quietust"), aggregated | No licence stated |
 
 ## Source
 
 `christopherpow/nes-test-roms/mmc5test/{mmc5test_v1,mmc5test_v2,mmc5exram}.nes`.
-The aggregator's root README places the corpora under public-domain
-terms.
+The aggregator has no README and no LICENSE (checked 2026-11-15);
+earlier revisions of this file said its README placed the corpora under
+public-domain terms.
 
 ## What they test
 
@@ -44,4 +45,7 @@ crate.
 
 ## License
 
-Public domain via the aggregator README.
+No licence stated (`LicenseRef-NoStatedLicense`); copyright stays with
+the authors (`mapper_mmc5exram.nes` reads "Written by Quietust"). (Until
+2026-11-15 this said "Public domain via the aggregator README"; there is
+no such README.)

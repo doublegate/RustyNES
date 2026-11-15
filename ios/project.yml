@@ -75,6 +75,19 @@ targets:
       - path: Generated
         excludes:
           - ".gitkeep"
+      # The repository-root LICENSE (the GPL-3.0 text) and NOTICE (the
+      # third-party attributions, including the MIT and ISC notices of the code
+      # the core derives from), bundled as resources and shown by AboutView.
+      # The GPL requires that a recipient of the binary gets its text, and the
+      # MIT and ISC licenses require their notices in all copies; the desktop
+      # archives already ship both files (release.yml). They are referenced
+      # here, not copied into ios/, so the app always ships the files at the
+      # root and no second copy can drift. Neither name has an extension
+      # XcodeGen maps to a build phase, hence the explicit `buildPhase`.
+      - path: ../LICENSE
+        buildPhase: resources
+      - path: ../NOTICE
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.doublegate.rustynes

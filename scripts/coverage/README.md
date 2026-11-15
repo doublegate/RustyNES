@@ -121,7 +121,7 @@ Two distinct concepts:
 * **Library ROMs** (this tool): the developer's commercial No-Intro/GoodNES set.
   Staged into the **gitignored** `tests/roms/external/`; never committed.
 * **Test ROMs** (`scripts/release-automation/stage_roms.sh`): the
-  permissively-licensed CC0 / public-domain suites vendored under
+  third-party test suites (no licence stated; see `tests/roms/LICENSES.md`) vendored under
   `tests/roms/nes-test-roms/`. That script force-adds those files *past* the
   gitignore so they can be **committed** as the accuracy spec. It is unrelated
   to `coverage.py` — leave it be.

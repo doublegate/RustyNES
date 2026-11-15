@@ -1,7 +1,7 @@
 //! End-to-end TAS movie record / playback determinism tests.
 //!
 //! v1.4.0 Sprint 4.1 (core movie infrastructure). These exercise the
-//! `rustynes_core::movie` API against a committed (CC0 / public-domain) test ROM
+//! `rustynes_core::movie` API against a committed third-party test ROM
 //! with visible framebuffer motion AND audio output, proving that a recorded
 //! movie replays bit-identically (framebuffer FNV-1a + audio FNV-1a +
 //! cumulative cycle count) from its start point.

@@ -150,7 +150,7 @@ enough; a reader, a packager, and a court each look in a different place.
 1. **At the site.** A comment on the derived function/table/block naming the **upstream project,
    the specific file/function**, and its **license** — e.g.
    `// Provenance: derived from <UpstreamEmulator>'s <Function> (<upstream/file>), <SPDX-License>.`
-2. **A file-level SPDX tag.** `// SPDX-License-Identifier: <the project's license>` at the top of
+2. **A file-level SPDX tag.** <!-- REUSE-IgnoreStart -->`// SPDX-License-Identifier: <the project's license>`<!-- REUSE-IgnoreEnd --> at the top of
    every derived file (ideally every file).
 3. **A central derivation table.** One document (a `PROVENANCE.md` / derivation table, or similar)
    with a row per derived file: *your file → upstream project → upstream file/function → upstream
@@ -265,6 +265,16 @@ short and imperative so it survives in a loaded context and an agent cannot "rea
   from." Attribute real ports; leave genuinely-independent code independent.
 - TEST ROMS. Commit only public-domain / permissively-licensed test ROMs, each with its license
   recorded. NEVER commit commercial/copyrighted ROMs.
+  [2026-11-15, maintainer decision, recorded here so this rule and the tree agree] The REUSE 3.3
+  audit (PRs #664 and sibling #79) found that about 240 committed test ROMs, blargg's suites,
+  kevtris's nestest and the ROMs mirrored from christopherpow/nes-test-roms among them, carry no
+  stated license and no public-domain dedication; the repository had called them public domain
+  without a source. The maintainer chose to KEEP them, labelled honestly as
+  `LicenseRef-NoStatedLicense` with their real authors in REUSE.toml and tests/roms/LICENSES.md,
+  rather than remove them. That is a deliberate, recorded exception for the ROMs already present:
+  do not remove them under this rule, and do not relabel them as public domain. A NEW test ROM
+  still meets the rule as written (a stated public-domain or permissive license, recorded), and
+  the `reuse` CI job fails on an unlabelled file under tests/roms/.
 - DO NOT SELF-CERTIFY. Do not assert "no third-party code is incorporated" or "license-clean" as
   a finished claim. Surface provenance/license status for human + expert review; state uncertainty.
 ```

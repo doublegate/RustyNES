@@ -1,7 +1,9 @@
 //! `AccuracyCoin` (100thCoin / Chris Siebert) NES accuracy battery.
 //!
 //! Source: <https://github.com/100thCoin/AccuracyCoin>, MIT-licensed
+// REUSE-IgnoreStart (cites the ROM's upstream notice; REUSE.toml covers this file)
 //! (Copyright (c) 2025 Chris Siebert). The repository ships
+// REUSE-IgnoreEnd
 //! `AccuracyCoin.nes` (NROM, 32 KiB PRG + 8 KiB CHR, horizontal mirroring)
 //! at the root.
 //!

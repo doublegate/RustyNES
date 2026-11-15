@@ -1,0 +1,11 @@
+Brad Smith (bbbradsmith) nes-audio-tests grant (LicenseRef-bbbradsmith-permissive)
+
+Upstream: https://github.com/bbbradsmith/nes-audio-tests
+
+The grant below is quoted verbatim from the "License:" section of the
+upstream readme.md, which is vendored in this repository as
+tests/roms/audio-tests/UPSTREAM_README.md (line 55):
+
+    These files may be freely redistributed and modified for any purpose.
+    Credit to the original author and/or a link to the original source would
+    be appreciated, but is not required.

@@ -224,7 +224,7 @@ Maintainers aim to review within 3–14 days; at least one approval and green CI
 
 ## Test ROM Legalities
 
-The repository ships test ROMs (`tests/roms/`) that are individually CC0 or public-domain; do not add ROMs unless their license is explicitly documented in `tests/roms/LICENSES.md`. **Never commit commercial Nintendo ROMs.** Place them in `tests/roms/external/` (gitignored) for local oracle testing.
+The repository ships third-party test ROMs (`tests/roms/`); their licences, or the fact that their authors stated none, are recorded per file in `REUSE.toml` and `tests/roms/LICENSES.md`. Do not add a ROM unless its author and license are documented in `tests/roms/LICENSES.md` and given a `REUSE.toml` annotation (the `reuse` CI job fails on an unlabelled file there). **Never commit commercial Nintendo ROMs.** Place them in `tests/roms/external/` (gitignored) for local oracle testing.
 
 ## Getting Help
 

@@ -15,7 +15,7 @@ workspace = true
 
 [features]
 default = ["mapper-audio"]
-# Enables tests that read CC0 / public-domain ROMs from `tests/roms/`. Off by
+# Enables tests that read the committed test ROMs in `tests/roms/`. Off by
 # default so `cargo test --workspace` stays fast on machines without the
 # corpus checked out.
 test-roms = []

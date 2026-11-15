@@ -97,6 +97,10 @@ png = "0.18"
 # (it is std-agnostic for fixed-output hashing), so the workspace dep is used
 # as-is here.
 sha2 = { workspace = true }
+# Parses REUSE.toml in `provenance_record_audit` (every derived file must keep
+# its upstream copyright holder there). Already a workspace dependency, so the
+# lockfile does not change.
+toml = { workspace = true }
 
 # Session-10 PPU-state-trace diff tool. Feature-gated so the
 # binary doesn't compile (and its dependencies don't link) under

@@ -538,7 +538,9 @@ fn external_mmc4_fire_emblem_gaiden() {
     // T-60-003c (2026-05-17): un-ignored after the MMC4 WRAM bug fix
     // (same root cause as VRC2/4/6 — $6000-$7FFF was returning 0
     // instead of prg_ram contents). Post-fix the title screen
+    // REUSE-IgnoreStart (title-screen text, not a copyright notice of this file)
     // ("Fire Emblem" with sword + green emblem + ©1991 Nintendo)
+    // REUSE-IgnoreEnd
     // renders cleanly.
     check(
         "mapper-010-MMC4/Fire Emblem Gaiden (Japan) (En) (1.01).nes",
@@ -695,7 +697,9 @@ fn external_vrc6b_esper_dream_2() {
     // (matches the VRC4 fix above; the VRC6b pinout-decoder hypothesis
     // was wrong — actual bug was missing $6000-$7FFF WRAM read/write
     // path on the VRC6 mapper). Post-fix title screen ("Esper Dream
+    // REUSE-IgnoreStart (title-screen text, not a copyright notice of this file)
     // 2" pink logo + New Game/Load Game menu + ©1992 Konami) renders.
+    // REUSE-IgnoreEnd
     check(
         "mapper-026-VRC6/Esper Dream 2 - Aratanaru Tatakai (Japan) (En) (1.0).nes",
         DEFAULT_IDLE,
@@ -707,7 +711,9 @@ fn external_vrc6b_esper_dream_2() {
 fn external_vrc6b_madara() {
     // T-60-003b (2026-05-17): un-ignored after the VRC6 WRAM bug fix
     // (same root cause as Esper Dream 2 above). Post-fix the title
+    // REUSE-IgnoreStart (title-screen text, not a copyright notice of this file)
     // screen ("MADARA" logo + ©KONAMI 1990 + "PUSH START KEY")
+    // REUSE-IgnoreEnd
     // renders cleanly.
     check(
         "mapper-026-VRC6/Mouryou Senki Madara (Japan) (En) (1.0).nes",

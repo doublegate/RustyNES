@@ -136,7 +136,7 @@ These cross-cutting decisions span multiple files. Reading individual chip docs 
 - `docs/` — implementation specs. These are the **spec**, not history: update them in the same PR as the code change. Per-subsystem files (`cpu-6502.md`, `ppu-2c02.md`, `apu-2a03.md`, `mappers.md`, `cartridge-format.md`, `scheduler.md`) + cross-cutting (`architecture.md`, `testing-strategy.md`, `performance.md`, `frontend.md`, `compatibility.md`). `docs/STATUS.md` is the **single source of truth** for per-suite pass counts, the mapper matrix, and version policy. `docs/adr/` holds Michael-Nygard-format ADRs.
 - `ref-docs/` — immutable hardware + emulation reference (60+ source research report). Updates go in dated supplemental files.
 - `to-dos/ROADMAP.md` → phase/sprint files — tickets with stable IDs `T-PS-NNN`. Reference in commits.
-- `tests/roms/` — CC0 / public-domain test ROMs (committed). `tests/roms/external/` — your own commercial dumps (gitignored).
+- `tests/roms/` — third-party test ROMs (committed; per-file licences in `REUSE.toml` and `tests/roms/LICENSES.md`, many with no licence stated). `tests/roms/external/` — your own commercial dumps (gitignored).
 - `tests/golden/` / `screenshots/` — reference framebuffers, audio, and the visual baseline corpus (committed). `tests/captures/` — current-run output (gitignored).
 
 **Never commit commercial Nintendo ROMs.**

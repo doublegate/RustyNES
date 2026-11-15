@@ -1480,7 +1480,8 @@ mod tests {
     // as an external consumer would. If they ever need to be a separate binary
     // again, the crate-type is what has to change first.
 
-    /// A committed, public-domain test ROM. Not a commercial dump.
+    /// A committed homebrew test ROM (Bregalad; no licence stated, see
+    /// `tests/roms/LICENSES.md`). Not a commercial dump.
     const ROM: &str = "../../tests/roms/mmc1_a12/mmc1_a12.nes";
 
     const SEED: u64 = 12345;

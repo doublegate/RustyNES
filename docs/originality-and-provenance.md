@@ -52,7 +52,7 @@ project + file so the record stands without the local clone). Each
 row is code in RustyNES that was ported, adapted, or closely modeled from the named
 upstream — not merely behavior observed and reimplemented from documentation. Most
 upstreams here are GPL emulators; some are permissively licensed (emu2413 and
-TriCNES under MIT, ares under BSD-2-Clause / Apache-2.0) and one is LGPL
+TriCNES under MIT, ares under ISC) and one is LGPL
 (blip_buf). "Upstream license" is the license the upstream file carries. Every one
 is compatible with distributing the combined work under GPL-3.0-or-later: the GPL
 upstreams are GPL-2.0-**or-later** or GPL-3.0-**or-later**, and the permissive and
@@ -64,7 +64,7 @@ LGPL-2.1-or-later ones may be incorporated into a GPL-3.0-or-later work.
 | `crates/rustynes-ppu/src/ppu.rs` | Mesen2 | `ProcessSpriteEvaluation` (`NesPpu.cpp:1015-1141`), `ReadSpriteRam`, the OAM-data-bus / sprite-evaluation read paths; the optional OAM-decay model (`ReadSpriteRam` / `WriteSpriteRam`, `OamDecayCycleCount`), written at v2.1.4 and recorded here only at v2.9.4 | GPL-3.0-or-later |
 | `crates/rustynes-core/src/bus.rs` | TriCNES | the `Fetch` address-bus-window block (`oam_dma_read_reg_active`, a direct port); the DMA flags the unified DMA engine models (`dmc_halt`, `uni_oam_*`) | MIT |
 | `crates/rustynes-ppu/src/raw_signal.rs` | Bisqwit; Mesen2 | The raw composite-signal model, which `docs/ppu-2c02.md` has called "the canonical Bisqwit `nes_ntsc` / Mesen2 'raw palette' generator" since v2.1.9 (recorded v2.9.8 at the maintainer's direction; found while the v2.9.8 emphasis model was written, which does not use it) | Bisqwit (see §6); GPL-3.0-or-later (Mesen2) |
-| `crates/rustynes-ppu/src/palette_gen.rs` | Bisqwit; ares | Bisqwit NES palette method; ares `fc/ppu/color.cpp` integration | Bisqwit (see §6); ares BSD-2/Apache-2.0 |
+| `crates/rustynes-ppu/src/palette_gen.rs` | Bisqwit; ares | Bisqwit NES palette method; ares `fc/ppu/color.cpp` integration | Bisqwit (see §6); ares ISC (until 2026-11-15 this said BSD-2/Apache-2.0, a misreading of ares's LICENSE, whose BSD-2 and Apache-2.0 sections cover bundled third-party components) |
 | `crates/rustynes-apu/src/apu.rs` | TriCNES; Mesen2 | the DMC-DMA state model (`Emulator.cs` fields, cited by name and line in the field docs); `_needHalt` / `_needDummyRead` (`NesCpu`) (recorded v2.9.9, NC-17) | MIT / GPL-3.0-or-later |
 | `crates/rustynes-apu/src/frame_counter.rs` | Mesen2 | `ApuFrameCounter::GetIrqFlag` lazy `$4015` clear; `stepCyclesPal` (recorded v2.9.9, NC-17) | GPL-3.0-or-later |
 | `crates/rustynes-apu/src/blip.rs` | blip_buf (Blargg) | band-limited synthesis (`blip_buf`) | LGPL-2.1-or-later |
@@ -150,7 +150,7 @@ this project previously mislabeled the second as the first.
 | Nestopia UE | GPL-2.0-or-later | Derivation (§1, FME-7/5B) **and** oracle |
 | GeraNES | GPL-3.0-only | Reference / cross-check: source consulted to confirm publicly-documented behavior; no code copied (see note) |
 | higan | GPL-3.0-or-later | Scheduler-structure reference / oracle |
-| ares | BSD-2-Clause / Apache-2.0 | Palette-integration reference (§1) / oracle |
+| ares | ISC (corrected 2026-11-15 from BSD-2-Clause / Apache-2.0) | Palette-integration reference (§1) / oracle |
 | TriCNES | MIT | Incorporated (§5) **and** timing-calibration reference (§4) |
 
 **GeraNES specifically (honest note).** Some in-source comments previously cited
@@ -284,7 +284,7 @@ earlier document did.
 
 Genuinely incorporated, each GPL-compatible and attributed in `NOTICE`:
 
-| Component | License | Copyright | Where |
+| Component | License | <!-- REUSE-IgnoreStart -->Copyright<!-- REUSE-IgnoreEnd --> | Where |
 | --- | --- | --- | --- |
 | emu2413 v1.5.9 | MIT | 2020 Mitsutaka Okazaki | `crates/rustynes-apu/src/opll.rs` (Rust port; VRC7 audio, ADR 0006) |
 | TriCNES | MIT | 2025 Chris Siebert | `crates/rustynes-{ppu,cpu,core}` (models ported from commit `9199870`) + vendored golden oracle (commit `94f1b117`, re-synced 2026-09-19) |
@@ -327,12 +327,57 @@ deterministic emulation core or its AccuracyCoin results.
 
 ## 7. Test ROMs
 
-Every ROM committed under `tests/roms/` is a public-domain work released for
+Every ROM committed under `tests/roms/` is a homebrew test program written for
 validating NES emulators, catalogued per-author in `tests/roms/LICENSES.md`
 (blargg's suites, kevtris/AccuracyCoin material, and others). **No commercial
 Nintendo software is bundled**; users test commercial dumps they own from the
 gitignored `tests/roms/external/`. The AccuracyCoin battery is MIT-licensed
-(Chris Siebert / 100thCoin).
+(Chris Siebert / 100thCoin); Holy Mapperel is zlib and DPCM Letterbox
+all-permissive (Damian Yerrick); bbbradsmith's audio tests carry his own
+permissive grant.
+
+**Correction, 2026-11-15.** This section said until 2026-11-15 that every
+committed ROM "is a public-domain work". That was not supported. For blargg's
+suites, kevtris's `nestest`, and the ROMs mirrored from
+`christopherpow/nes-test-roms` (including `nes-test-roms/`, `mmc5/`, `m22/` and
+`mmc1_a12/`), no public-domain dedication and no licence was found: the suites'
+own readme files state none, the NESdev wiki page cited for their status
+(<https://www.nesdev.org/wiki/Emulator_tests>) states none, and
+`christopherpow/nes-test-roms` has no LICENSE and no README. They are kept as
+widely mirrored test material, labelled `LicenseRef-NoStatedLicense` (text in
+`LICENSES/`): copyright stays with their authors, RustyNES grants no licence to
+them, and the GPL does not cover them.
+
+### REUSE 3.3
+
+The tree follows the [REUSE 3.3 specification](https://reuse.software/spec-3.3/).
+Every file's copyright holder(s) and licence are stated either in its own SPDX
+header or in the root `REUSE.toml`, and every licence used has its text under
+`LICENSES/`. The `REUSE.toml` comments record the evidence for each third-party
+class (test ROMs, vendored code, fonts, commercial-game screenshots). Check
+locally with `uvx reuse lint` (or `pipx run reuse lint`); CI runs the same check
+in the `reuse` job of `.github/workflows/ci.yml`.
+
+**Adding a file you did not write.** The check verifies that every file has a
+label, not that the label is right. `REUSE.toml`'s default labels the
+first-party roots as DoubleGate's GPL work, so a third-party file placed in one
+of them (a font under `crates/`, say) would pass with the wrong label. The four
+directories where outside material lands, `tests/roms/`, `screenshots/`,
+`vendor/` and `ref-docs/` (Markdown excepted), are left out of that default on
+purpose: a file added there fails the check until it gets an annotation of its
+own, naming its real author and licence, with the evidence in a comment. Add
+one for any third-party file, wherever it goes.
+
+That guard has a second limit. Several annotations label a whole directory by
+glob (`tests/roms/audio-tests/*.nes`, `tests/roms/blargg/**`,
+`tests/roms/nes-test-roms/**` and others), so a new file placed inside one of
+those directories inherits that directory's holder and licence and passes the
+check without an annotation of its own: a new `.nes` in `audio-tests/` would be
+labelled Brad Smith's, under his licence. Before adding a file anywhere under
+`tests/roms/`, `screenshots/`, `vendor/` or `ref-docs/`, run
+`uvx reuse spdx | grep -A6 '<the new path>'` and check that the holder and
+licence it reports are really that file's; if not, add an exact-path
+annotation after the glob's (the last matching annotation wins).
 
 ---
 
@@ -350,8 +395,8 @@ like sweeping this under the rug:
 - v2.2.9 corrects this the right way: it (a) relicenses the project to
   GPL-3.0-or-later, (b) states plainly that other emulators' code was incorporated
   during implementation, (c) credits every derived-from source here and in
-  `NOTICE`, and (d) marks each derived source file with an accurate
-  `SPDX-License-Identifier: GPL-3.0-or-later` header and a specific provenance note
+  `NOTICE`, and (d) marks each derived source file with an accurate <!-- REUSE-IgnoreStart -->
+  `SPDX-License-Identifier: GPL-3.0-or-later` header <!-- REUSE-IgnoreEnd --> and a specific provenance note
   (naming its upstream file/function) that points back to the §1 table. The old
   scattered, imprecise per-line "port of" comments are not restored verbatim — the
   SPDX + provenance headers plus this audited table are their accurate,

@@ -40,6 +40,8 @@ on:
       - "mkdocs.yml"
       - "PRIVACY.md"
       - "scripts/render_privacy.py"
+      - "LICENSE"
+      - "NOTICE"
   pull_request:
     branches: [main]
     # `ready_for_review` runs the build on a PR opened as a draft; see the
@@ -57,6 +59,8 @@ on:
       - "mkdocs.yml"
       - "PRIVACY.md"
       - "scripts/render_privacy.py"
+      - "LICENSE"
+      - "NOTICE"
   workflow_dispatch:
 
 # Read-only by default. `pages: write` and `id-token: write` are granted per
@@ -217,7 +221,16 @@ jobs:
         # Python-Markdown, installed above as a dependency of MkDocs.
         run: python3 scripts/render_privacy.py PRIVACY.md privacy-site/privacy/index.html
 
-      - name: Assemble the Pages site (demo at /, rustdoc at /api/, handbook at /docs/, policy at /privacy/)
+      # Runs on PRs too, unlike the assembly below: a PR that touches LICENSE or
+      # NOTICE (both are trigger paths) must fail here if it empties or removes
+      # one, not only after it merges (Antigravity on PR #664).
+      - name: LICENSE and NOTICE are present and non-empty
+        run: |
+          for f in LICENSE NOTICE; do
+            test -s "$f" || { echo "::error::$f is missing or empty"; exit 1; }
+          done
+
+      - name: Assemble the Pages site (demo at /, rustdoc at /api/, handbook at /docs/, policy at /privacy/, LICENSE.txt + NOTICE.txt at /)
         if: env.IS_PR != 'true'
         run: |
           set -euo pipefail
@@ -227,6 +240,18 @@ jobs:
           cp -r target/doc/. _site/api/
           cp -r mkdocs-site/. _site/docs/
           cp -r privacy-site/. _site/
+          # The repository-root LICENSE (GPL-3.0 text) and NOTICE (third-party
+          # attributions, including the MIT and ISC notices of the code the
+          # core derives from), copied at build time so the site that serves
+          # the wasm build of that core carries them, as the desktop archives
+          # do (release.yml). The `.txt` names make Pages serve them as
+          # text/plain, which a browser displays; an extensionless file is
+          # served as a download. The privacy page and the handbook footer
+          # link to them; an empty or missing file fails the deploy.
+          for f in LICENSE NOTICE; do
+            test -s "$f" || { echo "::error::$f is missing or empty"; exit 1; }
+            cp "$f" "_site/$f.txt"
+          done
           # rustdoc emits no root index for a multi-crate workspace; add a
           # redirect to the main library facade so /api/ lands somewhere useful.
           cat > _site/api/index.html <<'HTML'

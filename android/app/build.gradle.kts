@@ -289,6 +289,12 @@ android {
     // androidx classes like `AtomicFile` run under the tests unchanged.
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // The merged assets on the test classpath (AGP names their directory in
+        // `com/android/tools/test_config.properties`), so LicenseAssetsTest can
+        // check that the APK's assets really carry LICENSE and NOTICE -- the
+        // copy task below, its registration as a generated asset source, and
+        // the merge -- rather than only the copy task's own output.
+        unitTests.isIncludeAndroidResources = true
     }
 
     // 16 KB page alignment (Play requirement for Android 15+). NDK r27+ aligns
@@ -449,6 +455,59 @@ val usePrebuiltRust = prebuiltRustDir?.let { dir ->
 // be run by hand), but with the property set nothing depends on them.
 tasks.named("preBuild") { dependsOn(usePrebuiltRust ?: uniffiBindgen) }
 
+// --- License notices --------------------------------------------------------
+
+// The repository-root LICENSE (the GPL-3.0 text) and NOTICE (the third-party
+// attributions, including the MIT and ISC notices of the code the core derives
+// from) packaged into every variant's assets at `licenses/` (LicenseAssets.kt),
+// where the About dialog shows them. The GPL requires that a recipient of the
+// binary gets its text, and the MIT and ISC licenses require their notices in
+// all copies; the desktop archives already ship both files (release.yml).
+// Copied at build time rather than checked in under src/main/assets/, so the
+// APK always carries the files at the root and no second copy can drift.
+//
+// A typed task with a declared output directory, registered per variant with
+// `addGeneratedSourceDirectory`, so AGP wires the asset merge to depend on it
+// (unlike the Exec tasks above, whose undeclared outputs keep them out of
+// Gradle's implicit-dependency validation). A missing or empty file fails the
+// build rather than shipping an app without its notices.
+abstract class CopyLicenseAssets : DefaultTask() {
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.NAME_ONLY)
+    abstract val licenseFiles: ConfigurableFileCollection
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val dest = outputDir.get().asFile.resolve("licenses")
+        dest.deleteRecursively()
+        dest.mkdirs()
+        for (f in licenseFiles.files) {
+            if (!f.isFile || f.length() == 0L) {
+                throw GradleException("$f is missing or empty; the app must ship it (see LicenseAssets.kt)")
+            }
+            f.copyTo(dest.resolve(f.name))
+        }
+    }
+}
+
+val licenseSources = listOf(workspaceRoot.resolve("LICENSE"), workspaceRoot.resolve("NOTICE"))
+
+androidComponents {
+    onVariants { variant ->
+        val copy = tasks.register<CopyLicenseAssets>(
+            "copy${variant.name.replaceFirstChar { it.uppercase() }}LicenseAssets",
+        ) {
+            group = "build"
+            description = "Copy the repository-root LICENSE and NOTICE into the ${variant.name} assets."
+            licenseFiles.from(licenseSources)
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(copy, CopyLicenseAssets::outputDir)
+    }
+}
+
 dependencies {
     // v1.8.8 "Atlas": the Compose BOM is tracked on its stable line, for the
     // adaptive APIs (Window Size Classes, ListDetailPaneScaffold) and a current
@@ -575,6 +634,8 @@ tasks.withType<Test>().configureEach {
     inputs.file(layout.projectDirectory.file("src/main/AndroidManifest.xml"))
     inputs.file(layout.projectDirectory.file("build.gradle.kts"))
     inputs.dir(layout.projectDirectory.dir("src/main/java"))
+    // LicenseAssetsTest compares the packaged copies with these.
+    inputs.files(licenseSources)
 }
 
 // v1.8.8 "Atlas" (Workstream J): how :app consumes the generated profile.

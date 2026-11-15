@@ -10,7 +10,7 @@
 //! (`run_nes_blargg`), not the CPU-only `BlarggBus` — the CPU-only bus has
 //! no real APU and the sub-test cannot pass against it.
 //!
-//! Source: blargg's NES test ROMs (public domain). See `tests/roms/LICENSES.md`.
+//! Source: blargg's NES test ROMs (no licence stated). See `tests/roms/LICENSES.md`.
 //!
 //! v2.1.0 coverage wiring also folds in the `cpu_exec_space/` corpus
 //! (Quietust's "NES Memory Execution Tests"): verifies the CPU can execute

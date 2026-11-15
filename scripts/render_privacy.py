@@ -50,7 +50,9 @@ footer {{ margin-top: 3rem; font-size: 0.9em; opacity: 0.8; }}
 <main>
 {body}
 <footer><a href="../">RustyNES</a> &middot;
-<a href="https://github.com/doublegate/RustyNES/blob/main/PRIVACY.md">Source and history</a></footer>
+<a href="https://github.com/doublegate/RustyNES/blob/main/PRIVACY.md">Source and history</a> &middot;
+<a href="../LICENSE.txt">License (GPL-3.0-or-later)</a> &middot;
+<a href="../NOTICE.txt">Third-party notices</a></footer>
 </main>
 </body>
 </html>

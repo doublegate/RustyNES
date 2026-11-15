@@ -174,8 +174,8 @@ construction"; the porting is proven by the code and comments themselves.
 - **Relicensed to GPL-3.0-or-later** (ADR 0036). RustyNES is a derivative work of GPL emulators;
   the MIT/Apache license and the "no GPL code" claim are withdrawn.
 - **Attribution restored, honestly.** `originality-and-provenance.md` §1 is a file-by-file
-  derivation table; `NOTICE` credits each GPL upstream; each derived source file carries an
-  `SPDX-License-Identifier: GPL-3.0-or-later` header and a specific provenance note. The scrubbed
+  derivation table; `NOTICE` credits each GPL upstream; each derived source file carries an <!-- REUSE-IgnoreStart -->
+  `SPDX-License-Identifier: GPL-3.0-or-later` header <!-- REUSE-IgnoreEnd --> and a specific provenance note. The scrubbed
   "port of" comments are superseded by this more complete record, not re-hidden.
 - **This post-mortem**, so the failure is documented rather than buried.
 

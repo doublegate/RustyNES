@@ -155,7 +155,8 @@ artifacts/
 
 # --- ROMs & media (copyright) ---
 # The broad `*.nes`/`*.fds` rules ignore ALL ROMs; re-include the committable
-# CC0 / public-domain suites under tests/roms/, then HARD-exclude the commercial
+# test-ROM suites under tests/roms/ (licences per file in REUSE.toml and
+# tests/roms/LICENSES.md), then HARD-exclude the commercial
 # dumps + the large fetched clone (NEVER committed — Nintendo copyright).
 *.nes
 *.fds
@@ -416,3 +417,6 @@ tests/roms/**/*.nl
 # MkDocs Material's social-card and privacy plugins write their download/render
 # cache here on every local `mkdocs build` (web.yml builds the handbook in CI).
 /.cache/
+
+# Third-party Alliance Memory SDRAM datasheets, marked "Confidential": kept on disk only, never redistributed (see ref-docs/2026-11-15-sdram-datasheet-sources.md).
+/ref-docs/Datasheets/*.pdf

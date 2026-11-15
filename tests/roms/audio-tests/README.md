@@ -11,8 +11,11 @@ The upstream license (from `readme.md`) is:
 > purpose. Credit to the original author and/or a link to the
 > original source would be appreciated, but is not required.
 
-This is effectively a public-domain dedication; the credit request is
-a courtesy, not a redistribution restriction. The upstream readme is
+This is a permissive grant in the author's own words (labelled
+`LicenseRef-bbbradsmith-permissive` in the root `REUSE.toml`; until
+2026-11-15 this file called it "effectively a public-domain dedication",
+which it is not); the credit request is a courtesy, not a redistribution
+restriction. The upstream readme is
 mirrored verbatim as [`UPSTREAM_README.md`](./UPSTREAM_README.md).
 
 ## ROMs vendored

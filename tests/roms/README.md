@@ -2,10 +2,13 @@
 
 This directory holds all the test ROMs that ship with RustyNES.
 Everything here is **committed** to git (the directory and its
-subdirectories — `external/` is the exception, see below). Every file
-under a committed corpus is under a public-domain / CC0 / MIT / BSD /
-zlib / equivalently-permissive license. Full provenance and licensing
-is in [`LICENSES.md`](./LICENSES.md).
+subdirectories — `external/` is the exception, see below). Files under
+a committed corpus are either under a CC0 / MIT / zlib /
+equivalently-permissive license or, for the blargg / kevtris suites and
+the ROMs mirrored from `christopherpow/nes-test-roms`, carry no stated
+license (`LicenseRef-NoStatedLicense`; until 2026-11-15 this file called
+those public domain, which no source supports). Full provenance and
+licensing is in [`LICENSES.md`](./LICENSES.md).
 
 The integration tests in `crates/rustynes-test-harness/tests/` consume these
 files directly. The full workspace test count (510 + 6 `#[ignore]`'d
@@ -16,16 +19,16 @@ on this corpus.
 
 | Path | What it is | Author / source | License |
 |------|------------|-----------------|---------|
-| [`nestest/`](./nestest/) | The kevtris CPU instruction validation ROM + matching Nintendulator golden log. | kevtris | Public domain |
-| [`blargg/`](./blargg/) | Shay Green ("blargg")'s full NES test suites: CPU instr_test-v5, CPU dummy reads/writes, CPU interrupts v2, CPU timing test6, PPU vbl_nmi, PPU open bus, APU test + mixer + DMC DMA, sprite hit / overflow tests, branch timing tests, MMC3 IRQ tests v2, MMC3 IRQ tests (older visual). | blargg | Public domain |
-| [`assorted/`](./assorted/) | Extra blargg sub-suites kept separate by historical convention: branch_timing, cpu_reset, oam_read/stress, apu 2005-07-30 (len_ctr / len_table), full_palette + flowing_palette, a copy of `nestest`. | blargg / kevtris | Public domain |
+| [`nestest/`](./nestest/) | The kevtris CPU instruction validation ROM + matching Nintendulator golden log. | kevtris | No licence stated |
+| [`blargg/`](./blargg/) | Shay Green ("blargg")'s full NES test suites: CPU instr_test-v5, CPU dummy reads/writes, CPU interrupts v2, CPU timing test6, PPU vbl_nmi, PPU open bus, APU test + mixer + DMC DMA, sprite hit / overflow tests, branch timing tests, MMC3 IRQ tests v2, MMC3 IRQ tests (older visual). | blargg | No licence stated |
+| [`assorted/`](./assorted/) | Extra blargg sub-suites kept separate by historical convention: branch_timing, cpu_reset, oam_read/stress, apu 2005-07-30 (len_ctr / len_table), full_palette + flowing_palette, a copy of `nestest`. | blargg / kevtris | No licence stated |
 | [`holy_mapperel/`](./holy_mapperel/) | Damian Yerrick's "Holy Mapperel" cartridge-PCB-assembly tests (mapper-detection + bank-reachability). 17 ROMs covering mappers 0, 1, 2, 3, 4, 7, 9, 10, 34, 66, 69. | Damian Yerrick / tepples | zlib |
-| [`mmc5/`](./mmc5/) | MMC5 (mapper 5) accuracy suite from `christopherpow/nes-test-roms`: split-screen, ExRAM modes, scanline IRQ. | Various (aggregator) | Public domain |
+| [`mmc5/`](./mmc5/) | MMC5 (mapper 5) accuracy suite from `christopherpow/nes-test-roms`: split-screen, ExRAM modes, scanline IRQ. | Various (aggregator) | No licence stated |
 | [`accuracycoin/`](./accuracycoin/) | Chris Siebert's 144-test single-NROM AccuracyCoin battery — the **single source of truth** for the v0.9.x → v1.0.0 quality bar. | Chris Siebert (100thCoin) | MIT |
 | [`AccuracyCoin/`](./AccuracyCoin/) | The upstream `SOURCE_CATALOG.tsv` (144 test-name catalog parsed by the RAM-direct decoder) plus a copy of `AccuracyCoin.nes` for symmetry. The test catalog is `include_str!`ed by `rustynes-test-harness::accuracy_coin_catalog`. | Chris Siebert | MIT |
-| [`audio-tests/`](./audio-tests/) | Brad Smith (`bbbradsmith`)'s `nes-audio-tests` corpus — expansion-audio relative-loudness comparisons, VRC7 / N163 / FME-7 / MMC5 audio quirks, APU DAC linearity. Covers mappers 5, 19, 24, 26, 69, 85. | Brad Smith | "Freely redistributed and modified for any purpose" (effectively PD) |
-| [`m22/`](./m22/) | NewRisingSun's VRC2 (mapper 22) CHR-banking smoke test. | NewRisingSun (aggregated in `christopherpow/nes-test-roms`) | Public domain (aggregator) |
-| [`mmc1_a12/`](./mmc1_a12/) | tepples's MMC1 + PPU A12 transition test (control case for the MMC3 A12-IRQ axis). | tepples (aggregated) | Public domain (aggregator) |
+| [`audio-tests/`](./audio-tests/) | Brad Smith (`bbbradsmith`)'s `nes-audio-tests` corpus — expansion-audio relative-loudness comparisons, VRC7 / N163 / FME-7 / MMC5 audio quirks, APU DAC linearity. Covers mappers 5, 19, 24, 26, 69, 85. | Brad Smith | Permissive grant: "freely redistributed and modified for any purpose" (`LicenseRef-bbbradsmith-permissive`; a licence, not a public-domain dedication) |
+| [`m22/`](./m22/) | NewRisingSun's VRC2 (mapper 22) CHR-banking smoke test. | NewRisingSun (aggregated in `christopherpow/nes-test-roms`) | No licence stated (aggregator) |
+| [`mmc1_a12/`](./mmc1_a12/) | Bregalad's MMC1 + PPU A12 transition test (control case for the MMC3 A12-IRQ axis); this row said tepples until 2026-11-15. | Bregalad (title screen "(C) 2010 BREGALAD"; aggregated) | No licence stated (aggregator) |
 | [`dap/`](./dap/) | The `rustynes-dap` fixtures: `dapdemo.c` built by cc65 and by llvm-mos (`build.py`), with their `.dbg` / ELF debug information. | RustyNES (the C file); the toolchains' runtime libraries | CC0-1.0 (the C file); zlib / Apache-2.0 WITH LLVM-exception (the linked runtimes) |
 | [`external/`](./external/) | **gitignored.** Reserved for end-user-provided commercial dumps. See [`external/README.md`](./external/README.md). | n/a | n/a |
 
@@ -69,9 +72,12 @@ writing; this gap is noted in
 ## What is NOT committed
 
 - Anything copyrighted by Nintendo or any third-party publisher.
-- Anything with an unclear license (we err on the side of "drop it" —
-  ROMs investigated and rejected for license clarity are logged in the
-  audit report referenced above).
+- Anything whose license is known to forbid redistribution. ROMs whose
+  author stated no license at all are kept and labelled
+  `LicenseRef-NoStatedLicense` (maintainer decision, 2026-11-15; see
+  [`LICENSES.md`](./LICENSES.md)); until then this list said anything with
+  an unclear license was dropped. ROMs investigated and rejected earlier
+  are logged in the audit report referenced above.
 - The `external/` subdirectory itself. Verify with
   `git check-ignore tests/roms/external/anything` — it returns the
   matched gitignore line.

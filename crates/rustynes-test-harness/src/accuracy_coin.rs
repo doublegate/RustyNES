@@ -1,7 +1,9 @@
 //! `AccuracyCoin` battery driver and result-page glyph decoder.
 //!
+// REUSE-IgnoreStart (cites the ROM's upstream notice; REUSE.toml covers this file)
 //! Source: <https://github.com/100thCoin/AccuracyCoin> (Chris Siebert, MIT,
 //! `Copyright (c) 2025`). The ROM ships under `tests/roms/accuracycoin/`.
+// REUSE-IgnoreEnd
 //!
 //! ## What this module does
 //!

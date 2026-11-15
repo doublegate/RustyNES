@@ -23,7 +23,7 @@ are one directory, and two `README.md` paths collide on clone.
 fetched 2026-11-05 for v3.6.2, md5 `6cab1c9cc644e51ff4830fbe779f66d9`;
 previously `f5f41dc2`, fetched 2026-10-07 (v3.1.0), `46199ae4`, fetched 2026-09-19, `69c8860`, fetched 2026-09-11, and
 `71f57fb`, fetched 2026-05-10). Repository LICENSE is the MIT License,
-"Copyright (c) 2025 Chris Siebert".
+<!-- REUSE-IgnoreStart -->"Copyright (c) 2025 Chris Siebert".<!-- REUSE-IgnoreEnd -->
 
 The `69c8860` -> `46199ae4` window is two commits and **165 differing ROM
 bytes**, and both commits are the same one-line defect in two places: a

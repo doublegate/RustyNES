@@ -59,8 +59,8 @@ license the project was entitled to offer.
    attributes each GPL upstream and the code derived from it; the README license and
    provenance text are corrected. The false "no GPL code incorporated" / "not a port"
    claims are withdrawn.
-3. **Mark the source, accurately.** Each derived source file carries an
-   `SPDX-License-Identifier: GPL-3.0-or-later` header and a specific provenance note
+3. **Mark the source, accurately.** Each derived source file carries an <!-- REUSE-IgnoreStart -->
+   `SPDX-License-Identifier: GPL-3.0-or-later` header <!-- REUSE-IgnoreEnd --> and a specific provenance note
    naming its upstream file/function (e.g. Mesen2 `NesPpu.cpp`, puNES `JV001.c`) and
    pointing to the §1 table. The old scattered, imprecise per-line "port of" comments
    are not restored verbatim — the SPDX + provenance headers plus the centralized

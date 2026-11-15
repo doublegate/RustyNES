@@ -486,9 +486,18 @@ Reference emulators are black-box oracles: their output may be compared, and the
 source is never read.
 
 Permissive components (emu2413, TriCNES, `rcheevos`, blip_buf and the bundled
-fonts) are credited in `NOTICE`. The test ROMs under `tests/roms/` are CC0, MIT or
-zlib. **No commercial ROMs are included**: dumps for the commercial-ROM oracle must
-come from cartridges you own.
+fonts) are credited in `NOTICE`. The test ROMs under `tests/roms/` are CC0, MIT,
+zlib or similarly permissive where their authors licensed them; blargg's and
+kevtris's suites and the ROMs mirrored from `christopherpow/nes-test-roms` state no
+licence and are redistributed as test material that the GPL does not cover
+([`tests/roms/LICENSES.md`](tests/roms/LICENSES.md)). **No commercial ROMs are
+included**: dumps for the commercial-ROM oracle must come from cartridges you own.
+
+The tree follows the [REUSE 3.3](https://reuse.software/spec-3.3/) specification:
+every file's copyright and licence are stated in its own SPDX header or in
+[`REUSE.toml`](REUSE.toml), with every licence text under [`LICENSES/`](LICENSES/).
+Run `uvx reuse lint` (or `pipx run reuse lint`) to check; CI runs it on every
+pull request.
 
 ---
 

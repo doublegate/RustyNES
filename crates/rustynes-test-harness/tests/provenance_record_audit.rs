@@ -183,3 +183,190 @@ fn every_section_1_row_names_a_file_that_carries_a_header() {
         problems.join("\n  ")
     );
 }
+
+/// One `[[annotations]]` table of `REUSE.toml`, reduced to what the holder
+/// audit needs.
+struct Annotation {
+    paths: Vec<String>,
+    precedence: Option<String>,
+    holders: Vec<String>,
+}
+
+fn reuse_annotations(root: &Path) -> Vec<Annotation> {
+    let text = fs::read_to_string(root.join("REUSE.toml")).expect("read REUSE.toml");
+    let doc: toml::Table = toml::from_str(&text).expect("REUSE.toml parses as TOML");
+    let tables = doc
+        .get("annotations")
+        .and_then(toml::Value::as_array)
+        .expect("REUSE.toml has [[annotations]] tables");
+    let strings = |v: Option<&toml::Value>| -> Vec<String> {
+        match v {
+            Some(toml::Value::String(s)) => vec![s.clone()],
+            Some(toml::Value::Array(a)) => a
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    let out: Vec<Annotation> = tables
+        .iter()
+        .map(|a| Annotation {
+            paths: strings(a.get("path")),
+            precedence: a
+                .get("precedence")
+                .and_then(toml::Value::as_str)
+                .map(str::to_owned),
+            holders: strings(a.get("SPDX-FileCopyrightText")),
+        })
+        .collect();
+    assert!(
+        out.len() > 20 && out.iter().all(|a| !a.paths.is_empty()),
+        "parsed {} REUSE.toml annotations, or one without a `path`; the parser is wrong",
+        out.len()
+    );
+    out
+}
+
+/// REUSE.toml's path globbing: `*` matches within one path component, `**`
+/// across `/`, `**/` also matches NO directory at all (so `a/**/*.md` covers
+/// `a/b.md`, which REUSE.toml relies on for `ref-docs/**/*.md`), and `\*` is a
+/// literal star.
+fn reuse_glob_matches(pattern: &str, path: &str) -> bool {
+    fn go(p: &[u8], s: &[u8]) -> bool {
+        match p {
+            [] => s.is_empty(),
+            [b'\\', b'*', rest @ ..] => s.first() == Some(&b'*') && go(rest, &s[1..]),
+            // `**/`: zero directories (skip the `**/` entirely), or `**` then `/`.
+            [b'*', b'*', b'/', rest @ ..] => {
+                go(rest, s) || (0..=s.len()).any(|i| go(&p[2..], &s[i..]))
+            }
+            [b'*', b'*', rest @ ..] => (0..=s.len()).any(|i| go(rest, &s[i..])),
+            [b'*', rest @ ..] => (0..=s.len())
+                .take_while(|&i| i == 0 || s[i - 1] != b'/')
+                .any(|i| go(rest, &s[i..])),
+            [c, rest @ ..] => s.first() == Some(c) && go(rest, &s[1..]),
+        }
+    }
+    go(pattern.as_bytes(), path.as_bytes())
+}
+
+#[test]
+fn reuse_glob_matching_follows_the_spec() {
+    assert!(reuse_glob_matches("crates/**", "crates/a/src/b.rs"));
+    assert!(reuse_glob_matches("*", "NOTICE"));
+    assert!(!reuse_glob_matches("*", "crates/a.rs"));
+    assert!(reuse_glob_matches("tests/roms/*.py", "tests/roms/mk.py"));
+    assert!(!reuse_glob_matches("tests/roms/*.py", "tests/roms/x/mk.py"));
+    assert!(reuse_glob_matches("a/**/*.md", "a/b/c/d.md"));
+    // `**/` matches zero directories (CodeRabbit and Antigravity on PR #664):
+    // a later annotation `crates/rustynes-apu/src/**/blip.rs` does cover
+    // `crates/rustynes-apu/src/blip.rs` in REUSE, so the audit must see it.
+    assert!(reuse_glob_matches("a/**/*.md", "a/b.md"));
+    assert!(reuse_glob_matches(
+        "crates/rustynes-apu/src/**/blip.rs",
+        "crates/rustynes-apu/src/blip.rs"
+    ));
+    assert!(!reuse_glob_matches("a/**/*.md", "ab.md"));
+    assert!(reuse_glob_matches("a/\\*", "a/*"));
+    assert!(!reuse_glob_matches("a/\\*", "a/b"));
+    assert!(!reuse_glob_matches("crates/x.rs", "crates/x.rsx"));
+}
+
+/// A holder line that is the project's own (any entry naming `DoubleGate`).
+fn is_first_party(holder: &str) -> bool {
+    holder.contains("DoubleGate")
+}
+
+/// What REUSE actually records for a `// Provenance:` file, checked the way
+/// REUSE resolves it: the EFFECTIVE annotation is the last one in REUSE.toml
+/// whose path or glob matches the file (later tables replace earlier ones;
+/// they do not stack). For every header file that annotation must
+///
+/// - name the file by EXACT path (a glob would also cover files that are not
+///   derived, and keep matching after a derived file is renamed),
+/// - be `precedence = "aggregate"` (so the file's own SPDX header still
+///   counts, rather than being overridden), and
+/// - list at least one holder that is not `DoubleGate`: the upstream holder the
+///   header discloses (Mesen2's "Sour et al.", `TriCNES`, puNES, ...).
+///
+/// `REUSE.toml`'s default labels every file under `crates/` as `DoubleGate`'s
+/// work, so without this a new `// Provenance:` file left out of REUSE.toml, an
+/// annotation trimmed to `DoubleGate` alone, or a later table matching the same
+/// file would each pass `reuse lint` while the REUSE record dropped the upstream
+/// copyright (Antigravity and `CodeRabbit` on PR #664).
+#[test]
+fn every_provenance_header_keeps_its_upstream_holder_in_reuse_toml() {
+    let root = workspace_root();
+    let headers = files_with_header(&root);
+    assert!(
+        headers.len() > 20,
+        "found only {} `// Provenance:` files; the scan is wrong",
+        headers.len()
+    );
+    let annotations = reuse_annotations(&root);
+    let mut problems = Vec::new();
+    for file in &headers {
+        let effective = annotations
+            .iter()
+            .rev()
+            .find(|a| a.paths.iter().any(|p| reuse_glob_matches(p, file)));
+        let Some(a) = effective else {
+            problems.push(format!("{file}: no REUSE.toml annotation matches it"));
+            continue;
+        };
+        if !a.paths.iter().any(|p| p == file) {
+            problems.push(format!(
+                "{file}: the annotation REUSE applies matches it only by a glob ({:?}); \
+                 give it an exact-path `aggregate` annotation",
+                a.paths
+            ));
+            continue;
+        }
+        if a.precedence.as_deref() != Some("aggregate") {
+            problems.push(format!(
+                "{file}: the annotation REUSE applies has precedence {:?}, not \"aggregate\"",
+                a.precedence
+            ));
+        }
+        if !a.holders.iter().any(|h| !is_first_party(h)) {
+            problems.push(format!(
+                "{file}: the annotation REUSE applies names no upstream holder ({:?}); \
+                 copy the holder from NOTICE",
+                a.holders
+            ));
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "REUSE.toml does not keep these `// Provenance:` files' upstream copyright:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// Every exact path a `REUSE.toml` annotation names still exists. A renamed or
+/// removed file otherwise leaves a dead entry, and a file that later takes the
+/// old name silently inherits a label written for something else (Antigravity
+/// on PR #664). It must be a FILE: a non-glob path names a file in REUSE, so a
+/// directory written without its `/**` matches nothing. Globs are not checked:
+/// matching nothing is how a guarded directory starts out.
+#[test]
+fn every_exact_reuse_path_exists() {
+    let root = workspace_root();
+    let mut dead: Vec<String> = reuse_annotations(&root)
+        .iter()
+        .flat_map(|a| a.paths.iter())
+        .filter(|p| !p.contains('*'))
+        .filter(|p| !root.join(p).is_file())
+        .cloned()
+        .collect();
+    dead.sort();
+    dead.dedup();
+    assert!(
+        dead.is_empty(),
+        "REUSE.toml names exact paths that are not files (renamed, removed, or a \
+         directory missing its `/**`?):\n  {}",
+        dead.join("\n  ")
+    );
+}

@@ -70,6 +70,27 @@ struct AboutView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // The full license text and the third-party notices, bundled from the
+            // repository root at build time (project.yml, `../LICENSE` and
+            // `../NOTICE`): the GPL requires its text to travel with the binary,
+            // and the MIT / ISC code the core derives from requires its notices.
+            Section {
+                NavigationLink {
+                    BundledTextView(resource: "LICENSE", title: "License")
+                } label: {
+                    Label("License (GPL-3.0-or-later)", systemImage: "doc.text")
+                }
+                NavigationLink {
+                    BundledTextView(resource: "NOTICE", title: "Notices")
+                } label: {
+                    Label("Third-party notices", systemImage: "doc.text")
+                }
+            } header: {
+                Text("Open-source licenses")
+            } footer: {
+                Text("The license RustyNES is distributed under, and the notices of the third-party code it includes.")
+            }
+
             Section {
                 Link(destination: AppInfo.projectURL) {
                     Label("Project on GitHub", systemImage: "link")
@@ -81,5 +102,35 @@ struct AboutView: View {
         }
         .navigationTitle("About")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// The full text of one file bundled at the app's resource root (LICENSE or
+/// NOTICE, from project.yml), shown the way Settings shows a crash log: loaded
+/// once off the main thread in `.task`, selectable, and monospaced so the
+/// license's own line layout survives.
+private struct BundledTextView: View {
+    let resource: String
+    let title: LocalizedStringKey
+    @State private var text = ""
+
+    var body: some View {
+        ScrollView {
+            Text(text)
+                .font(.system(.footnote, design: .monospaced))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            let name = resource
+            text = await Task.detached {
+                Bundle.main.url(forResource: name, withExtension: nil)
+                    .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+                    ?? String(localized: "(unreadable)")
+            }.value
+        }
     }
 }

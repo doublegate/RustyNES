@@ -190,6 +190,25 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             | tee xcodebuild.log
 
+      # The app must carry the repository-root LICENSE and NOTICE (the GPL text
+      # and the MIT / ISC notices of the code the core derives from), which
+      # project.yml lists as resources by `../` path with an explicit
+      # `buildPhase` (XcodeGen maps no phase to an extensionless file). Checked
+      # in the built bundle, so a resource-phase regression fails here, as
+      # Android's LicenseAssetsTest and web.yml's check do for theirs
+      # (Antigravity on PR #664).
+      - name: The app bundle carries LICENSE and NOTICE
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          app=$(find build/DerivedData/Build/Products -maxdepth 2 -type d -name '*.app' | head -n 1)
+          test -n "$app" || { echo "::error::no .app under build/DerivedData/Build/Products"; exit 1; }
+          for f in LICENSE NOTICE; do
+            test -s "$app/$f" || { echo "::error::$app/$f is missing or empty"; exit 1; }
+            cmp "$app/$f" "../$f" || { echo "::error::$app/$f differs from the repository's $f"; exit 1; }
+          done
+          echo "ok: $app carries LICENSE and NOTICE, identical to the repository's"
+
       - name: Upload the xcodebuild log
         if: ${{ failure() }}
         uses: actions/upload-artifact@v7

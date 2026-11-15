@@ -30,7 +30,7 @@
 # inside the number: keep FRAMES large enough that they are noise (the default
 # 3,600 frames is a minute of NTSC emulation per invocation).
 #
-# The ROMs are the committed public-domain ones the criterion benches use
+# The ROMs are the committed test ROMs the criterion benches use
 # (nestest, flowing_palette) plus AccuracyCoin, which exercises far more of the
 # CPU and PPU than either.
 #
