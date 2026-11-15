@@ -272,6 +272,7 @@ runner, so disable fork workflows there or gate them the same way.
 | `AGY_TIMEOUT_SECONDS_PER_MIB` | `900` | extra seconds per MiB of diff. A diff handed over as a file costs agy 6-8 minutes almost whatever its size, so this is deliberately steep (240 left a 426 KB diff at 397 s, too little) |
 | `AGY_PRINT_TIMEOUT_MAX_SECONDS` | `1800` (workflow: `900`) | ceiling on one attempt after the raise |
 | `AGY_RETRIES` | `3` (workflow: `2`) | attempts; a retry is for a transient backend error, so more of them at the same budget only repeat a timeout |
+| `AGY_LOCK_WAIT` | `600` (workflow: `1860`) | seconds to wait for the host-wide agy lock before giving up. Every repository's review on the host shares it (agy is one singleton per user), and a review holds it across all its attempts and the pauses between them, so the wait must outlast another review's whole hold: 1860 s covers one review at two 900 s attempts plus the 15 s pause. It counts toward the job's worst case, so raising it means raising `timeout-minutes` (the selftest checks the sum) |
 | `AGY_DIFF_MODE` | `auto` | how the diff reaches agy: `inline` (in the `--print` prompt), `file` (written to a file agy reads with its tools), or `auto` (inline if it fits the arg-size budget, else file — so **large PRs are never truncated**) |
 | `MAX_DIFF_BYTES` | `5000000` | sanity cap on a pathological diff (5 MB). Not the arg-size limit — a large diff goes to agy as a file, not an argv value |
 | `MAX_PROMPT_BYTES` | `120000` | the inline/file threshold in `auto` mode, and a hard backstop on the **inlined** prompt. agy takes an inlined prompt as a `--print` argv value, and a single `execve` argument cannot exceed `MAX_ARG_STRLEN` (128 KiB); over it `execve` fails with E2BIG before agy starts. Clamped below 128 KiB |
@@ -281,6 +282,14 @@ runner, so disable fork workflows there or gate them the same way.
 
 ## Troubleshooting
 
+- **"agy lock timed out after Ns" and a red job with no review:** another
+  review on the same host held the agy lock longer than `AGY_LOCK_WAIT`. The
+  lock is shared by every repository's review there, so two PRs opened at once
+  in different repositories queue behind each other; with a wait shorter than
+  one review (the old 300 s), the second gives up. Re-run the job once the other
+  review finishes, and keep `AGY_LOCK_WAIT` above another review's worst-case
+  hold (`AGY_RETRIES` x the per-attempt cap, plus the pauses). The lock fails
+  closed: a timeout exits rather than running two agy processes at once.
 - **Review comment never appears / job succeeds but empty:** the classic
   Antigravity **issue #76** — `agy -p` drops stdout when it isn't attached to a
   TTY. This template runs `agy` under a PTY (`unbuffer`, or `scripts/_agy_print.sh`
