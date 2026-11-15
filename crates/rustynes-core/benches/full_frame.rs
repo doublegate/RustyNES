@@ -5,7 +5,7 @@
 //! bench produces is the headline "ms/frame headless" claim in
 //! `docs/performance.md` (formerly un-evidenced ≤ 2 ms/frame).
 //!
-//! Methodology: load `nestest.nes` (kevtris, NROM, public domain),
+//! Methodology: load `nestest.nes` (kevtris, NROM, committed; no licence stated),
 //! reset, then iterate `run_frame()` N times. The bench captures the
 //! whole lockstep stack: CPU per-cycle bus interleaving + PPU dot
 //! scheduler + APU sample emit + mapper dispatch + framebuffer write.

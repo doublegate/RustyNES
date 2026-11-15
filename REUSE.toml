@@ -203,6 +203,13 @@ SPDX-License-Identifier = "GPL-3.0-or-later"
 SPDX-FileComment = "Contains models ported from TriCNES (MIT), as the file's Provenance header states; the MIT notice is reproduced in NOTICE."
 
 [[annotations]]
+path = "crates/rustynes-ppu/src/palette_gen.rs"
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "2004-2025 ares team, Near et al (ares)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "The generated palette follows Bisqwit's documented method and ares's fc/ppu/color.cpp colour integration, as the file's Provenance header and docs/originality-and-provenance.md section 1 record. ares holder from its LICENSE (https://github.com/ares-emulator/ares, read 2026-11-15), whose text is the ISC permission notice; NOTICE and the header call it BSD-2-Clause / Apache-2.0, a discrepancy left for the maintainer. No holder is recorded for Bisqwit's method (see NOTICE section 6)."
+
+[[annotations]]
 path = "crates/rustynes-apu/src/blip.rs"
 precedence = "aggregate"
 SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Shay Green (Blargg) (blip_buf)"]
@@ -411,7 +418,7 @@ SPDX-FileComment = "MMC3 IRQ test suites credited to blargg / kevtris in tests/r
 path = ["tests/roms/nestest/nestest.nes", "tests/roms/nestest/nestest.log", "tests/roms/assorted/nestest.nes"]
 SPDX-FileCopyrightText = "2004 Kevin Horton (kevtris)"
 SPDX-License-Identifier = "LicenseRef-NoStatedLicense"
-SPDX-FileComment = "nestest (https://www.qmtpro.com/~nes/misc/nestest.txt: 'By: Kevin Horton', V1.00 09/06/04, no licence stated). nestest.log is the matching Nintendulator-generated trace."
+SPDX-FileComment = "nestest (https://www.qmtpro.com/~nes/misc/nestest.txt: 'By: Kevin Horton', V1.00 09/06/04, no licence stated). nestest.log is the matching Nintendulator-generated trace; no source names its author or a licence, so it is credited to the nestest distribution (kevtris) on that basis alone."
 
 [[annotations]]
 path = "tests/roms/nes-test-roms/**"

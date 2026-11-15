@@ -6,8 +6,10 @@ no licence. No licence grant and no public-domain dedication by the author(s)
 was found (checked 2026-11-15; the sources checked are recorded in
 tests/roms/LICENSES.md and in the REUSE.toml comment for each file).
 
-Copyright in the file remains with its author(s), who are named in the
-SPDX-FileCopyrightText for that file.
+Copyright in the file remains with its author(s). The SPDX-FileCopyrightText
+for that file names them where they are known; where they are not (an
+aggregated collection that does not record per-file authors, a font whose
+author is unidentified), it says so instead.
 
 RustyNES grants no licence to the file. The GNU General Public License under
 which RustyNES is distributed does not cover it.

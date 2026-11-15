@@ -54,7 +54,9 @@ carry no usage restrictions, and no licence grant either. Until
 2026-11-15 this section said "Public domain"; no public-domain dedication
 was found (checked 2026-11-15: the readme files, the NESdev wiki page
 Emulator_tests, and `christopherpow/nes-test-roms`, which has no LICENSE
-or README). The copyright stays with Shay Green.
+or README). The copyright stays with Shay Green, and for `mmc3_test/`
+and `mmc3_irq_tests/` also with Kevin Horton (kevtris), whom
+`../LICENSES.md` credits jointly for those two suites.
 
 ## See also
 

@@ -31,7 +31,7 @@ Aim: > 90% line coverage on the chip crates.
 
 ## Layer 3 — test ROM corpus (subsystem coverage)
 
-The full blargg + kevtris + community test ROM suite, vendored in `tests/roms/` (all are CC0 / public-domain individual ROMs from `christopherpow/nes-test-roms`). Each ROM is run by `rustynes-test-harness::run_until_complete()`, which:
+The full blargg + kevtris + community test ROM suite, vendored in `tests/roms/` (third-party ROMs, most from `christopherpow/nes-test-roms`; per-file licences, or the fact that none was stated, in `REUSE.toml` and `tests/roms/LICENSES.md`). Each ROM is run by `rustynes-test-harness::run_until_complete()`, which:
 
 1. Steps until `$6000` reads `$80→$00..$7F` (test complete) or `$81` (needs reset) — automated reset on `$81`.
 2. Reads the result code at `$6000` and the message string at `$6004` onward.
@@ -235,7 +235,7 @@ fails if any job it aggregates failed):
 
 ## Test ROM licensing
 
-All vendored ROMs are individually CC0 or public-domain per their authors' dedications. Redistribution rights are documented in `tests/roms/LICENSES.md`. **No commercial Nintendo ROMs are bundled.** A separate `tests/roms/external/` directory is `.gitignore`'d for users who own ROMs they want to test against locally.
+The vendored ROMs' licences are recorded per file in `REUSE.toml` and `tests/roms/LICENSES.md`. Several carry a real licence (AccuracyCoin MIT, Holy Mapperel zlib); many, blargg's and kevtris's among them, have no licence stated and are labelled `LicenseRef-NoStatedLicense` (until 2026-11-15 this said every ROM was CC0 or public domain, which no source supported). **No commercial Nintendo ROMs are bundled.** A separate `tests/roms/external/` directory is `.gitignore`'d for users who own ROMs they want to test against locally.
 
 ## Nesdev Completeness Audit
 

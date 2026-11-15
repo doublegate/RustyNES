@@ -26,7 +26,7 @@
 //! covered by `Cpu::power_on` / `Nes::reset` unit tests (Session-13,
 //! `crates/rustynes-cpu/tests/opcodes.rs`).
 //!
-//! Source: blargg's NES test ROMs (public domain).
+//! Source: blargg's NES test ROMs (no licence stated; see `tests/roms/LICENSES.md`).
 
 #![cfg(feature = "test-roms")]
 

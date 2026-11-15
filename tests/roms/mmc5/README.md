@@ -8,7 +8,7 @@ Bandit Kings of Ancient China, Uchuu Keibitai SDF, and others.
 |------|-------|--------|--------|---------|
 | `mapper_mmc5test_v1.nes` | MMC5 banking | MMC5 (5) | (Various, aggregator) | No licence stated |
 | `mapper_mmc5test_v2.nes` | MMC5 banking + IRQ | MMC5 (5) | (Various, aggregator) | No licence stated |
-| `mapper_mmc5exram.nes` | MMC5 ExRAM modes | MMC5 (5) | (Various, aggregator) | No licence stated |
+| `mapper_mmc5exram.nes` | MMC5 ExRAM modes | MMC5 (5) | Quietust (on screen: "Written by Quietust"), aggregated | No licence stated |
 
 ## Source
 

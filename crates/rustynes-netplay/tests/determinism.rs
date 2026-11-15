@@ -33,7 +33,7 @@ fn gameplay_digest(nes: &Nes) -> u64 {
     rustynes_netplay::gameplay_digest(nes)
 }
 
-/// Resolve the committed public-domain nestest ROM (`tests/roms/nestest/`)
+/// Resolve the committed nestest ROM (`tests/roms/nestest/`; kevtris, no licence stated)
 /// from the workspace root, derived from this crate's manifest dir.
 fn nestest_rom() -> Vec<u8> {
     // CARGO_MANIFEST_DIR = <root>/crates/rustynes-netplay

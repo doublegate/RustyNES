@@ -1,7 +1,7 @@
 # `screenshots/m22/` — VRC2a CHR-banking visual baseline
 
 Single PNG for the VRC2a (mapper 22) CHR-banking test ROM
-(`tests/roms/m22/0-127.nes`, public-domain via the
+(`tests/roms/m22/0-127.nes`, no licence stated, via the
 `christopherpow/nes-test-roms` aggregator).
 
 `m22_vrc2a_chr_banking_0_127_f240.png` — frame 240 capture; the ROM

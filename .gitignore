@@ -155,7 +155,8 @@ artifacts/
 
 # --- ROMs & media (copyright) ---
 # The broad `*.nes`/`*.fds` rules ignore ALL ROMs; re-include the committable
-# CC0 / public-domain suites under tests/roms/, then HARD-exclude the commercial
+# test-ROM suites under tests/roms/ (licences per file in REUSE.toml and
+# tests/roms/LICENSES.md), then HARD-exclude the commercial
 # dumps + the large fetched clone (NEVER committed — Nintendo copyright).
 *.nes
 *.fds

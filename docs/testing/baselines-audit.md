@@ -88,7 +88,7 @@ NROM-bundled APU quirks (0, 3 ROMs).
 ### `crates/rustynes-test-harness/tests/m22.rs`
 
 **ROM covered.** `tests/roms/m22/0-127.nes`. VRC2a (mapper 22)
-CHR-banking test by NewRisingSun. Public-domain via
+CHR-banking test by NewRisingSun. No licence stated; aggregated in
 `christopherpow/nes-test-roms`.
 
 **Pattern.** `insta::assert_snapshot!` of fb-only snapshot
@@ -107,8 +107,8 @@ black background — the ROM is mid-walk through the 128 CHR banks.
 ### `crates/rustynes-test-harness/tests/mmc1_a12.rs`
 
 **ROM covered.** `tests/roms/mmc1_a12/mmc1_a12.nes`. MMC1 + PPU
-A12-transition regression test by tepples. Public-domain via
-`christopherpow/nes-test-roms`.
+A12-transition regression test by Bregalad (this said tepples until
+2026-11-15). No licence stated; aggregated in `christopherpow/nes-test-roms`.
 
 **Pattern.** `insta::assert_snapshot!` of fb-only snapshot.
 

@@ -26,9 +26,9 @@ on this corpus.
 | [`mmc5/`](./mmc5/) | MMC5 (mapper 5) accuracy suite from `christopherpow/nes-test-roms`: split-screen, ExRAM modes, scanline IRQ. | Various (aggregator) | No licence stated |
 | [`accuracycoin/`](./accuracycoin/) | Chris Siebert's 144-test single-NROM AccuracyCoin battery — the **single source of truth** for the v0.9.x → v1.0.0 quality bar. | Chris Siebert (100thCoin) | MIT |
 | [`AccuracyCoin/`](./AccuracyCoin/) | The upstream `SOURCE_CATALOG.tsv` (144 test-name catalog parsed by the RAM-direct decoder) plus a copy of `AccuracyCoin.nes` for symmetry. The test catalog is `include_str!`ed by `rustynes-test-harness::accuracy_coin_catalog`. | Chris Siebert | MIT |
-| [`audio-tests/`](./audio-tests/) | Brad Smith (`bbbradsmith`)'s `nes-audio-tests` corpus — expansion-audio relative-loudness comparisons, VRC7 / N163 / FME-7 / MMC5 audio quirks, APU DAC linearity. Covers mappers 5, 19, 24, 26, 69, 85. | Brad Smith | "Freely redistributed and modified for any purpose" (effectively PD) |
+| [`audio-tests/`](./audio-tests/) | Brad Smith (`bbbradsmith`)'s `nes-audio-tests` corpus — expansion-audio relative-loudness comparisons, VRC7 / N163 / FME-7 / MMC5 audio quirks, APU DAC linearity. Covers mappers 5, 19, 24, 26, 69, 85. | Brad Smith | Permissive grant: "freely redistributed and modified for any purpose" (`LicenseRef-bbbradsmith-permissive`; a licence, not a public-domain dedication) |
 | [`m22/`](./m22/) | NewRisingSun's VRC2 (mapper 22) CHR-banking smoke test. | NewRisingSun (aggregated in `christopherpow/nes-test-roms`) | No licence stated (aggregator) |
-| [`mmc1_a12/`](./mmc1_a12/) | tepples's MMC1 + PPU A12 transition test (control case for the MMC3 A12-IRQ axis). | tepples (aggregated) | No licence stated (aggregator) |
+| [`mmc1_a12/`](./mmc1_a12/) | Bregalad's MMC1 + PPU A12 transition test (control case for the MMC3 A12-IRQ axis); this row said tepples until 2026-11-15. | Bregalad (title screen "(C) 2010 BREGALAD"; aggregated) | No licence stated (aggregator) |
 | [`dap/`](./dap/) | The `rustynes-dap` fixtures: `dapdemo.c` built by cc65 and by llvm-mos (`build.py`), with their `.dbg` / ELF debug information. | RustyNES (the C file); the toolchains' runtime libraries | CC0-1.0 (the C file); zlib / Apache-2.0 WITH LLVM-exception (the linked runtimes) |
 | [`external/`](./external/) | **gitignored.** Reserved for end-user-provided commercial dumps. See [`external/README.md`](./external/README.md). | n/a | n/a |
 
@@ -72,9 +72,12 @@ writing; this gap is noted in
 ## What is NOT committed
 
 - Anything copyrighted by Nintendo or any third-party publisher.
-- Anything with an unclear license (we err on the side of "drop it" —
-  ROMs investigated and rejected for license clarity are logged in the
-  audit report referenced above).
+- Anything whose license is known to forbid redistribution. ROMs whose
+  author stated no license at all are kept and labelled
+  `LicenseRef-NoStatedLicense` (maintainer decision, 2026-11-15; see
+  [`LICENSES.md`](./LICENSES.md)); until then this list said anything with
+  an unclear license was dropped. ROMs investigated and rejected earlier
+  are logged in the audit report referenced above.
 - The `external/` subdirectory itself. Verify with
   `git check-ignore tests/roms/external/anything` — it returns the
   matched gitignore line.

@@ -94,9 +94,9 @@ author ("By: Kevin Horton", V1.00, 09/06/04) and states no licence.
 
 | File | Source | Mapper | Author | License |
 |------|--------|--------|--------|---------|
-| `mmc5/mapper_mmc5test_v1.nes` | `mmc5test/mmc5test_v1.nes` | MMC5 (5) | Various (`christopherpow/nes-test-roms` aggregator) | No licence stated (per upstream README) |
+| `mmc5/mapper_mmc5test_v1.nes` | `mmc5test/mmc5test_v1.nes` | MMC5 (5) | Various (`christopherpow/nes-test-roms` aggregator) | No licence stated (the aggregator has no README) |
 | `mmc5/mapper_mmc5test_v2.nes` | `mmc5test/mmc5test_v2.nes` | MMC5 (5) | Various | No licence stated |
-| `mmc5/mapper_mmc5exram.nes` | `mmc5test/mmc5exram.nes` | MMC5 (5) | Various | No licence stated |
+| `mmc5/mapper_mmc5exram.nes` | `mmc5test/mmc5exram.nes` | MMC5 (5) | Quietust (on screen) | No licence stated |
 
 These suites exercise MMC5 bank switching, ExRAM modes (00 nametable / 01
 ExGrafix attributes / 10 general RAM / 11 read-only), PRG banking modes,

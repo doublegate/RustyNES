@@ -183,3 +183,68 @@ fn every_section_1_row_names_a_file_that_carries_a_header() {
         problems.join("\n  ")
     );
 }
+
+/// Paths named EXPLICITLY (not by a glob) in a `REUSE.toml` annotation with
+/// `precedence = "aggregate"` that adds at least one copyright holder.
+fn reuse_aggregate_paths(root: &Path) -> BTreeSet<String> {
+    let text = fs::read_to_string(root.join("REUSE.toml")).expect("read REUSE.toml");
+    let doc: toml::Table = toml::from_str(&text).expect("REUSE.toml parses as TOML");
+    let annotations = doc
+        .get("annotations")
+        .and_then(toml::Value::as_array)
+        .expect("REUSE.toml has [[annotations]] tables");
+    let mut out = BTreeSet::new();
+    for a in annotations {
+        if a.get("precedence").and_then(toml::Value::as_str) != Some("aggregate") {
+            continue;
+        }
+        if a.get("SPDX-FileCopyrightText").is_none() {
+            continue;
+        }
+        let paths: Vec<&str> = match a.get("path") {
+            Some(toml::Value::String(p)) => vec![p.as_str()],
+            Some(toml::Value::Array(v)) => v.iter().filter_map(toml::Value::as_str).collect(),
+            _ => panic!("a REUSE.toml annotation has no usable `path`"),
+        };
+        // A glob would also match files that are NOT derived, and would keep
+        // matching after a derived file is renamed; only an exact path counts.
+        out.extend(
+            paths
+                .into_iter()
+                .filter(|p| !p.contains('*'))
+                .map(str::to_owned),
+        );
+    }
+    out
+}
+
+/// `REUSE.toml`'s default labels every file under `crates/` as `DoubleGate`'s
+/// work. A derived file's upstream holder (Mesen2's "Sour et al.", `TriCNES`,
+/// puNES, ...) is added only by an `aggregate` annotation naming that file, so
+/// a new `// Provenance:` file left out of REUSE.toml would pass `reuse lint`
+/// while its REUSE record dropped the upstream copyright: the attribution the
+/// header discloses would be missing from the licensing metadata (sibling
+/// review on PR #664, Antigravity). This test makes that omission fail.
+#[test]
+fn every_provenance_header_keeps_its_upstream_holder_in_reuse_toml() {
+    let root = workspace_root();
+    let headers = files_with_header(&root);
+    assert!(
+        headers.len() > 20,
+        "found only {} `// Provenance:` files; the scan is wrong",
+        headers.len()
+    );
+    let aggregate = reuse_aggregate_paths(&root);
+    let missing: Vec<_> = headers.difference(&aggregate).collect();
+    assert!(
+        missing.is_empty(),
+        "these files carry a `// Provenance:` header but no exact-path \
+         `precedence = \"aggregate\"` annotation in REUSE.toml adds their upstream \
+         copyright holder (copy the holder from NOTICE):\n  {}",
+        missing
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    );
+}

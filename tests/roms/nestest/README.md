@@ -40,4 +40,8 @@ The full `--features test-roms` run includes nestest by default.
 No licence stated (`LicenseRef-NoStatedLicense`). Until 2026-11-15 this
 section said "Public domain"; the canonical `nestest.txt`
 (<https://www.qmtpro.com/~nes/misc/nestest.txt>) names the author ("By:
-Kevin Horton") and states no licence. The copyright stays with kevtris.
+Kevin Horton") and states no licence. The copyright in `nestest.nes`
+stays with kevtris. `nestest.log` is a CPU trace distributed with the
+test, produced with Nintendulator; no source checked names its author or
+any licence, so `REUSE.toml` credits it to the nestest distribution
+(kevtris) and records that basis in its comment.

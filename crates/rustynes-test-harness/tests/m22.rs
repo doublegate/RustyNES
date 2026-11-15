@@ -1,7 +1,7 @@
 //! `VRC2a` (mapper 22) CHR-banking regression test.
 //!
-//! Source ROM: `tests/roms/m22/0-127.nes`, `NewRisingSun`, public-domain
-//! via the `christopherpow/nes-test-roms` aggregator.
+//! Source ROM: `tests/roms/m22/0-127.nes`, `NewRisingSun`, no licence
+//! stated, via the `christopherpow/nes-test-roms` aggregator.
 //!
 //! Boots `0-127.nes` for a fixed frame count, hashes the framebuffer
 //! with FNV-1a 64-bit, and compares against an `insta` snapshot. The
