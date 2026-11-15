@@ -25,13 +25,68 @@ version = 1
 
 # ---------------------------------------------------------------------------
 # 1. Default: first-party work.
+#
+# NOT "**" (2026-11-15, after review): a catch-all over the whole tree would
+# label any file added later as DoubleGate's GPL work, so a third-party ROM,
+# screenshot or vendored file dropped in without its own annotation would
+# pass `reuse lint` with a wrong label. The default therefore names the
+# first-party roots and leaves out the four directories where outside
+# material lands -- tests/roms/, screenshots/, vendor/, and ref-docs/
+# (Markdown excepted). A file added there without an annotation of its own
+# has no license information, and the `reuse` CI job fails until someone
+# writes one that names its real author and license. First-party files
+# already inside those directories are listed explicitly in section 1b.
+# Not guarded: third-party files inside a first-party root (a font under
+# crates/, rcheevos under crates/rustynes-cheevos/vendor/); those still need
+# the care this cannot enforce.
 # ---------------------------------------------------------------------------
 
 [[annotations]]
-path = "**"
+path = [
+  "*",
+  ".cargo/**",
+  ".config/**",
+  ".github/**",
+  "LICENSES/**",
+  "android/**",
+  "assets/**",
+  "crates/**",
+  "deploy/**",
+  "docs/**",
+  "examples/**",
+  "fastlane/**",
+  "fuzz/**",
+  "images/**",
+  "ios/**",
+  "scripts/**",
+  "services/**",
+  "to-dos/**",
+  "tests/*",
+  "tests/framework/**",
+  "ref-docs/**/*.md",
+]
 SPDX-FileCopyrightText = "2025-2026 DoubleGate"
 SPDX-License-Identifier = "GPL-3.0-or-later"
 SPDX-FileComment = "RustyNES is GPL-3.0-or-later (ADR 0036). This default also covers project-generated data: insta .snap hashes, goldens, irq_trace CSVs, epoch fingerprints, synthetic fixtures, the RustyNES icons and artwork, and the fastlane store text."
+
+# 1b. First-party files inside the guarded directories (section 1), listed so
+# the guard does not catch them: the project's own Markdown there (third-party
+# READMEs, such as audio-tests/UPSTREAM_README.md, are overridden by their own
+# annotations further down, since the last match wins), the two ref-docs PDFs
+# (renderings of docs/ai-emulator-provenance-guardrails.md and
+# docs/provenance-failure-postmortem.md), and the dap fixture sources, whose
+# CC0 headers name no holder. Add a file here only if it is the project's own.
+[[annotations]]
+path = [
+  "tests/roms/**/*.md",
+  "screenshots/**/*.md",
+  "ref-docs/AI-Emulator-Provenance-Guardrails.pdf",
+  "ref-docs/RustyNES_Provenance-Failure-Postmortem.pdf",
+  "tests/roms/dap/build.py",
+  "tests/roms/dap/dapdemo.c",
+]
+SPDX-FileCopyrightText = "2025-2026 DoubleGate"
+SPDX-License-Identifier = "GPL-3.0-or-later"
 
 # ---------------------------------------------------------------------------
 # 2. First-party files with outside holders added (aggregate).

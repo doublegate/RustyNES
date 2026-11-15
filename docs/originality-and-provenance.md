@@ -358,6 +358,16 @@ class (test ROMs, vendored code, fonts, commercial-game screenshots). Check
 locally with `uvx reuse lint` (or `pipx run reuse lint`); CI runs the same check
 in the `reuse` job of `.github/workflows/ci.yml`.
 
+**Adding a file you did not write.** The check verifies that every file has a
+label, not that the label is right. `REUSE.toml`'s default labels the
+first-party roots as DoubleGate's GPL work, so a third-party file placed in one
+of them (a font under `crates/`, say) would pass with the wrong label. The four
+directories where outside material lands, `tests/roms/`, `screenshots/`,
+`vendor/` and `ref-docs/` (Markdown excepted), are left out of that default on
+purpose: a file added there fails the check until it gets an annotation of its
+own, naming its real author and licence, with the evidence in a comment. Add
+one for any third-party file, wherever it goes.
+
 ---
 
 ## 8. The correction, owned
