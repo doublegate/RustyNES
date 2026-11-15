@@ -39,6 +39,8 @@ version = 1
 # Not guarded: third-party files inside a first-party root (a font under
 # crates/, rcheevos under crates/rustynes-cheevos/vendor/); those still need
 # the care this cannot enforce.
+# LICENSES/ is not listed (sibling review, PR #79): REUSE ignores it, and
+# labelling the licence texts there as DoubleGate's work would be false.
 # ---------------------------------------------------------------------------
 
 [[annotations]]
@@ -47,7 +49,6 @@ path = [
   ".cargo/**",
   ".config/**",
   ".github/**",
-  "LICENSES/**",
   "android/**",
   "assets/**",
   "crates/**",
