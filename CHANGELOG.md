@@ -77,6 +77,26 @@ cycle-accurate core later replaced.
   image's MinGW does not ship, so its Windows x64 job now builds that import
   library (three functions from `api-ms-win-core-synch-l1-2-0.dll`) with
   `dlltool` before the build.
+- **Preview deployments and their environments no longer pile up**
+  (`.github/workflows/preview-env-cleanup.yml`). The Docs7 documentation
+  previews deploy each pull request's branch to an environment named
+  `Docs7 Preview: <branch>`; GitHub never deletes an environment and only marks
+  a superseded deployment inactive, so by 2026-11-15 the repository held 668
+  deployments and 37 environments, 33 of them previews of long-merged branches.
+  Those 33 environments and 665 superseded deployments were deleted (the newest
+  deployment of each live environment kept: the Pages site, Docs7 Production,
+  the open release branch's preview). On every branch deletion, daily and on
+  demand, `scripts/ci/prune-deployments.sh` now deletes every deployment but
+  the newest of each environment (GitHub refuses an active one), reading
+  them through GraphQL and deleting them in batches of 50 mutations (300 in 31
+  seconds, against about five minutes for the first 360 one REST call at a
+  time), and
+  `scripts/ci/prune-preview-environments.sh` deletes a preview environment once
+  its branch is gone and no open pull request uses it. Deleting an environment
+  needs the Administration permission, which the workflow's own token cannot
+  have, so that job needs an `ENV_CLEANUP_TOKEN` secret (a fine-grained token
+  for this repository with Administration: read and write) and says so in its
+  run summary until it exists.
 - **A pull request's CI caches are deleted when it closes**
   (`.github/workflows/cache-cleanup.yml`). They could never be restored
   again, but counted against the repository's 10 GB cache limit until
