@@ -87,9 +87,10 @@ cycle-accurate core later replaced.
   deployment of each live environment kept: the Pages site, Docs7 Production,
   the open release branch's preview). On every branch deletion, daily and on
   demand, `scripts/ci/prune-deployments.sh` now deletes every deployment but
-  the newest and the newest successful one of each environment (the live one
-  while a newer deployment is in flight or failed), never one still running,
-  failing closed if any listing fails; it reads
+  the newest and the newest successful one of each environment that still
+  exists (the live one while a newer deployment is in flight or failed), never
+  one still running, failing closed if any listing fails; an environment that
+  has been deleted keeps none of its deployments. It reads
   them through GraphQL and deleting them in batches of 50 mutations (300 in 31
   seconds, against about five minutes for the first 360 one REST call at a
   time), and

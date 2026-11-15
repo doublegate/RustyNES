@@ -77,6 +77,22 @@ for name in "${envs[@]}"; do
   if printf '%s\n' "${branches[@]}" | grep -qxF -- "$branch"; then
     echo "keep   $name (the branch still exists)"; kept=$((kept + 1)); continue
   fi
+  # Recheck just before acting (CodeRabbit on #666): the lists above are a
+  # snapshot, and a branch recreated, or a pull request opened, since then
+  # must not lose its preview. One branch lookup and one pull-request lookup
+  # per candidate; there are few. A failed lookup counts as "still in use".
+  enc_branch="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$branch")"
+  # `gh api` exits non-zero on the 404 that means "gone", so its exit status
+  # cannot be the test (under pipefail it discarded the status line, and every
+  # candidate looked "could not be checked"); the response's status line is.
+  status="$(gh api -i "repos/$repo/branches/$enc_branch" 2>/dev/null || true)"
+  status="${status%%$'\n'*}"
+  case "$status" in *" 404"*) ;; *)
+    echo "keep   $name (the branch exists, or could not be checked, on a recheck)"; kept=$((kept + 1)); continue ;;
+  esac
+  if ! open_now="$(gh api "repos/$repo/pulls?state=open&head=${repo%%/*}:$enc_branch" --jq 'length')" || [ "$open_now" != "0" ]; then
+    echo "keep   $name (an open pull request, or a failed check, on a recheck)"; kept=$((kept + 1)); continue
+  fi
   enc_env="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$name")"
   if [ "$apply" = "--apply" ]; then
     gh api -X DELETE "repos/$repo/environments/$enc_env" --silent

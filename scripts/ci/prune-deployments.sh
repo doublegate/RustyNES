@@ -35,16 +35,6 @@ repo="${1:?usage: prune-deployments.sh <owner/repo> [--apply]}"
 apply="${2:-}"
 owner="${repo%%/*}" name="${repo#*/}"
 
-# Captured into a variable first, so a failure on any page fails the script
-# (`mapfile < <(gh ...)` would hide it and leave a truncated list; Antigravity
-# on #666). `rows` below is captured the same way.
-env_list="$(gh api --paginate "repos/$repo/environments?per_page=100" --jq '.environments[].name')"
-mapfile -t envs <<< "$env_list"
-if [ -z "$env_list" ]; then
-  echo "::error::no environments listed for $repo; refusing to guess which deployments are live" >&2
-  exit 1
-fi
-
 # id <TAB> environment <TAB> createdAt <TAB> latest state <TAB> node id, every deployment.
 # shellcheck disable=SC2016  # $owner, $name and $endCursor are GraphQL variables, not shell ones.
 rows="$(gh api graphql --paginate -F owner="$owner" -F name="$name" -f query='
@@ -56,6 +46,21 @@ rows="$(gh api graphql --paginate -F owner="$owner" -F name="$name" -f query='
       }
     }
   }' --jq '.data.repository.deployments.nodes[] | [.databaseId, .environment, .createdAt, (.latestStatus.state // "NONE"), .id] | @tsv')"
+# Listed AFTER the deployments (Antigravity and CodeRabbit on #666): GitHub
+# creates an environment at or before its first deployment, so every deployment
+# listed above has its environment in this later list unless it was really
+# deleted. Listed first, an environment created between the two calls looked
+# deleted, and its first, live deployment was deleted with it.
+# Captured into a variable first, so a failure on any page fails the script
+# (`mapfile < <(gh ...)` would hide it and leave a truncated list; Antigravity
+# on #666). `rows` below is captured the same way.
+env_list="$(gh api --paginate "repos/$repo/environments?per_page=100" --jq '.environments[].name')"
+mapfile -t envs <<< "$env_list"
+if [ -z "$env_list" ]; then
+  echo "::error::no environments listed for $repo; refusing to guess which deployments are live" >&2
+  exit 1
+fi
+
 total="$(printf '%s\n' "$rows" | grep -c . || true)"
 if [ "$total" -eq 0 ]; then
   echo "no deployments in $repo"; exit 0
@@ -78,10 +83,12 @@ for line in sys.stdin:
         keep.add(did)
     if env not in envs:
         continue
-    if env not in newest or created > newest[env][0]:
-        newest[env] = (created, did)
-    if state == "SUCCESS" and (env not in newest_ok or created > newest_ok[env][0]):
-        newest_ok[env] = (created, did)
+    # createdAt has one-second granularity: break a tie on the id, which grows.
+    key = (created, int(did))
+    if env not in newest or key > newest[env][0]:
+        newest[env] = (key, did)
+    if state == "SUCCESS" and (env not in newest_ok or key > newest_ok[env][0]):
+        newest_ok[env] = (key, did)
 keep |= {did for _, did in newest.values()} | {did for _, did in newest_ok.values()}
 print("\n".join(sorted(keep)))
 ' "${envs[@]}")"
@@ -110,6 +117,11 @@ while IFS=$'\t' read -r did env created state nid; do
 done <<< "$rows"
 
 deleted=0
+# gh writes the JSON response to stdout and its own messages to stderr; kept
+# apart, a partial batch failure (`data` and `errors` both present) still
+# parses, and counts what was deleted (Antigravity on #666).
+err_file="$(mktemp)"
+trap 'rm -f "$err_file"' EXIT
 for ((i = 0; i < ${#del_ids[@]}; i += 50)); do
   chunk=("${del_ids[@]:i:50}")
   # The request goes in as a JSON body on stdin, not `-f query=...`: a 50-mutation
@@ -122,7 +134,7 @@ import json, sys
 ids = sys.argv[1:]
 body = " ".join(f"d{n}: deleteDeployment(input: {{id: \"{i}\"}}) {{ clientMutationId }}" for n, i in enumerate(ids))
 print(json.dumps({"query": "mutation { " + body + " }"}))
-' "${chunk[@]}" | gh api graphql --input - 2>&1 || true)"
+' "${chunk[@]}" | gh api graphql --input - 2>"$err_file" || true)"
   ok="$(printf '%s' "$out" | python3 -c '
 import json, sys
 try:
@@ -135,7 +147,7 @@ print(sum(1 for v in data.values() if v is not None))
   deleted=$((deleted + ok))
   if [ "$ok" -ne "${#chunk[@]}" ]; then
     failed=$((failed + ${#chunk[@]} - ok))
-    echo "::warning::batch at $i: deleted $ok of ${#chunk[@]}: $(printf '%s' "$out" | head -c 400)"
+    echo "::warning::batch at $i: deleted $ok of ${#chunk[@]}: $(head -c 300 "$err_file") $(printf '%s' "$out" | head -c 300)"
   fi
 done
 echo "of $total deployments: kept $kept (the newest of each environment), deleted $deleted (marked inactive first: $marked), would delete $would, failed $failed"
