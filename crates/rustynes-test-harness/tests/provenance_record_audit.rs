@@ -230,12 +230,18 @@ fn reuse_annotations(root: &Path) -> Vec<Annotation> {
 }
 
 /// REUSE.toml's path globbing: `*` matches within one path component, `**`
-/// across `/`, and `\*` is a literal star.
+/// across `/`, `**/` also matches NO directory at all (so `a/**/*.md` covers
+/// `a/b.md`, which REUSE.toml relies on for `ref-docs/**/*.md`), and `\*` is a
+/// literal star.
 fn reuse_glob_matches(pattern: &str, path: &str) -> bool {
     fn go(p: &[u8], s: &[u8]) -> bool {
         match p {
             [] => s.is_empty(),
             [b'\\', b'*', rest @ ..] => s.first() == Some(&b'*') && go(rest, &s[1..]),
+            // `**/`: zero directories (skip the `**/` entirely), or `**` then `/`.
+            [b'*', b'*', b'/', rest @ ..] => {
+                go(rest, s) || (0..=s.len()).any(|i| go(&p[2..], &s[i..]))
+            }
             [b'*', b'*', rest @ ..] => (0..=s.len()).any(|i| go(rest, &s[i..])),
             [b'*', rest @ ..] => (0..=s.len())
                 .take_while(|&i| i == 0 || s[i - 1] != b'/')
@@ -254,6 +260,15 @@ fn reuse_glob_matching_follows_the_spec() {
     assert!(reuse_glob_matches("tests/roms/*.py", "tests/roms/mk.py"));
     assert!(!reuse_glob_matches("tests/roms/*.py", "tests/roms/x/mk.py"));
     assert!(reuse_glob_matches("a/**/*.md", "a/b/c/d.md"));
+    // `**/` matches zero directories (CodeRabbit and Antigravity on PR #664):
+    // a later annotation `crates/rustynes-apu/src/**/blip.rs` does cover
+    // `crates/rustynes-apu/src/blip.rs` in REUSE, so the audit must see it.
+    assert!(reuse_glob_matches("a/**/*.md", "a/b.md"));
+    assert!(reuse_glob_matches(
+        "crates/rustynes-apu/src/**/blip.rs",
+        "crates/rustynes-apu/src/blip.rs"
+    ));
+    assert!(!reuse_glob_matches("a/**/*.md", "ab.md"));
     assert!(reuse_glob_matches("a/\\*", "a/*"));
     assert!(!reuse_glob_matches("a/\\*", "a/b"));
     assert!(!reuse_glob_matches("crates/x.rs", "crates/x.rsx"));
@@ -333,8 +348,9 @@ fn every_provenance_header_keeps_its_upstream_holder_in_reuse_toml() {
 /// Every exact path a `REUSE.toml` annotation names still exists. A renamed or
 /// removed file otherwise leaves a dead entry, and a file that later takes the
 /// old name silently inherits a label written for something else (Antigravity
-/// on PR #664). Globs are not checked: matching nothing is how a guarded
-/// directory starts out.
+/// on PR #664). It must be a FILE: a non-glob path names a file in REUSE, so a
+/// directory written without its `/**` matches nothing. Globs are not checked:
+/// matching nothing is how a guarded directory starts out.
 #[test]
 fn every_exact_reuse_path_exists() {
     let root = workspace_root();
@@ -342,14 +358,15 @@ fn every_exact_reuse_path_exists() {
         .iter()
         .flat_map(|a| a.paths.iter())
         .filter(|p| !p.contains('*'))
-        .filter(|p| !root.join(p).exists())
+        .filter(|p| !root.join(p).is_file())
         .cloned()
         .collect();
     dead.sort();
     dead.dedup();
     assert!(
         dead.is_empty(),
-        "REUSE.toml names paths that do not exist (renamed or removed?):\n  {}",
+        "REUSE.toml names exact paths that are not files (renamed, removed, or a \
+         directory missing its `/**`?):\n  {}",
         dead.join("\n  ")
     );
 }
