@@ -263,7 +263,12 @@ generated copy of the Bisqwit pass in crates/rustynes-gfx-shaders/src/bisqwit.wg
 
 * The Bisqwit NTSC filter's numeric coefficient tables were ported verbatim (via
   Mesen2's implementation) and are therefore GPL-derived (listed above and in
-  docs/originality-and-provenance.md Section 1). The two-level NES composite
+  docs/originality-and-provenance.md Section 1).
+      Copyright Joel Yliluoma (Bisqwit) -- the filter's author; the name his
+      homepage gives (https://bisqwit.iki.fi/, read 2026-11-15). Received
+      through Mesen2's BisqwitNtscFilter, GPL-3.0-or-later. His palette
+      method, which crates/rustynes-ppu/src/palette_gen.rs follows, is the
+      same author's. (Added 2026-11-15: until then no holder was named.) The two-level NES composite
   signal shape is documented at the NESdev wiki ("NTSC video").
 * The CRT shaders (CRT-Royale -- TroggleMonkey, GPL-2.0-or-later;
   crt-guest-advanced -- guest.r; Sony Megatron -- MajorPainInTheCactus) are

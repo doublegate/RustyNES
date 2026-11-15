@@ -109,9 +109,9 @@ SPDX-FileComment = "Contains the RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT 
 
 [[annotations]]
 path = "crates/rustynes-gfx-shaders/src/bisqwit.wgsl"
-SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Sour et al. (Mesen2 / MesenCE)"]
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Sour et al. (Mesen2 / MesenCE)", "Joel Yliluoma (Bisqwit)"]
 SPDX-License-Identifier = "GPL-3.0-or-later"
-SPDX-FileComment = "Generated copy of the desktop Bisqwit composite-NTSC pass; its coefficient tables were ported verbatim from Bisqwit's C via Mesen2's BisqwitNtscFilter (see the Provenance header of crates/rustynes-gfx-shaders/src/lib.rs and NOTICE). NOTICE names no copyright holder for Bisqwit's original code; only the Mesen2 holder is recorded here."
+SPDX-FileComment = "Generated copy of the desktop Bisqwit composite-NTSC pass; its coefficient tables were ported verbatim from Bisqwit's C via Mesen2's BisqwitNtscFilter (see the Provenance header of crates/rustynes-gfx-shaders/src/lib.rs and NOTICE). Bisqwit holder: Joel Yliluoma, per his homepage (read 2026-11-15)."
 
 [[annotations]]
 path = "NOTICE"
@@ -142,7 +142,7 @@ SPDX-FileComment = "black-box output captured from Mesen2 runs (scripts/mesen2_*
 path = "ref-docs/Emulator_TechReports/**"
 SPDX-FileCopyrightText = "2025-2026 DoubleGate"
 SPDX-License-Identifier = "GPL-3.0-or-later"
-SPDX-FileComment = "Project-written reports about third-party emulators. Not reviewed for quoted upstream code (firewall); if a fence quotes upstream source, that excerpt carries the upstream licence. Pending a review from outside the firewall."
+SPDX-FileComment = "Project-written reports about third-party emulators. The maintainer, who helped write them, confirmed on 2026-11-15 that their code fences quote no reference-emulator source; the agents labelling this tree did not read them (provenance firewall)."
 
 [[annotations]]
 path = "CODE_OF_CONDUCT.md"
@@ -166,8 +166,6 @@ path = [
   "crates/rustynes-cpu/src/cpu.rs",
   "crates/rustynes-dap/src/debuginfo/cc65.rs",
   "crates/rustynes-frontend/src/debugger/source_map.rs",
-  "crates/rustynes-frontend/src/ntsc_bisqwit.rs",
-  "crates/rustynes-gfx-shaders/src/lib.rs",
   "crates/rustynes-mappers/src/kaiser.rs",
   "crates/rustynes-mappers/src/m016_bandai_fcg.rs",
   "crates/rustynes-mappers/src/m019_namco163.rs",
@@ -189,6 +187,19 @@ SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Sour et al. (Mesen2 / MesenCE
 SPDX-License-Identifier = "GPL-3.0-or-later"
 SPDX-FileComment = "Contains code derived from Mesen2 (GPL-3.0-or-later), as the file's Provenance header states; see docs/originality-and-provenance.md section 1 and NOTICE."
 
+# The Bisqwit NTSC filter: its coefficient tables were ported verbatim from
+# Bisqwit's C by way of Mesen2's BisqwitNtscFilter, so both are holders. A
+# separate table, not a second one on top of the Mesen2 list: when several
+# annotations match a file only the last applies, so the holders must be
+# listed together. "Joel Yliluoma (Bisqwit)": the name his homepage gives
+# (https://bisqwit.iki.fi/, read 2026-11-15) and the handle the work is known by.
+[[annotations]]
+path = ["crates/rustynes-frontend/src/ntsc_bisqwit.rs", "crates/rustynes-gfx-shaders/src/lib.rs"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Sour et al. (Mesen2 / MesenCE)", "Joel Yliluoma (Bisqwit)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Bisqwit composite-NTSC filter; coefficient tables ported verbatim from Bisqwit's C via Mesen2's BisqwitNtscFilter (GPL-3.0-or-later), as the Provenance headers state (lib.rs carries the generated BISQWIT_WGSL copy). See NOTICE and docs/originality-and-provenance.md section 1."
+
 [[annotations]]
 path = ["crates/rustynes-apu/src/apu.rs", "crates/rustynes-ppu/src/ppu.rs"]
 precedence = "aggregate"
@@ -206,9 +217,9 @@ SPDX-FileComment = "Contains models ported from TriCNES (MIT), as the file's Pro
 [[annotations]]
 path = "crates/rustynes-ppu/src/palette_gen.rs"
 precedence = "aggregate"
-SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "2004-2025 ares team, Near et al (ares)"]
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "2004-2025 ares team, Near et al (ares)", "Joel Yliluoma (Bisqwit)"]
 SPDX-License-Identifier = "GPL-3.0-or-later AND ISC"
-SPDX-FileComment = "The generated palette follows Bisqwit's documented method and ares's fc/ppu/color.cpp colour integration, as the file's Provenance header and docs/originality-and-provenance.md section 1 record. ares holder from its LICENSE (https://github.com/ares-emulator/ares, read 2026-11-15), whose own section has been ISC since it was added on 2021-07-05 (the BSD-2 and Apache-2.0 texts in it cover bundled third-party components). NOTICE and the header said BSD-2-Clause / Apache-2.0 until 2026-11-15 (corrected, maintainer-approved); NOTICE now reproduces the ISC notice. No holder is recorded for Bisqwit's method (see NOTICE section 6)."
+SPDX-FileComment = "The generated palette follows Bisqwit's documented method and ares's fc/ppu/color.cpp colour integration, as the file's Provenance header and docs/originality-and-provenance.md section 1 record. ares holder from its LICENSE (https://github.com/ares-emulator/ares, read 2026-11-15), whose own section has been ISC since it was added on 2021-07-05 (the BSD-2 and Apache-2.0 texts in it cover bundled third-party components). NOTICE and the header said BSD-2-Clause / Apache-2.0 until 2026-11-15 (corrected, maintainer-approved); NOTICE now reproduces the ISC notice. Bisqwit's method: Joel Yliluoma (Bisqwit), per his homepage (read 2026-11-15)."
 
 [[annotations]]
 path = "crates/rustynes-apu/src/blip.rs"
