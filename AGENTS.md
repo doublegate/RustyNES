@@ -41,7 +41,7 @@ Enforcement lives alongside the prose: `/ref-proj/` is gitignored/`.dockerignore
 
 RustyNES is a cycle-accurate Nintendo Entertainment System emulator written in pure Rust. The accuracy bar is Mesen2 / higan / ares: tight lockstep scheduling at PPU-dot resolution on a master-clock-precise timebase, sub-instruction PPU events visible to subsequent CPU code, and a lookup-table non-linear audio mixer with band-limited synthesis. The frontend is pure Rust (`winit` + `wgpu` + `cpal` + `egui`).
 
-**Current release: v3.7.0 "Spindle"** (2026-11-10). **No hardware has run any MiSTer bitstream** (ADR 0043). What each release added, and the full release-line chain back to v3.0.0, are in `docs/agents/release-line.md`; suite counts, the mapper matrix and per-release detail live in `docs/STATUS.md`, `CHANGELOG.md` and the GitHub releases.
+**Current release: v3.7.1 "Imprint"** (2026-11-15). **No hardware has run any MiSTer bitstream** (ADR 0043). What each release added, and the full release-line chain back to v3.0.0, are in `docs/agents/release-line.md`; suite counts, the mapper matrix and per-release detail live in `docs/STATUS.md`, `CHANGELOG.md` and the GitHub releases.
 
 Platform builds (Android sideload, iOS TestFlight, the libretro core), the 208-family mapper breadth and release automation: `docs/agents/release-line.md`.
 
@@ -191,7 +191,7 @@ that is a reason to add a new topic file — not a reason to grow this section b
 - `ref-docs/` is immutable. Research updates go in dated supplemental files.
 - ADRs go in `docs/adr/` (Michael Nygard format).
 - `rustynes-core` re-exports the public types from the chip crates; downstream consumers (`rustynes-frontend`, `rustynes-test-harness`) should depend on `rustynes-core` rather than the chip crates directly.
-- Engine-lineage "v2.x" narrative is upstream history, never a current RustyNES release version. The current release is **v3.7.0 "Spindle"** (2026-11-10). **Never claim any version *later* than v3.7.0 is released.** The two distinct "v2.0"s are explained in `docs/agents/release-line.md`.
+- Engine-lineage "v2.x" narrative is upstream history, never a current RustyNES release version. The current release is **v3.7.1 "Imprint"** (2026-11-15). **Never claim any version *later* than v3.7.1 is released.** The two distinct "v2.0"s are explained in `docs/agents/release-line.md`.
 - `to-dos/ROADMAP.md` is the planning entry point (detail: `docs/agents/conventions.md`).
 - The v1.0.0 release + GitHub Pages/CI + post-release record is in `docs/v1.0.0-synthesis-handoff-2026-06-13.md` — read it before touching CI, Pages, or release tooling. Full per-release history is in `CHANGELOG.md`.
 - **Markdownlint is a CI gate** (pinned `markdownlint-cli v0.50.0`): verify with `pre-commit run markdownlint --all-files`, and never lint or reformat the `.markdownlintignore` trees (the whitespace hooks still cover our own frozen trees, `docs/archive/` and `to-dos/plans/`, by design: `.pre-commit-config.yaml`). Keep the RetroAchievements User-Agent's leading `RustyNES/` token (`RA_USER_AGENT`, regression-tested). Detail: `docs/agents/conventions.md`.

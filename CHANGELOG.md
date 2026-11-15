@@ -26,6 +26,8 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+## [3.7.1] - 2026-11-15 - "Imprint" (every file labelled with its holder and licence, the notices the apps owe, the MiSTer core's FDS and battery-save fixes, and a fresh spectator id per hosted match)
+
 ### Changed
 
 - **The Android and iOS apps and the web site carry the licence and the
@@ -222,6 +224,40 @@ moves a frame, a sample or a bus cycle, so the emulation epoch stays 10.
   the player left netplay, because a peer that had not opted in never
   answers. The forensics report now says the peer sent no state, and the
   session is released.
+
+### The MiSTer core (`RustyNES_MiSTer`)
+
+- **The FDS drive, from the v3.7.0 known issues and five review rounds.** A
+  side's end stops the head instead of writing into the next side, and
+  `$4030.D6` reports the end of head, on a real image's zero fill too; a write
+  after a read paused inside a block stores every byte (8 of 19 were dropped);
+  a write after a motor restart waits for ready; the host port is free while
+  the motor is stopped (a `.sav` load and a write-back both hung); a side the
+  image lacks gives no disk, and a download too short for a side is refused.
+- **Disk and battery saves.** An unsaved disk write or battery save survives a
+  console reset before the OSD opens (the battery case lost saves in every
+  MiSTer release so far); a later cartridge can no longer be saved into the
+  previous one's vdisk; no save transfer starts on the clock a download begins.
+- **Save states from v3.7.0's off-die build are refused**: the save engine's
+  layout changed (fingerprint `D4E792FE` to `6C9E7051`). The Lite build's
+  fingerprint is unchanged.
+- **Known issues** (`T-MISTER-SAVE-XFER-ACROSS-LOAD`, v3.7.2): a battery
+  write-back or load already under way runs across a cartridge download; and
+  three narrow edge cases outside any BIOS or game path (a write to a side's
+  end then a read without a motor restart reads the next side's bytes; an OSD
+  save on the exact clock a mount arrives; an FDS save abandoned by a size-0
+  mount may lose its dirty flags).
+- New bitstreams for both builds, a release candidate: no hardware has run
+  any MiSTer bitstream.
+
+### Notes
+
+- **Deferred to v3.7.2:** the parallel coverage boot's timing measurement
+  (`T-TEST-COVERAGE-PARALLEL`; the code shipped in v3.7.0's follow-up, only
+  the quiet-host timing run is outstanding, and the cut day's seed sweep
+  held the host) and the `test-roms` LTO A/B (`T-CI-TESTROMS-LTO`; CI needs
+  a dispatch input for the profile override first). Neither changes an
+  assertion.
 
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 
