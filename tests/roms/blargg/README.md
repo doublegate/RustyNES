@@ -1,8 +1,8 @@
 # `blargg/` — Shay Green's NES Test Suites
 
-The comprehensive blargg ("Shay Green") NES test ROM collection. All
-ROMs are public-domain releases by the author, redistributed via the
-`christopherpow/nes-test-roms` aggregator.
+The comprehensive blargg ("Shay Green") NES test ROM collection. The
+ROMs are redistributed via the `christopherpow/nes-test-roms` aggregator;
+no licence was found for them (see License below).
 
 ## Subdirectories
 
@@ -48,9 +48,13 @@ per ADR-0002).
 
 ## License
 
-Public domain. blargg released each suite explicitly for emulator
-validation purposes; the upstream `readme.txt` files (preserved in
-each subdirectory) carry no usage restrictions.
+No licence stated (`LicenseRef-NoStatedLicense`). blargg released each
+suite for emulator validation purposes; the upstream `readme.txt` files
+carry no usage restrictions, and no licence grant either. Until
+2026-11-15 this section said "Public domain"; no public-domain dedication
+was found (checked 2026-11-15: the readme files, the NESdev wiki page
+Emulator_tests, and `christopherpow/nes-test-roms`, which has no LICENSE
+or README). The copyright stays with Shay Green.
 
 ## See also
 

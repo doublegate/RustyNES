@@ -7,14 +7,15 @@ by TwinBee 3 and a handful of other Famicom releases).
 
 | File | Mapper | Author | License |
 |------|--------|--------|---------|
-| `0-127.nes` | VRC2a (22) | NewRisingSun | Public domain (via `christopherpow/nes-test-roms` aggregator) |
+| `0-127.nes` | VRC2a (22) | NewRisingSun | No licence stated |
 
 ## Source
 
 `christopherpow/nes-test-roms/m22chrbankingtest/0-127.nes`
 
-The upstream aggregator README places all its corpora under
-public-domain redistribution terms.
+The aggregator has no README and no LICENSE (checked 2026-11-15);
+earlier revisions of this file said its README placed the corpora under
+public-domain terms.
 
 ## What it tests
 
@@ -32,7 +33,9 @@ on the longer-term TODO list (see `to-dos/ROADMAP.md`).
 
 ## License
 
-Public domain (per the `nes-test-roms` aggregator README). The
+No licence stated (`LicenseRef-NoStatedLicense`); copyright stays with
+NewRisingSun. (Until 2026-11-15 this said "Public domain (per the
+`nes-test-roms` aggregator README)"; there is no such README.) The
 upstream source files at `0-127.c` / `0-127h.asm` / `0-127.chr` are
 also in the aggregator; we vendor only the assembled `.nes` since the
 test is consumed by integration tests, not rebuilt.

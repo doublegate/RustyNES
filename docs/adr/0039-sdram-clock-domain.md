@@ -39,7 +39,8 @@ recurring every 8, shared with the CPU.
 
 ### What an access costs
 
-At the -7 grade (`ref-docs/Datasheets/...Rev1.4...pdf`, Table 16): tRCD 21 ns,
+At the -7 grade (datasheet revision 1.4, Table 16; where to download it:
+[`ref-docs/2026-11-15-sdram-datasheet-sources.md`](../../ref-docs/2026-11-15-sdram-datasheet-sources.md)): tRCD 21 ns,
 tRP 21 ns, tRAS 42 ns min, CL2 needs tCK >= 10 ns.
 
 Run at `clk_sys` (21.477272 MHz, 46.6 ns period) an activate/read/auto-precharge

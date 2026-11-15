@@ -9,19 +9,19 @@ corpus for that reason.
 
 | File | Suite | Mapper | Author | License |
 |------|-------|--------|--------|---------|
-| `cpu_timing_test.nes` | CPU timing | NROM (0) | blargg | Public domain |
-| `branch_timing_1_basics.nes` | Branch timing | NROM (0) | blargg | Public domain |
-| `branch_timing_2_backward.nes` | Branch timing | NROM (0) | blargg | Public domain |
-| `branch_timing_3_forward.nes` | Branch timing | NROM (0) | blargg | Public domain |
-| `oam_read.nes` | OAM | NROM (0) | blargg | Public domain |
-| `oam_stress.nes` | OAM | NROM (0) | blargg | Public domain |
-| `cpu_reset_ram_after_reset.nes` | CPU reset | NROM (0) | blargg | Public domain |
-| `cpu_reset_registers.nes` | CPU reset | NROM (0) | blargg | Public domain |
-| `apu_01_len_ctr.nes` | APU 2005-07-30 | NROM (0) | blargg | Public domain |
-| `apu_02_len_table.nes` | APU 2005-07-30 | NROM (0) | blargg | Public domain |
-| `full_palette.nes` | Palette | NROM (0) | blargg | Public domain |
-| `flowing_palette.nes` | Palette | NROM (0) | blargg | Public domain |
-| `nestest.nes` | CPU validation | NROM (0) | kevtris | Public domain |
+| `cpu_timing_test.nes` | CPU timing | NROM (0) | blargg | No licence stated |
+| `branch_timing_1_basics.nes` | Branch timing | NROM (0) | blargg | No licence stated |
+| `branch_timing_2_backward.nes` | Branch timing | NROM (0) | blargg | No licence stated |
+| `branch_timing_3_forward.nes` | Branch timing | NROM (0) | blargg | No licence stated |
+| `oam_read.nes` | OAM | NROM (0) | blargg | No licence stated |
+| `oam_stress.nes` | OAM | NROM (0) | blargg | No licence stated |
+| `cpu_reset_ram_after_reset.nes` | CPU reset | NROM (0) | blargg | No licence stated |
+| `cpu_reset_registers.nes` | CPU reset | NROM (0) | blargg | No licence stated |
+| `apu_01_len_ctr.nes` | APU 2005-07-30 | NROM (0) | blargg | No licence stated |
+| `apu_02_len_table.nes` | APU 2005-07-30 | NROM (0) | blargg | No licence stated |
+| `full_palette.nes` | Palette | NROM (0) | blargg | No licence stated |
+| `flowing_palette.nes` | Palette | NROM (0) | blargg | No licence stated |
+| `nestest.nes` | CPU validation | NROM (0) | kevtris | No licence stated |
 
 ## Source
 
@@ -54,5 +54,7 @@ and APU ROMs, and the "full palette" ROMs section carries `full_palette.nes`,
 
 ## License
 
-All public domain (per upstream readme files and per the
-`nes-test-roms` aggregator README).
+No licence stated (`LicenseRef-NoStatedLicense`). Until 2026-11-15 this
+section said "All public domain (per upstream readme files and per the
+`nes-test-roms` aggregator README)"; the readme files state no terms and
+the aggregator has no README. The copyright stays with blargg and kevtris.

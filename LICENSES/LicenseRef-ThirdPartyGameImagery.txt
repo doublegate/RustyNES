@@ -1,0 +1,16 @@
+Third-party game imagery (LicenseRef-ThirdPartyGameImagery)
+
+A file marked with this identifier is an image rendered by the RustyNES
+emulator from a commercial (or otherwise third-party) game, or a composite of
+such renders. These images are kept in the repository as emulator test
+baselines and compatibility documentation.
+
+The copyright in the game artwork shown belongs to the game's publisher(s) and
+other rights holders, named collectively in the SPDX-FileCopyrightText for
+that file as "Their respective game publishers".
+
+The GNU General Public License under which RustyNES is distributed does not
+cover the game artwork, and RustyNES grants no licence to it.
+
+If you hold rights in an image marked this way and want it removed, please
+open an issue at https://github.com/doublegate/RustyNES/issues.

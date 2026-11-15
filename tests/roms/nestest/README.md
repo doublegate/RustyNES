@@ -7,8 +7,8 @@ matching Nintendulator-generated golden trace log.
 
 | File | Mapper | Author | License |
 |------|--------|--------|---------|
-| `nestest.nes` | NROM (0) | kevtris | Public domain |
-| `nestest.log` | n/a (trace) | kevtris + Nintendulator | Public domain |
+| `nestest.nes` | NROM (0) | kevtris | No licence stated |
+| `nestest.log` | n/a (trace) | kevtris + Nintendulator | No licence stated |
 
 Source: <https://www.qmtpro.com/~nes/misc/nestest.txt> (canonical) and
 the `other/nestest.nes` entry in `christopherpow/nes-test-roms`.
@@ -37,5 +37,7 @@ The full `--features test-roms` run includes nestest by default.
 
 ## License
 
-Public domain. Both kevtris and the Nintendulator authors released
-their respective contributions for this purpose.
+No licence stated (`LicenseRef-NoStatedLicense`). Until 2026-11-15 this
+section said "Public domain"; the canonical `nestest.txt`
+(<https://www.qmtpro.com/~nes/misc/nestest.txt>) names the author ("By:
+Kevin Horton") and states no licence. The copyright stays with kevtris.

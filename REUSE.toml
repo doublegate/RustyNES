@@ -1,0 +1,440 @@
+# SPDX-FileCopyrightText: 2025-2026 DoubleGate
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# REUSE 3.3 licensing map for the RustyNES tree (https://reuse.software/spec-3.3/).
+# Check it with `reuse lint` (CI runs the `reuse` job in .github/workflows/ci.yml).
+#
+# How to read this file:
+# - Within one file's matches, the LAST matching [[annotations]] table wins, so
+#   the order is general -> specific. The first table covers the whole tree.
+# - `precedence = "closest"` (the default) lets a file's own SPDX header win
+#   over this file; a part the header lacks (copyright or licence) comes from
+#   here.
+# - `precedence = "aggregate"` ADDS the holders below to whatever the file's
+#   own header declares. It is used where a file carries upstream-derived code
+#   (the `// Provenance:` files) or an outside contribution, so the upstream or
+#   contributor holder is credited next to DoubleGate.
+# - `precedence = "override"` ignores the file's own text. It is used only on
+#   frozen archive files and NOTICE / licence texts, whose prose quotes other
+#   parties' copyright lines that are not notices of the file itself.
+#
+# Provenance and evidence: NOTICE, tests/roms/LICENSES.md,
+# docs/originality-and-provenance.md, and the per-class comments below.
+
+version = 1
+
+# ---------------------------------------------------------------------------
+# 1. Default: first-party work.
+# ---------------------------------------------------------------------------
+
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2025-2026 DoubleGate"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "RustyNES is GPL-3.0-or-later (ADR 0036). This default also covers project-generated data: insta .snap hashes, goldens, irq_trace CSVs, epoch fingerprints, synthetic fixtures, the RustyNES icons and artwork, and the fastlane store text."
+
+# ---------------------------------------------------------------------------
+# 2. First-party files with outside holders added (aggregate).
+# ---------------------------------------------------------------------------
+
+[[annotations]]
+path = [".gitlab-ci.yml", ".github/workflows/ci.yml", "CHANGELOG.md", "docs/agents/libretro.md"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "2026 WizzardSK"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "WizzardSK contributed the libretro buildbot jobs: #331 (71d48efa) and #554 (0eb48bc3)."
+
+[[annotations]]
+path = "crates/rustynes-libretro/src/lib.rs"
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "2010-2024 The RetroArch team"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Contains the RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT declarations transcribed from libretro.h (RetroArch 28f4c9c6a361, MIT); see NOTICE."
+
+[[annotations]]
+path = "crates/rustynes-gfx-shaders/src/bisqwit.wgsl"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Sour et al. (Mesen2 / MesenCE)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Generated copy of the desktop Bisqwit composite-NTSC pass; its coefficient tables were ported verbatim from Bisqwit's C via Mesen2's BisqwitNtscFilter (see the Provenance header of crates/rustynes-gfx-shaders/src/lib.rs and NOTICE). NOTICE names no copyright holder for Bisqwit's original code; only the Mesen2 holder is recorded here."
+
+[[annotations]]
+path = "NOTICE"
+precedence = "override"
+SPDX-FileCopyrightText = "2025-2026 DoubleGate"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "NOTICE quotes the copyright lines of every upstream it credits; those are not notices of this file."
+
+[[annotations]]
+path = [
+  "docs/archive/legacy-v0.8-docs/formats/NSF_FORMAT.md",
+  "to-dos/archive/v1.0.1-compat-hygiene/sprint-1-compat-fixes.md",
+  "to-dos/archive/legacy-v0.8-todos/phase-1-mvp/milestone-6-gui/M6-S4-settings-persistence.md",
+  "to-dos/archive/legacy-v0.8-todos/phase-1-mvp/milestone-6-gui/M6-S5-configuration-polish.md",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2025-2026 DoubleGate"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Frozen archive file. Its text mentions 'Copyright' as an NSF header field, a game's title screen or a UI string; those are not notices of this file."
+
+[[annotations]]
+path = "crates/rustynes-test-harness/golden/irq_trace/mesen2/**"
+SPDX-FileCopyrightText = "2025-2026 DoubleGate"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "black-box output captured from Mesen2 runs (scripts/mesen2_*.lua driving test ROMs); oracle output, no Mesen2 source."
+
+[[annotations]]
+path = "ref-docs/Emulator_TechReports/**"
+SPDX-FileCopyrightText = "2025-2026 DoubleGate"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Project-written reports about third-party emulators. Not reviewed for quoted upstream code (firewall); if a fence quotes upstream source, that excerpt carries the upstream licence. Pending a review from outside the firewall."
+
+[[annotations]]
+path = "CODE_OF_CONDUCT.md"
+SPDX-FileCopyrightText = ["2014 Coraline Ada Ehmke and the Contributor Covenant contributors", "2025-2026 DoubleGate"]
+SPDX-License-Identifier = "CC-BY-4.0"
+SPDX-FileComment = "Adapted from the Contributor Covenant 2.0 (https://www.contributor-covenant.org/version/2/0/code_of_conduct.html), which is published under CC BY 4.0."
+
+# ---------------------------------------------------------------------------
+# 3. The `// Provenance:` files: upstream holders added to the file's own
+#    `SPDX-License-Identifier: GPL-3.0-or-later` header (aggregate). The
+#    files themselves are not edited. Holder strings are NOTICE's.
+#    crates/rustynes-ppu/src/palette_gen.rs is not listed: NOTICE lists ares
+#    as an oracle (no code derived), so the default holder applies.
+# ---------------------------------------------------------------------------
+
+[[annotations]]
+path = [
+  "crates/rustynes-apu/src/frame_counter.rs",
+  "crates/rustynes-core/src/input_device.rs",
+  "crates/rustynes-core/src/vs_dualsystem.rs",
+  "crates/rustynes-cpu/src/cpu.rs",
+  "crates/rustynes-dap/src/debuginfo/cc65.rs",
+  "crates/rustynes-frontend/src/debugger/source_map.rs",
+  "crates/rustynes-frontend/src/ntsc_bisqwit.rs",
+  "crates/rustynes-gfx-shaders/src/lib.rs",
+  "crates/rustynes-mappers/src/kaiser.rs",
+  "crates/rustynes-mappers/src/m016_bandai_fcg.rs",
+  "crates/rustynes-mappers/src/m019_namco163.rs",
+  "crates/rustynes-mappers/src/m035_jy_asic.rs",
+  "crates/rustynes-mappers/src/m085_vrc7.rs",
+  "crates/rustynes-mappers/src/m099_vs_system.rs",
+  "crates/rustynes-mappers/src/m176_bmc_fk23c.rs",
+  "crates/rustynes-mappers/src/m250_nitra250.rs",
+  "crates/rustynes-mappers/src/m513_sachen_9602.rs",
+  "crates/rustynes-mappers/src/mmc3_clones.rs",
+  "crates/rustynes-mappers/src/multicart_discrete.rs",
+  "crates/rustynes-mappers/src/ntdec.rs",
+  "crates/rustynes-mappers/src/sachen_discrete.rs",
+  "crates/rustynes-ppu/src/raw_signal.rs",
+  "crates/rustynes-test-harness/src/bin/pgo_trainer.rs",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Sour et al. (Mesen2 / MesenCE)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Contains code derived from Mesen2 (GPL-3.0-or-later), as the file's Provenance header states; see docs/originality-and-provenance.md section 1 and NOTICE."
+
+[[annotations]]
+path = ["crates/rustynes-apu/src/apu.rs", "crates/rustynes-ppu/src/ppu.rs"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Sour et al. (Mesen2 / MesenCE)", "2025 Chris Siebert (TriCNES)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Contains code derived from Mesen2 (GPL-3.0-or-later) and models ported from TriCNES (MIT), as the file's Provenance header states; the MIT notice is reproduced in NOTICE."
+
+[[annotations]]
+path = "crates/rustynes-core/src/bus.rs"
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "2025 Chris Siebert (TriCNES)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Contains models ported from TriCNES (MIT), as the file's Provenance header states; the MIT notice is reproduced in NOTICE."
+
+[[annotations]]
+path = "crates/rustynes-apu/src/blip.rs"
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Shay Green (Blargg) (blip_buf)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Band-limited synthesis derived from blip_buf (LGPL-2.1-or-later, GPLv3-compatible), as the file's Provenance header states."
+
+[[annotations]]
+path = "crates/rustynes-apu/src/opll.rs"
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "2020 Mitsutaka Okazaki (emu2413)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Rust port of emu2413 v1.5.9 (MIT), as the file's Provenance header states; the MIT notice is reproduced in NOTICE."
+
+[[annotations]]
+path = "crates/rustynes-script/src/lua_pattern.rs"
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "1994-2026 Lua.org, PUC-Rio"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Derived from Lua 5.4.9 lstrlib.c (MIT), as the file's Provenance header states; the MIT notice is reproduced in NOTICE."
+
+[[annotations]]
+path = "crates/rustynes-mappers/src/fds.rs"
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "FHorse (puNES)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Contains a table derived from puNES (GPL-2.0-or-later), as the file's Provenance header states."
+
+[[annotations]]
+path = "crates/rustynes-mappers/src/lib.rs"
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "FHorse (puNES)", "The FCEUX team", "Sour et al. (Mesen2 / MesenCE)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Contains code derived from puNES (GPL-2.0-or-later) and, for UNIF dispatch, FCEUX (GPL-2.0-or-later) / Mesen2 (GPL-3.0-or-later), as the file's Provenance header states."
+
+[[annotations]]
+path = "crates/rustynes-mappers/src/m069_sunsoft_fme7.rs"
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Sour et al. (Mesen2 / MesenCE)", "Martin Freij et al. (Nestopia UE)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Contains code derived from Mesen2 (GPL-3.0-or-later), cross-referenced with Nestopia UE (GPL-2.0-or-later), as the file's Provenance header states."
+
+[[annotations]]
+path = "crates/rustynes-mappers/src/m244_cne_decathlon.rs"
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Sour et al. (Mesen2 / MesenCE)", "FHorse (puNES)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Contains tables treated as derived from Mesen2 (GPL-3.0-or-later) and puNES (GPL-2.0-or-later), as the file's Provenance header states."
+
+[[annotations]]
+path = ["crates/rustynes-mappers/src/m268_bmc_coolboy.rs", "crates/rustynes-mappers/src/unif.rs"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Sour et al. (Mesen2 / MesenCE)", "The FCEUX team"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Contains code derived from Mesen2 (GPL-3.0-or-later) and FCEUX (GPL-2.0-or-later), as the file's Provenance header states."
+
+[[annotations]]
+path = "crates/rustynes-gfx-shaders/src/crt_stack.rs"
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "TroggleMonkey (CRT-Royale)", "guest.r (crt-guest-advanced)", "MajorPainInTheCactus (Sony Megatron)"]
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Single-pass WGSL reimplementations of the CRT-Royale (GPL-2.0-or-later), crt-guest-advanced and Sony Megatron looks, as the file's Provenance header states. NOTICE leaves open whether this is a derivative work of the shader code; the authors are credited as the looks reproduced."
+
+# ---------------------------------------------------------------------------
+# 4. Vendored third-party code.
+# ---------------------------------------------------------------------------
+
+[[annotations]]
+path = "vendor/rust-libretro-sys/**"
+SPDX-FileCopyrightText = ["2022 Maximilian Mader", "2026 DoubleGate"]
+SPDX-License-Identifier = "MIT"
+SPDX-FileComment = "rust-libretro-sys 0.3.2 (https://github.com/max-m/rust-libretro), MIT; upstream LICENSE vendored alongside. DoubleGate holds the retro_game_info patch described in VENDORED.md."
+
+[[annotations]]
+path = "vendor/rust-libretro-sys/VENDORED.md"
+SPDX-FileCopyrightText = "2025-2026 DoubleGate"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+SPDX-FileComment = "Project-written description of the vendored copy and its patch."
+
+[[annotations]]
+path = ["vendor/rust-libretro-sys/libretro.h", "vendor/rust-libretro-sys/libretro_vulkan.h"]
+SPDX-FileCopyrightText = "2010-2020 The RetroArch team"
+SPDX-License-Identifier = "MIT"
+SPDX-FileComment = "libretro API headers (libretro/RetroArch), MIT notice in-file."
+
+[[annotations]]
+path = "vendor/rust-libretro-sys/vulkan/**"
+SPDX-FileCopyrightText = "2014-2018 The Khronos Group Inc."
+SPDX-License-Identifier = "Apache-2.0"
+SPDX-FileComment = "Khronos Vulkan-Headers (https://github.com/KhronosGroup/Vulkan-Headers), notice in-file; read by bindgen at build time only."
+
+[[annotations]]
+path = "crates/rustynes-cheevos/vendor/rcheevos/**"
+SPDX-FileCopyrightText = "2018 RetroAchievements.org"
+SPDX-License-Identifier = "MIT"
+SPDX-FileComment = "rcheevos v12.5.0 (https://github.com/RetroAchievements/rcheevos), MIT; upstream LICENSE vendored alongside."
+
+[[annotations]]
+path = ["crates/rustynes-cheevos/vendor/rcheevos/src/rhash/md5.c", "crates/rustynes-cheevos/vendor/rcheevos/src/rhash/md5.h"]
+SPDX-FileCopyrightText = "1999, 2000, 2002 Aladdin Enterprises"
+SPDX-License-Identifier = "Zlib"
+SPDX-FileComment = "L. Peter Deutsch's MD5; the in-file licence text is the zlib licence."
+
+[[annotations]]
+path = "android/gradle/wrapper/gradle-wrapper.jar"
+SPDX-FileCopyrightText = "2015 the original author or authors (Gradle)"
+SPDX-License-Identifier = "Apache-2.0"
+SPDX-FileComment = "Gradle wrapper, as android/gradlew and gradlew.bat state in their headers."
+
+# ---------------------------------------------------------------------------
+# 5. Fonts.
+# ---------------------------------------------------------------------------
+
+[[annotations]]
+path = [
+  "assets/RustyNES_Icon/PressStart2P.ttf",
+  "ios/RustyNES/Fonts/PressStart2P.ttf",
+  "android/app/src/main/res/font/press_start_2p.ttf",
+]
+SPDX-FileCopyrightText = "2012 The Press Start 2P Project Authors"
+SPDX-License-Identifier = "OFL-1.1"
+SPDX-FileComment = "Press Start 2P (CodeMan38), Reserved Font Name \"Press Start 2P\"; holder string from the font's name table. The OFL text ships beside each copy."
+
+[[annotations]]
+path = [
+  "assets/RustyNES_Icon/OFL.txt",
+  "ios/RustyNES/Fonts/PressStart2P-OFL.txt",
+  "android/app/src/main/assets/PressStart2P-OFL.txt",
+]
+precedence = "override"
+SPDX-FileCopyrightText = "2012 The Press Start 2P Project Authors"
+SPDX-License-Identifier = "OFL-1.1"
+SPDX-FileComment = "The OFL-1.1 text shipped with Press Start 2P. Override: the licence body's 'Copyright Holder' wording is not a notice."
+
+[[annotations]]
+path = "crates/rustynes-frontend/assets/fonts/fa-solid-900.ttf"
+SPDX-FileCopyrightText = "2022 Fonticons, Inc."
+SPDX-License-Identifier = "OFL-1.1"
+SPDX-FileComment = "Font Awesome 6 Free Solid 6.5.2; see LICENSE-FontAwesome.txt beside it."
+
+[[annotations]]
+path = ["ios/RustyNES/Fonts/NESController.ttf", "android/app/src/main/res/font/nes_controller.ttf"]
+SPDX-FileCopyrightText = "2009 The author of the \"Nes Controller\" font (not identified)"
+SPDX-License-Identifier = "LicenseRef-NoStatedLicense"
+SPDX-FileComment = "Third-party font, \"Nes Controller\" Version 1.00, October 24, 2009 (FontCreator 6.0). No licence found anywhere; its name table carried only a template copyright placeholder, which an earlier change stripped (CHANGELOG-FULL.md). cufonfonts.com lists the uploader as Max Sigrist, who is not confirmed as the author."
+
+# ---------------------------------------------------------------------------
+# 6. Test ROMs and their upstream documentation (tests/roms/LICENSES.md).
+#    Project-written READMEs in these directories keep the default.
+# ---------------------------------------------------------------------------
+
+[[annotations]]
+path = ["tests/roms/accuracycoin/AccuracyCoin.nes"]
+SPDX-FileCopyrightText = "2025 Chris Siebert"
+SPDX-License-Identifier = "MIT"
+SPDX-FileComment = "AccuracyCoin (https://github.com/100thCoin/AccuracyCoin); upstream MIT LICENSE vendored at tests/roms/accuracycoin/LICENSE."
+
+[[annotations]]
+path = [
+  "tests/roms/AccuracyCoin/sub-tests/*.nes",
+  "tests/roms/AccuracyCoin/sub-tests/BUILD-PROVENANCE.tsv",
+  "tests/roms/AccuracyCoin/mirror/AccuracyCoin-mirror.nes",
+  "tests/roms/AccuracyCoin/SOURCE_CATALOG.tsv",
+]
+SPDX-FileCopyrightText = ["2025 Chris Siebert", "2026 DoubleGate"]
+SPDX-License-Identifier = "MIT"
+SPDX-FileComment = "Built from the MIT AccuracyCoin source by RustyNES scripts (scripts/accuracycoin-build/); the patches are DoubleGate's and inherit MIT."
+
+[[annotations]]
+path = ["tests/roms/holy_mapperel/**", "tests/roms/extra/mappers/mapper_holymapperel_*"]
+SPDX-FileCopyrightText = "2013-2017 Damian Yerrick"
+SPDX-License-Identifier = "Zlib"
+SPDX-FileComment = "Holy Mapperel (https://github.com/pinobatch/holy-mapperel): README 'Legal': \"Copyright 2013-2017 Damian Yerrick / Available under zlib License.\""
+
+[[annotations]]
+path = "tests/roms/dpcmletterbox/**"
+SPDX-FileCopyrightText = "2010 Damian Yerrick"
+SPDX-License-Identifier = "FSFAP"
+SPDX-FileComment = "DPCM Letterbox; the vendored README.txt 'Legal' section is the FSF all-permissive licence verbatim."
+
+[[annotations]]
+path = ["tests/roms/audio-tests/*.nes", "tests/roms/audio-tests/UPSTREAM_README.md"]
+SPDX-FileCopyrightText = "Brad Smith (bbbradsmith)"
+SPDX-License-Identifier = "LicenseRef-bbbradsmith-permissive"
+SPDX-FileComment = "nes-audio-tests (https://github.com/bbbradsmith/nes-audio-tests); grant quoted in LICENSES/LicenseRef-bbbradsmith-permissive.txt from the upstream readme (vendored as UPSTREAM_README.md)."
+
+[[annotations]]
+path = [
+  "tests/roms/blargg/**/*.nes",
+  "tests/roms/blargg/**/*.txt",
+  "tests/roms/assorted/*.nes",
+  "tests/roms/extra/apu/*.nes",
+  "tests/roms/extra/cpu/*.nes",
+  "tests/roms/extra/ppu/*.nes",
+]
+SPDX-FileCopyrightText = "Shay Green (blargg)"
+SPDX-License-Identifier = "LicenseRef-NoStatedLicense"
+SPDX-FileComment = "blargg's NES test ROMs, mirrored from christopherpow/nes-test-roms. No licence or public-domain dedication found (checked 2026-11-15: the suites' readme files, the NESdev wiki page Emulator_tests, and christopherpow/nes-test-roms, which has no LICENSE or README). tests/roms/extra/{apu,cpu,ppu} are recorded as blargg's in tests/roms/LICENSES.md; per-file authorship there is not individually verified."
+
+[[annotations]]
+path = ["tests/roms/blargg/mmc3_test/**", "tests/roms/blargg/mmc3_irq_tests/**"]
+SPDX-FileCopyrightText = ["Shay Green (blargg)", "Kevin Horton (kevtris)"]
+SPDX-License-Identifier = "LicenseRef-NoStatedLicense"
+SPDX-FileComment = "MMC3 IRQ test suites credited to blargg / kevtris in tests/roms/LICENSES.md. No licence found (checked 2026-11-15: mmc3_test/readme.txt, the NESdev wiki, christopherpow/nes-test-roms)."
+
+[[annotations]]
+path = ["tests/roms/nestest/nestest.nes", "tests/roms/nestest/nestest.log", "tests/roms/assorted/nestest.nes"]
+SPDX-FileCopyrightText = "2004 Kevin Horton (kevtris)"
+SPDX-License-Identifier = "LicenseRef-NoStatedLicense"
+SPDX-FileComment = "nestest (https://www.qmtpro.com/~nes/misc/nestest.txt: 'By: Kevin Horton', V1.00 09/06/04, no licence stated). nestest.log is the matching Nintendulator-generated trace."
+
+[[annotations]]
+path = "tests/roms/nes-test-roms/**"
+SPDX-FileCopyrightText = "The authors of the ROMs collected at https://github.com/christopherpow/nes-test-roms (not recorded per file)"
+SPDX-License-Identifier = "LicenseRef-NoStatedLicense"
+SPDX-FileComment = "Committed subset of christopherpow/nes-test-roms, which has no LICENSE or README (checked 2026-11-15). No licence found for these ROMs."
+
+[[annotations]]
+path = [
+  "tests/roms/nes-test-roms/apu_reset/**",
+  "tests/roms/nes-test-roms/blargg_*/**",
+  "tests/roms/nes-test-roms/instr_test-v3/**",
+  "tests/roms/nes-test-roms/nes_instr_test/**",
+  "tests/roms/nes-test-roms/oam_read/**",
+  "tests/roms/nes-test-roms/pal_apu_tests/**",
+  "tests/roms/nes-test-roms/sprdma_and_dmc_dma/**",
+  "tests/roms/nes-test-roms/vbl_nmi_timing/**",
+]
+SPDX-FileCopyrightText = "Shay Green (blargg)"
+SPDX-License-Identifier = "LicenseRef-NoStatedLicense"
+SPDX-FileComment = "blargg suites in the christopherpow/nes-test-roms subset (named for blargg by directory, by tests/roms/LICENSES.md, or by blargg's devcart shell in the ROM). No licence found (checked 2026-11-15)."
+
+[[annotations]]
+path = ["tests/roms/mmc5/mapper_mmc5test_v1.nes", "tests/roms/mmc5/mapper_mmc5test_v2.nes"]
+SPDX-FileCopyrightText = "The authors of the mmc5test ROMs in christopherpow/nes-test-roms (not recorded)"
+SPDX-License-Identifier = "LicenseRef-NoStatedLicense"
+SPDX-FileComment = "From christopherpow/nes-test-roms mmc5test/. No licence found (checked 2026-11-15); the aggregator has no README."
+
+[[annotations]]
+path = "tests/roms/mmc5/mapper_mmc5exram.nes"
+SPDX-FileCopyrightText = "Quietust"
+SPDX-License-Identifier = "LicenseRef-NoStatedLicense"
+SPDX-FileComment = "The ROM's own text screen reads 'Written by Quietust'. From christopherpow/nes-test-roms mmc5test/. No licence found (checked 2026-11-15)."
+
+[[annotations]]
+path = ["tests/roms/m22/0-127.nes", "screenshots/m22/0_127_f240.png"]
+SPDX-FileCopyrightText = "NewRisingSun"
+SPDX-License-Identifier = "LicenseRef-NoStatedLicense"
+SPDX-FileComment = "VRC2 CHR-banking test (and a frame rendered from it), from christopherpow/nes-test-roms m22chrbankingtest/. No licence found (checked 2026-11-15)."
+
+[[annotations]]
+path = ["tests/roms/mmc1_a12/mmc1_a12.nes", "screenshots/mmc1_a12/mmc1_a12_f240.png"]
+SPDX-FileCopyrightText = "2010 Bregalad"
+SPDX-License-Identifier = "LicenseRef-NoStatedLicense"
+SPDX-FileComment = "MMC1 A12 test (and a frame rendered from it); its title screen reads '(C) 2010 BREGALAD'. From christopherpow/nes-test-roms MMC1_A12/. No licence found (checked 2026-11-15)."
+
+[[annotations]]
+path = ["tests/roms/dap/dapdemo_cc65.nes", "tests/roms/dap/dapdemo_cc65.dbg"]
+SPDX-FileCopyrightText = ["2026 DoubleGate", "The cc65 authors"]
+SPDX-License-Identifier = "CC0-1.0 AND Zlib"
+SPDX-FileComment = "Built from dapdemo.c (CC0-1.0) with cc65 034f73a9e1; links the cc65 NES runtime library and CHR font (zlib)."
+
+[[annotations]]
+path = ["tests/roms/dap/dapdemo_llvm_mos.nes", "tests/roms/dap/dapdemo_llvm_mos.elf"]
+SPDX-FileCopyrightText = ["2026 DoubleGate", "The llvm-mos SDK authors"]
+SPDX-License-Identifier = "CC0-1.0 AND Apache-2.0 WITH LLVM-exception"
+SPDX-FileComment = "Built from dapdemo.c (CC0-1.0) with the llvm-mos SDK v23.3.0; links the SDK's NES-NROM startup and runtime (Apache-2.0 WITH LLVM-exception)."
+
+[[annotations]]
+path = "docs/archive/legacy-v0.8-test-roms-src-2026-06-13.tar.gz"
+SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "Shay Green (blargg)", "Kevin Horton (kevtris)"]
+SPDX-License-Identifier = "GPL-3.0-or-later AND LicenseRef-NoStatedLicense"
+SPDX-FileComment = "Mixed archive: blargg test-ROM sources and readmes and nestest.log (no licence stated) plus DoubleGate READMEs (GPL-3.0-or-later)."
+
+# ---------------------------------------------------------------------------
+# 7. Commercial-game imagery.
+# ---------------------------------------------------------------------------
+
+[[annotations]]
+path = [
+  "screenshots/external/**",
+  "screenshots/besteffort/**/*.png",
+  "screenshots/showcase.png",
+  "screenshots/montage.png",
+  "screenshots/mister-montage.png",
+  "images/RustyNES-Screen_SMB_FirstLight.png",
+  "tests/Screenshot_GUI-Output.png",
+]
+SPDX-FileCopyrightText = "Their respective game publishers"
+SPDX-License-Identifier = "LicenseRef-ThirdPartyGameImagery"
+SPDX-FileComment = "Frames rendered by RustyNES from commercial, unlicensed or hacked game dumps (and composites of them), kept as emulator test baselines. Two homebrew renders tagged '(PD)' only by their dump names are included here too."

@@ -18,7 +18,7 @@ diffed entry-for-entry instead of transcribed from a photograph.
 | | |
 |---|---|
 | Upstream | <https://github.com/100thCoin/AccuracyCoin>, commit `66e87112` (rebuilt at v3.6.2; `f5f41dc2` at v3.1.0, `46199ae4` before) |
-| Upstream licence | MIT (Copyright (c) 2025 Chris Siebert) — the text is at `../../accuracycoin/LICENSE`, and the corpus-wide index is `../../LICENSES.md` |
+| Upstream licence | MIT (<!-- REUSE-IgnoreStart -->Copyright (c) 2025 Chris Siebert<!-- REUSE-IgnoreEnd -->) — the text is at `../../accuracycoin/LICENSE`, and the corpus-wide index is `../../LICENSES.md` |
 | Base ROM md5 | `6cab1c9cc644e51ff4830fbe779f66d9` (identical to `tests/roms/accuracycoin/AccuracyCoin.nes`) |
 | This ROM md5 | `79148da757d211f218acd259148ab475` |
 | Built by | `scripts/accuracycoin-build/build_mirror_rom.py` |

@@ -1353,10 +1353,30 @@ jobs:
         env:
           RUSTYNES_DAP_FIXTURES: ${{ runner.temp }}/dap-fixtures
 
+  # REUSE 3.3 compliance (2026-11-15): every tracked file must state its
+  # copyright holder and licence, in its own SPDX header or in REUSE.toml, and
+  # every licence named must have its text under LICENSES/. Deliberately NOT
+  # gated on `changes`: a docs-only PR (a new .md, a screenshot) is exactly the
+  # change that can add an unlabelled file, so this runs on every event.
+  # The action runs `reuse lint` in the `fsfe/reuse:6` image; the local
+  # equivalent is `uvx reuse lint` (6.3.0 when this job was added).
+  reuse:
+    name: reuse lint (REUSE 3.3)
+    runs-on: ubuntu-26.04
+    # Typical: ~30 s (image pull + lint of ~4,100 files). Bounded so a hung
+    # job cannot hold the concurrency group -- see the block comment above
+    # `concurrency`.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: fsfe/reuse-action@v6
+
   ci-success:
     name: CI success
     if: ${{ always() }}
-    needs: [changes, setup, lint, test, full-build, test-roms, no_std, wasm, libretro-cross, bench, fuzz, coverage, dap-fixtures]
+    needs: [changes, setup, lint, test, full-build, test-roms, no_std, wasm, libretro-cross, bench, fuzz, coverage, dap-fixtures, reuse]
     runs-on: ubuntu-26.04
     # Typical: instant. Bounded so a hung job cannot hold the
     # concurrency group -- see the block comment above `concurrency`.

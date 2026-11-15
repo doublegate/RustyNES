@@ -284,7 +284,7 @@ earlier document did.
 
 Genuinely incorporated, each GPL-compatible and attributed in `NOTICE`:
 
-| Component | License | Copyright | Where |
+| Component | License | <!-- REUSE-IgnoreStart -->Copyright<!-- REUSE-IgnoreEnd --> | Where |
 | --- | --- | --- | --- |
 | emu2413 v1.5.9 | MIT | 2020 Mitsutaka Okazaki | `crates/rustynes-apu/src/opll.rs` (Rust port; VRC7 audio, ADR 0006) |
 | TriCNES | MIT | 2025 Chris Siebert | `crates/rustynes-{ppu,cpu,core}` (models ported from commit `9199870`) + vendored golden oracle (commit `94f1b117`, re-synced 2026-09-19) |
@@ -327,12 +327,36 @@ deterministic emulation core or its AccuracyCoin results.
 
 ## 7. Test ROMs
 
-Every ROM committed under `tests/roms/` is a public-domain work released for
+Every ROM committed under `tests/roms/` is a homebrew test program written for
 validating NES emulators, catalogued per-author in `tests/roms/LICENSES.md`
 (blargg's suites, kevtris/AccuracyCoin material, and others). **No commercial
 Nintendo software is bundled**; users test commercial dumps they own from the
 gitignored `tests/roms/external/`. The AccuracyCoin battery is MIT-licensed
-(Chris Siebert / 100thCoin).
+(Chris Siebert / 100thCoin); Holy Mapperel is zlib and DPCM Letterbox
+all-permissive (Damian Yerrick); bbbradsmith's audio tests carry his own
+permissive grant.
+
+**Correction, 2026-11-15.** This section said until 2026-11-15 that every
+committed ROM "is a public-domain work". That was not supported. For blargg's
+suites, kevtris's `nestest`, and the ROMs mirrored from
+`christopherpow/nes-test-roms` (including `nes-test-roms/`, `mmc5/`, `m22/` and
+`mmc1_a12/`), no public-domain dedication and no licence was found: the suites'
+own readme files state none, the NESdev wiki page cited for their status
+(<https://www.nesdev.org/wiki/Emulator_tests>) states none, and
+`christopherpow/nes-test-roms` has no LICENSE and no README. They are kept as
+widely mirrored test material, labelled `LicenseRef-NoStatedLicense` (text in
+`LICENSES/`): copyright stays with their authors, RustyNES grants no licence to
+them, and the GPL does not cover them.
+
+### REUSE 3.3
+
+The tree follows the [REUSE 3.3 specification](https://reuse.software/spec-3.3/).
+Every file's copyright holder(s) and licence are stated either in its own SPDX
+header or in the root `REUSE.toml`, and every licence used has its text under
+`LICENSES/`. The `REUSE.toml` comments record the evidence for each third-party
+class (test ROMs, vendored code, fonts, commercial-game screenshots). Check
+locally with `uvx reuse lint` (or `pipx run reuse lint`); CI runs the same check
+in the `reuse` job of `.github/workflows/ci.yml`.
 
 ---
 
@@ -350,8 +374,8 @@ like sweeping this under the rug:
 - v2.2.9 corrects this the right way: it (a) relicenses the project to
   GPL-3.0-or-later, (b) states plainly that other emulators' code was incorporated
   during implementation, (c) credits every derived-from source here and in
-  `NOTICE`, and (d) marks each derived source file with an accurate
-  `SPDX-License-Identifier: GPL-3.0-or-later` header and a specific provenance note
+  `NOTICE`, and (d) marks each derived source file with an accurate <!-- REUSE-IgnoreStart -->
+  `SPDX-License-Identifier: GPL-3.0-or-later` header <!-- REUSE-IgnoreEnd --> and a specific provenance note
   (naming its upstream file/function) that points back to the §1 table. The old
   scattered, imprecise per-line "port of" comments are not restored verbatim — the
   SPDX + provenance headers plus this audited table are their accurate,

@@ -28,6 +28,24 @@ cycle-accurate core later replaced.
 
 ### Changed
 
+- **The tree is REUSE 3.3 compliant** (<https://reuse.software/spec-3.3/>).
+  A root `REUSE.toml` states the copyright holder and licence of every file
+  (first-party work: `2025-2026 DoubleGate`, GPL-3.0-or-later), adds the
+  upstream holders NOTICE names to the 37 `// Provenance:` files and the
+  vendored code, and `LICENSES/` holds every licence text used, including
+  three `LicenseRef-` texts: `NoStatedLicense` (blargg, kevtris and the
+  `christopherpow/nes-test-roms` ROMs, the "Nes Controller" font),
+  `ThirdPartyGameImagery` (screenshots of commercial games) and
+  `bbbradsmith-permissive`. A new `reuse` CI job runs `reuse lint` on every
+  event; check locally with `uvx reuse lint`. The claim that blargg's and
+  kevtris's suites and the aggregator ROMs are public domain is corrected in
+  `tests/roms/LICENSES.md`, `NOTICE`, the per-directory READMEs and
+  `docs/originality-and-provenance.md` section 7: no dedication or licence was
+  found. The three Alliance Memory SDRAM datasheets (marked "Confidential")
+  are no longer tracked; `ref-docs/2026-11-15-sdram-datasheet-sources.md`
+  gives their public download locations. The iOS store copyright line no
+  longer says "MIT OR Apache-2.0".
+
 - **Rust 1.100.0** (from 1.99.1), with the libretro buildbot on the same
   release (`.gitlab-ci.yml`), the workspace `rust-version`, the two
   standalone manifests, the Worker image's base and the comments that name

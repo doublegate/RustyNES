@@ -150,7 +150,7 @@ enough; a reader, a packager, and a court each look in a different place.
 1. **At the site.** A comment on the derived function/table/block naming the **upstream project,
    the specific file/function**, and its **license** — e.g.
    `// Provenance: derived from <UpstreamEmulator>'s <Function> (<upstream/file>), <SPDX-License>.`
-2. **A file-level SPDX tag.** `// SPDX-License-Identifier: <the project's license>` at the top of
+2. **A file-level SPDX tag.** <!-- REUSE-IgnoreStart -->`// SPDX-License-Identifier: <the project's license>`<!-- REUSE-IgnoreEnd --> at the top of
    every derived file (ideally every file).
 3. **A central derivation table.** One document (a `PROVENANCE.md` / derivation table, or similar)
    with a row per derived file: *your file → upstream project → upstream file/function → upstream

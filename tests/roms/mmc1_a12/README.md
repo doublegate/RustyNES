@@ -9,14 +9,15 @@ incorrectly affecting non-MMC3 mappers.
 
 | File | Mapper | Author | License |
 |------|--------|--------|---------|
-| `mmc1_a12.nes` | MMC1 (1) | Bregalad (per its title screen, "(C) 2010 BREGALAD"; earlier revisions of this file said tepples) | Public domain (via `christopherpow/nes-test-roms` aggregator) |
+| `mmc1_a12.nes` | MMC1 (1) | Bregalad (per its title screen, "(C) 2010 BREGALAD"; earlier revisions of this file said tepples) | No licence stated |
 
 ## Source
 
 `christopherpow/nes-test-roms/MMC1_A12/mmc1_a12.nes`
 
-The aggregator's root README places its corpora under public-domain
-redistribution terms.
+The aggregator has no README and no LICENSE (checked 2026-11-15);
+earlier revisions of this file said its README placed the corpora under
+public-domain terms.
 
 ## What it tests
 
@@ -62,4 +63,7 @@ generic PPU code path.
 
 ## License
 
-Public domain via the `nes-test-roms` aggregator README.
+No licence stated (`LicenseRef-NoStatedLicense`); copyright stays with
+Bregalad, whose title screen reads "(C) 2010 BREGALAD". (Until
+2026-11-15 this said "Public domain via the `nes-test-roms` aggregator
+README"; there is no such README.)

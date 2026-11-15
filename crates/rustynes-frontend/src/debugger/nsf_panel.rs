@@ -40,7 +40,9 @@ pub struct NsfPanelState {
     pub title: String,
     /// Artist (NSF header `$2E`).
     pub artist: String,
+    // REUSE-IgnoreStart (an NSF header field, not a notice of this file)
     /// Copyright holder (NSF header `$4E`).
+    // REUSE-IgnoreEnd
     pub copyright: String,
     /// v1.5.0 C3 — per-channel scope ring buffers (pulse1/2, triangle, noise,
     /// DMC). Output-only display state.
