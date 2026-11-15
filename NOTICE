@@ -90,7 +90,11 @@ cross-check documented hardware behavior (no code incorporated):
   docs/originality-and-provenance.md sec. 3 for the evidence and the residual
   uncertainties.
 * higan -- GPL-3.0-or-later -- scheduler-structure reference / oracle.
-* ares -- BSD-2-Clause / Apache-2.0 -- palette-integration reference and oracle.
+* ares -- ISC -- palette-integration reference and oracle; code derived from it is
+  listed, with its notice, under "Incorporated third-party components" below.
+  (Corrected 2026-11-15: this said BSD-2-Clause / Apache-2.0, a misreading of
+  ares's LICENSE, whose own section has been ISC since 2021-07-05; its BSD-2 and
+  Apache-2.0 sections cover components ares bundles, not ares itself.)
 
 (Mesen2, puNES, FCEUX, and Nestopia were used as oracles too, but because code
 was also derived from them they are listed above under derivation.)
@@ -173,9 +177,10 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
   Khronos Vulkan headers, read by bindgen at build time only:
   https://github.com/KhronosGroup/Vulkan-Headers
       Copyright (c) 2014-2018 The Khronos Group Inc. -- Apache-2.0
-      (GPLv3-compatible; the licence text is at
-      https://www.apache.org/licenses/LICENSE-2.0, and each header carries
-      its notice)
+      (GPLv3-compatible; a copy of the licence text, which Apache-2.0
+      section 4(a) requires be given with the files, is LICENSES/Apache-2.0.txt
+      since 2026-11-15, and https://www.apache.org/licenses/LICENSE-2.0; each
+      header carries its notice)
 
 * libretro.h (upstream, newer than the vendored copy) -- the
   RETRO_ENVIRONMENT_GET_AUDIO_SAMPLE_BATCH_FLOAT command number and the two
@@ -195,6 +200,26 @@ Incorporated third-party components (permissively licensed, GPL-compatible)
   also linked, unmodified, into builds with the optional `scripting` feature.
   https://www.lua.org/
       Copyright (C) 1994-2026 Lua.org, PUC-Rio -- MIT
+
+* ares -- the colour integration in crates/rustynes-ppu/src/palette_gen.rs
+  follows ares's fc/ppu/color.cpp (with Bisqwit's documented palette method;
+  docs/originality-and-provenance.md section 1). Added here 2026-11-15: until
+  then the ISC notice below, which the licence requires in all copies, was
+  not reproduced.
+  https://github.com/ares-emulator/ares
+      Copyright (c) 2004-2025 ares team, Near et al -- ISC
+
+    Permission to use, copy, modify, and/or distribute this software for any
+    purpose with or without fee is hereby granted, provided that the above
+    copyright notice and this permission notice appear in all copies.
+
+    THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+    WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+    MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+    ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+    WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+    ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 The MIT License text (for emu2413, TriCNES, rcheevos, rust-libretro-sys,
 libretro.h, Lua):

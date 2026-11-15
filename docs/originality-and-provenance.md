@@ -52,7 +52,7 @@ project + file so the record stands without the local clone). Each
 row is code in RustyNES that was ported, adapted, or closely modeled from the named
 upstream — not merely behavior observed and reimplemented from documentation. Most
 upstreams here are GPL emulators; some are permissively licensed (emu2413 and
-TriCNES under MIT, ares under BSD-2-Clause / Apache-2.0) and one is LGPL
+TriCNES under MIT, ares under ISC) and one is LGPL
 (blip_buf). "Upstream license" is the license the upstream file carries. Every one
 is compatible with distributing the combined work under GPL-3.0-or-later: the GPL
 upstreams are GPL-2.0-**or-later** or GPL-3.0-**or-later**, and the permissive and
@@ -64,7 +64,7 @@ LGPL-2.1-or-later ones may be incorporated into a GPL-3.0-or-later work.
 | `crates/rustynes-ppu/src/ppu.rs` | Mesen2 | `ProcessSpriteEvaluation` (`NesPpu.cpp:1015-1141`), `ReadSpriteRam`, the OAM-data-bus / sprite-evaluation read paths; the optional OAM-decay model (`ReadSpriteRam` / `WriteSpriteRam`, `OamDecayCycleCount`), written at v2.1.4 and recorded here only at v2.9.4 | GPL-3.0-or-later |
 | `crates/rustynes-core/src/bus.rs` | TriCNES | the `Fetch` address-bus-window block (`oam_dma_read_reg_active`, a direct port); the DMA flags the unified DMA engine models (`dmc_halt`, `uni_oam_*`) | MIT |
 | `crates/rustynes-ppu/src/raw_signal.rs` | Bisqwit; Mesen2 | The raw composite-signal model, which `docs/ppu-2c02.md` has called "the canonical Bisqwit `nes_ntsc` / Mesen2 'raw palette' generator" since v2.1.9 (recorded v2.9.8 at the maintainer's direction; found while the v2.9.8 emphasis model was written, which does not use it) | Bisqwit (see §6); GPL-3.0-or-later (Mesen2) |
-| `crates/rustynes-ppu/src/palette_gen.rs` | Bisqwit; ares | Bisqwit NES palette method; ares `fc/ppu/color.cpp` integration | Bisqwit (see §6); ares BSD-2/Apache-2.0 |
+| `crates/rustynes-ppu/src/palette_gen.rs` | Bisqwit; ares | Bisqwit NES palette method; ares `fc/ppu/color.cpp` integration | Bisqwit (see §6); ares ISC (until 2026-11-15 this said BSD-2/Apache-2.0, a misreading of ares's LICENSE, whose BSD-2 and Apache-2.0 sections cover bundled third-party components) |
 | `crates/rustynes-apu/src/apu.rs` | TriCNES; Mesen2 | the DMC-DMA state model (`Emulator.cs` fields, cited by name and line in the field docs); `_needHalt` / `_needDummyRead` (`NesCpu`) (recorded v2.9.9, NC-17) | MIT / GPL-3.0-or-later |
 | `crates/rustynes-apu/src/frame_counter.rs` | Mesen2 | `ApuFrameCounter::GetIrqFlag` lazy `$4015` clear; `stepCyclesPal` (recorded v2.9.9, NC-17) | GPL-3.0-or-later |
 | `crates/rustynes-apu/src/blip.rs` | blip_buf (Blargg) | band-limited synthesis (`blip_buf`) | LGPL-2.1-or-later |
@@ -150,7 +150,7 @@ this project previously mislabeled the second as the first.
 | Nestopia UE | GPL-2.0-or-later | Derivation (§1, FME-7/5B) **and** oracle |
 | GeraNES | GPL-3.0-only | Reference / cross-check: source consulted to confirm publicly-documented behavior; no code copied (see note) |
 | higan | GPL-3.0-or-later | Scheduler-structure reference / oracle |
-| ares | BSD-2-Clause / Apache-2.0 | Palette-integration reference (§1) / oracle |
+| ares | ISC (corrected 2026-11-15 from BSD-2-Clause / Apache-2.0) | Palette-integration reference (§1) / oracle |
 | TriCNES | MIT | Incorporated (§5) **and** timing-calibration reference (§4) |
 
 **GeraNES specifically (honest note).** Some in-source comments previously cited

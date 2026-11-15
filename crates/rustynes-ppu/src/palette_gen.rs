@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// Provenance: the generated NES palette follows Bisqwit's documented method and the ares `fc/ppu/color.cpp` colour integration (ares: BSD-2-Clause / Apache-2.0). See docs/originality-and-provenance.md (Section 1)
+// Provenance: the generated NES palette follows Bisqwit's documented method and the ares `fc/ppu/color.cpp` colour integration (ares: ISC). See docs/originality-and-provenance.md (Section 1)
 // and NOTICE for the complete, audited derivation record.
+// Correction, 2026-11-15 (maintainer-approved): this line named ares's licence as
+// "BSD-2-Clause / Apache-2.0", a misreading of ares's LICENSE file, whose own section has
+// been ISC since it was added (2021-07-05); the BSD-2 and Apache-2.0 texts there belong to
+// bundled third-party components. Only the licence name changed; the derivation is as stated.
 //! Generated NTSC base palette (v2.1.2 "Fathom" F1.4).
 //!
 //! The hand-authored [`crate::NES_PALETTE`] is one artist's calibration of a

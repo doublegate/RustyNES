@@ -206,8 +206,8 @@ SPDX-FileComment = "Contains models ported from TriCNES (MIT), as the file's Pro
 path = "crates/rustynes-ppu/src/palette_gen.rs"
 precedence = "aggregate"
 SPDX-FileCopyrightText = ["2025-2026 DoubleGate", "2004-2025 ares team, Near et al (ares)"]
-SPDX-License-Identifier = "GPL-3.0-or-later"
-SPDX-FileComment = "The generated palette follows Bisqwit's documented method and ares's fc/ppu/color.cpp colour integration, as the file's Provenance header and docs/originality-and-provenance.md section 1 record. ares holder from its LICENSE (https://github.com/ares-emulator/ares, read 2026-11-15), whose text is the ISC permission notice; NOTICE and the header call it BSD-2-Clause / Apache-2.0, a discrepancy left for the maintainer. No holder is recorded for Bisqwit's method (see NOTICE section 6)."
+SPDX-License-Identifier = "GPL-3.0-or-later AND ISC"
+SPDX-FileComment = "The generated palette follows Bisqwit's documented method and ares's fc/ppu/color.cpp colour integration, as the file's Provenance header and docs/originality-and-provenance.md section 1 record. ares holder from its LICENSE (https://github.com/ares-emulator/ares, read 2026-11-15), whose own section has been ISC since it was added on 2021-07-05 (the BSD-2 and Apache-2.0 texts in it cover bundled third-party components). NOTICE and the header said BSD-2-Clause / Apache-2.0 until 2026-11-15 (corrected, maintainer-approved); NOTICE now reproduces the ISC notice. No holder is recorded for Bisqwit's method (see NOTICE section 6)."
 
 [[annotations]]
 path = "crates/rustynes-apu/src/blip.rs"
