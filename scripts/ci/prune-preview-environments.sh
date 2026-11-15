@@ -33,20 +33,26 @@ repo="${1:?usage: prune-preview-environments.sh <owner/repo> [--apply]}"
 apply="${2:-}"
 prefix='Docs7 Preview: '
 
-# Every environment, every page. --paginate with --jq emits one name per line.
-mapfile -t envs < <(gh api --paginate "repos/$repo/environments?per_page=100" --jq '.environments[].name')
-if [ "${#envs[@]}" -eq 0 ]; then
+# Every listing is captured into a variable BEFORE it becomes an array: a plain
+# assignment fails the script under `set -e` when `gh` fails on any page, where
+# `mapfile < <(gh ...)` would hide the failure and leave a truncated list --
+# and a truncated branch or pull-request list here means deleting a live
+# preview (Antigravity on #666). Every environment, every page.
+env_list="$(gh api --paginate "repos/$repo/environments?per_page=100" --jq '.environments[].name')"
+mapfile -t envs <<< "$env_list"
+if [ -z "$env_list" ]; then
   # A repository with Pages always has at least `github-pages`; zero means the
   # listing failed or the token cannot read environments, not that all is clean.
   echo "::error::no environments listed for $repo; refusing to report it clean" >&2
   exit 1
 fi
-mapfile -t open_heads < <(gh api --paginate "repos/$repo/pulls?state=open&per_page=100" --jq '.[].head.ref')
+pr_list="$(gh api --paginate "repos/$repo/pulls?state=open&per_page=100" --jq '.[].head.ref')"
+mapfile -t open_heads <<< "$pr_list"
 # Every branch name in one paginated GraphQL query (100 per request), rather
 # than a REST lookup per preview environment.
 owner="${repo%%/*}" rname="${repo#*/}"
 # shellcheck disable=SC2016  # $owner, $name and $endCursor are GraphQL variables, not shell ones.
-mapfile -t branches < <(gh api graphql --paginate -F owner="$owner" -F name="$rname" -f query='
+branch_list="$(gh api graphql --paginate -F owner="$owner" -F name="$rname" -f query='
   query($owner: String!, $name: String!, $endCursor: String) {
     repository(owner: $owner, name: $name) {
       refs(refPrefix: "refs/heads/", first: 100, after: $endCursor) {
@@ -54,8 +60,9 @@ mapfile -t branches < <(gh api graphql --paginate -F owner="$owner" -F name="$rn
         nodes { name }
       }
     }
-  }' --jq '.data.repository.refs.nodes[].name')
-if [ "${#branches[@]}" -eq 0 ]; then
+  }' --jq '.data.repository.refs.nodes[].name')"
+mapfile -t branches <<< "$branch_list"
+if [ -z "$branch_list" ]; then
   echo "::error::no branches listed for $repo; refusing to treat every preview as stale" >&2
   exit 1
 fi

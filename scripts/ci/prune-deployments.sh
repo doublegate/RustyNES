@@ -14,12 +14,14 @@
 # WHAT IS KEPT, AND WHAT GOES
 # ===========================
 # - KEPT: the newest deployment of every environment that still exists, whatever
-#   its state. That is the live Pages site, Docs7 Production, an open pull
-#   request's preview and the latest Copilot run.
+#   its state, AND its newest SUCCESS deployment, which is the live one while a
+#   newer deployment is in flight or after it failed (the live Pages site, Docs7
+#   Production, an open pull request's preview). A deployment in a transient
+#   state (queued, pending, in progress, waiting) is never touched anywhere.
 # - DELETED: every other deployment. GitHub only deletes an inactive deployment,
-#   so one in another state (an old `success`, `failure` or `error`) is first
-#   marked `inactive`; that is safe because a newer deployment of the same
-#   environment exists, or the environment itself is gone.
+#   so one in another state (an older `success`, a `failure` or an `error`) is
+#   first marked `inactive`; that is safe because a newer SUCCESS deployment of
+#   the same environment is kept, or the environment itself is gone.
 #
 # Needs `deployments: write` (GITHUB_TOKEN can have it). Deployments and their
 # latest status come from GraphQL, 100 per request: the REST list carries no
@@ -33,8 +35,12 @@ repo="${1:?usage: prune-deployments.sh <owner/repo> [--apply]}"
 apply="${2:-}"
 owner="${repo%%/*}" name="${repo#*/}"
 
-mapfile -t envs < <(gh api --paginate "repos/$repo/environments?per_page=100" --jq '.environments[].name')
-if [ "${#envs[@]}" -eq 0 ]; then
+# Captured into a variable first, so a failure on any page fails the script
+# (`mapfile < <(gh ...)` would hide it and leave a truncated list; Antigravity
+# on #666). `rows` below is captured the same way.
+env_list="$(gh api --paginate "repos/$repo/environments?per_page=100" --jq '.environments[].name')"
+mapfile -t envs <<< "$env_list"
+if [ -z "$env_list" ]; then
   echo "::error::no environments listed for $repo; refusing to guess which deployments are live" >&2
   exit 1
 fi
@@ -55,16 +61,29 @@ if [ "$total" -eq 0 ]; then
   echo "no deployments in $repo"; exit 0
 fi
 
-# The newest deployment of each EXISTING environment is kept.
+# Kept, for each EXISTING environment: its newest deployment AND its newest
+# SUCCESS deployment. The two differ while a newer deployment is still in
+# flight or after it failed, and then the older SUCCESS one is the LIVE one:
+# keeping only the newest marked the live deployment inactive and deleted it
+# (Antigravity on #666). And anywhere, a deployment in a transient state is
+# never touched: it is still running.
 keep_ids="$(printf '%s\n' "$rows" | python3 -c '
 import sys
 envs = set(sys.argv[1:])
-newest = {}
+transient = {"IN_PROGRESS", "QUEUED", "PENDING", "WAITING", "NONE"}
+newest, newest_ok, keep = {}, {}, set()
 for line in sys.stdin:
-    did, env, created, _, _ = line.rstrip("\n").split("\t")
-    if env in envs and (env not in newest or created > newest[env][0]):
+    did, env, created, state, _ = line.rstrip("\n").split("\t")
+    if state in transient:
+        keep.add(did)
+    if env not in envs:
+        continue
+    if env not in newest or created > newest[env][0]:
         newest[env] = (created, did)
-print("\n".join(did for _, did in newest.values()))
+    if state == "SUCCESS" and (env not in newest_ok or created > newest_ok[env][0]):
+        newest_ok[env] = (created, did)
+keep |= {did for _, did in newest.values()} | {did for _, did in newest_ok.values()}
+print("\n".join(sorted(keep)))
 ' "${envs[@]}")"
 
 # Mark the not-yet-inactive ones inactive (REST, one call each: they are few,

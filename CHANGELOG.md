@@ -87,7 +87,9 @@ cycle-accurate core later replaced.
   deployment of each live environment kept: the Pages site, Docs7 Production,
   the open release branch's preview). On every branch deletion, daily and on
   demand, `scripts/ci/prune-deployments.sh` now deletes every deployment but
-  the newest of each environment (GitHub refuses an active one), reading
+  the newest and the newest successful one of each environment (the live one
+  while a newer deployment is in flight or failed), never one still running,
+  failing closed if any listing fails; it reads
   them through GraphQL and deleting them in batches of 50 mutations (300 in 31
   seconds, against about five minutes for the first 360 one REST call at a
   time), and
@@ -263,12 +265,19 @@ moves a frame, a sample or a bus cycle, so the emulation epoch stays 10.
 - **Save states from v3.7.0's off-die build are refused**: the save engine's
   layout changed (fingerprint `D4E792FE` to `6C9E7051`). The Lite build's
   fingerprint is unchanged.
-- **Known issues** (`T-MISTER-SAVE-XFER-ACROSS-LOAD`, v3.7.2): a battery
-  write-back or load already under way runs across a cartridge download; and
-  three narrow edge cases outside any BIOS or game path (a write to a side's
-  end then a read without a motor restart reads the next side's bytes; an OSD
-  save on the exact clock a mount arrives; an FDS save abandoned by a size-0
-  mount may lose its dirty flags).
+- **Known issues** (`T-MISTER-SAVE-XFER-ACROSS-LOAD`, v3.7.2):
+  - A battery write-back or load already under way when a new cartridge loads
+    keeps going. Its remaining blocks can be written into the NEW game's `.sav`,
+    and a load can write the old game's save into the new game's running
+    PRG-RAM. The window is the few milliseconds a transfer takes after the OSD
+    opens; to stay clear of it, wait a moment after closing the OSD before
+    loading another game.
+  - An OSD save requested on the exact clock a `.sav` mount arrives writes the
+    old RAM into the newly mounted file before loading it.
+  - Two FDS cases outside any BIOS or game path: a write to a side's end then a
+    read without a motor restart reads the next side's bytes; an FDS save
+    abandoned by a size-0 mount may lose its unsaved flag, so those writes are
+    not saved.
 - New bitstreams for both builds, a release candidate: no hardware has run
   any MiSTer bitstream.
 
