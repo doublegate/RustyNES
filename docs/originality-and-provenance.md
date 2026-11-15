@@ -368,6 +368,17 @@ purpose: a file added there fails the check until it gets an annotation of its
 own, naming its real author and licence, with the evidence in a comment. Add
 one for any third-party file, wherever it goes.
 
+That guard has a second limit. Several annotations label a whole directory by
+glob (`tests/roms/audio-tests/*.nes`, `tests/roms/blargg/**`,
+`tests/roms/nes-test-roms/**` and others), so a new file placed inside one of
+those directories inherits that directory's holder and licence and passes the
+check without an annotation of its own: a new `.nes` in `audio-tests/` would be
+labelled Brad Smith's, under his licence. Before adding a file anywhere under
+`tests/roms/`, `screenshots/`, `vendor/` or `ref-docs/`, run
+`uvx reuse spdx | grep -A6 '<the new path>'` and check that the holder and
+licence it reports are really that file's; if not, add an exact-path
+annotation after the glob's (the last matching annotation wins).
+
 ---
 
 ## 8. The correction, owned

@@ -221,6 +221,15 @@ jobs:
         # Python-Markdown, installed above as a dependency of MkDocs.
         run: python3 scripts/render_privacy.py PRIVACY.md privacy-site/privacy/index.html
 
+      # Runs on PRs too, unlike the assembly below: a PR that touches LICENSE or
+      # NOTICE (both are trigger paths) must fail here if it empties or removes
+      # one, not only after it merges (Antigravity on PR #664).
+      - name: LICENSE and NOTICE are present and non-empty
+        run: |
+          for f in LICENSE NOTICE; do
+            test -s "$f" || { echo "::error::$f is missing or empty"; exit 1; }
+          done
+
       - name: Assemble the Pages site (demo at /, rustdoc at /api/, handbook at /docs/, policy at /privacy/, LICENSE.txt + NOTICE.txt at /)
         if: env.IS_PR != 'true'
         run: |

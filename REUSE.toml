@@ -154,8 +154,11 @@ SPDX-FileComment = "Adapted from the Contributor Covenant 2.0 (https://www.contr
 # 3. The `// Provenance:` files: upstream holders added to the file's own
 #    `SPDX-License-Identifier: GPL-3.0-or-later` header (aggregate). The
 #    files themselves are not edited. Holder strings are NOTICE's.
-#    crates/rustynes-ppu/src/palette_gen.rs is not listed: NOTICE lists ares
-#    as an oracle (no code derived), so the default holder applies.
+#    crates/rustynes-ppu/src/palette_gen.rs IS listed (ares, ISC, and
+#    Bisqwit), since 2026-11-15; before that it was left out as oracle-only,
+#    which its own header and section 1 row contradicted. The test
+#    `every_provenance_header_keeps_its_upstream_holder_in_reuse_toml`
+#    (provenance_record_audit.rs) now fails on any header file left out.
 # ---------------------------------------------------------------------------
 
 [[annotations]]
