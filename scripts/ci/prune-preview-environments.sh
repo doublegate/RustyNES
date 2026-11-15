@@ -47,7 +47,10 @@ if [ -z "$env_list" ]; then
   exit 1
 fi
 pr_list="$(gh api --paginate "repos/$repo/pulls?state=open&per_page=100" --jq '.[].head.ref')"
-mapfile -t open_heads <<< "$pr_list"
+open_heads=()
+# An empty listing (no open pull requests) must give no heads, not one empty
+# one (Antigravity on #666).
+[ -z "$pr_list" ] || mapfile -t open_heads <<< "$pr_list"
 # Every branch name in one paginated GraphQL query (100 per request), rather
 # than a REST lookup per preview environment.
 owner="${repo%%/*}" rname="${repo#*/}"
@@ -67,10 +70,13 @@ if [ -z "$branch_list" ]; then
   exit 1
 fi
 
-kept=0 deleted=0 would=0
+kept=0 deleted=0 would=0 failed=0
 for name in "${envs[@]}"; do
   case "$name" in "$prefix"*) ;; *) continue ;; esac
   branch="${name#"$prefix"}"
+  if [ -z "$branch" ]; then
+    echo "keep   $name (no branch name to check)"; kept=$((kept + 1)); continue
+  fi
   if printf '%s\n' "${open_heads[@]}" | grep -qxF -- "$branch"; then
     echo "keep   $name (an open pull request's head)"; kept=$((kept + 1)); continue
   fi
@@ -90,15 +96,25 @@ for name in "${envs[@]}"; do
   case "$status" in *" 404"*) ;; *)
     echo "keep   $name (the branch exists, or could not be checked, on a recheck)"; kept=$((kept + 1)); continue ;;
   esac
-  if ! open_now="$(gh api "repos/$repo/pulls?state=open&head=${repo%%/*}:$enc_branch" --jq 'length')" || [ "$open_now" != "0" ]; then
+  # Every open pull request's head, whoever owns it: a `head=owner:branch`
+  # filter misses a fork's `alice:topic`, whose preview Docs7 also names
+  # "Docs7 Preview: topic" (CodeRabbit on #666).
+  if ! heads_now="$(gh api --paginate "repos/$repo/pulls?state=open&per_page=100" --jq '.[].head.ref')" \
+     || printf '%s\n' "$heads_now" | grep -qxF -- "$branch"; then
     echo "keep   $name (an open pull request, or a failed check, on a recheck)"; kept=$((kept + 1)); continue
   fi
   enc_env="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$name")"
   if [ "$apply" = "--apply" ]; then
-    gh api -X DELETE "repos/$repo/environments/$enc_env" --silent
-    echo "delete $name"; deleted=$((deleted + 1))
+    # One failed delete is recorded and the run goes on to the rest, failing at
+    # the end (Antigravity on #666), as prune-deployments.sh does.
+    if gh api -X DELETE "repos/$repo/environments/$enc_env" --silent; then
+      echo "delete $name"; deleted=$((deleted + 1))
+    else
+      echo "::warning::could not delete environment $name"; failed=$((failed + 1))
+    fi
   else
     echo "would delete $name"; would=$((would + 1))
   fi
 done
-echo "kept $kept, deleted $deleted, would delete $would (of ${#envs[@]} environments)"
+echo "kept $kept, deleted $deleted, would delete $would, failed $failed (of ${#envs[@]} environments)"
+[ "$failed" -eq 0 ]
