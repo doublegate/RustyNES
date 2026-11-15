@@ -70,6 +70,11 @@ if [ -z "$branch_list" ]; then
   exit 1
 fi
 
+# Membership tests read the whole list (`grep -xF ... >/dev/null`, never `grep -q`):
+# `-q` exits at the first match, the `printf` feeding it then dies of SIGPIPE
+# once the list outgrows the pipe buffer, and under pipefail the pipeline fails
+# -- a match reported as a miss (CodeRabbit on #666; reproduced with 20,000
+# names).
 kept=0 deleted=0 would=0 failed=0
 for name in "${envs[@]}"; do
   case "$name" in "$prefix"*) ;; *) continue ;; esac
@@ -77,10 +82,10 @@ for name in "${envs[@]}"; do
   if [ -z "$branch" ]; then
     echo "keep   $name (no branch name to check)"; kept=$((kept + 1)); continue
   fi
-  if printf '%s\n' "${open_heads[@]}" | grep -qxF -- "$branch"; then
+  if printf '%s\n' "${open_heads[@]}" | grep -xF -- "$branch" >/dev/null; then
     echo "keep   $name (an open pull request's head)"; kept=$((kept + 1)); continue
   fi
-  if printf '%s\n' "${branches[@]}" | grep -qxF -- "$branch"; then
+  if printf '%s\n' "${branches[@]}" | grep -xF -- "$branch" >/dev/null; then
     echo "keep   $name (the branch still exists)"; kept=$((kept + 1)); continue
   fi
   # Recheck just before acting (CodeRabbit on #666): the lists above are a
@@ -100,7 +105,7 @@ for name in "${envs[@]}"; do
   # filter misses a fork's `alice:topic`, whose preview Docs7 also names
   # "Docs7 Preview: topic" (CodeRabbit on #666).
   if ! heads_now="$(gh api --paginate "repos/$repo/pulls?state=open&per_page=100" --jq '.[].head.ref')" \
-     || printf '%s\n' "$heads_now" | grep -qxF -- "$branch"; then
+     || printf '%s\n' "$heads_now" | grep -xF -- "$branch" >/dev/null; then
     echo "keep   $name (an open pull request, or a failed check, on a recheck)"; kept=$((kept + 1)); continue
   fi
   enc_env="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$name")"

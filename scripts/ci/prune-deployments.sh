@@ -97,10 +97,15 @@ print("\n".join(sorted(keep)))
 # since GitHub marks a superseded deployment inactive itself), then delete in
 # batches of GraphQL `deleteDeployment` mutations, 50 aliased per request: 668
 # deletions took about ten minutes one REST call at a time.
+# Membership tests read the whole list (`grep -xF ... >/dev/null`, never `grep -q`):
+# `-q` exits at the first match, the `printf` feeding it then dies of SIGPIPE
+# once the list outgrows the pipe buffer, and under pipefail the pipeline fails
+# -- a match reported as a miss (CodeRabbit on #666; reproduced with 20,000
+# names).
 kept=0 marked=0 would=0 failed=0
 del_ids=()
 while IFS=$'\t' read -r did env created state nid; do
-  if printf '%s\n' "$keep_ids" | grep -qxF -- "$did"; then
+  if printf '%s\n' "$keep_ids" | grep -xF -- "$did" >/dev/null; then
     kept=$((kept + 1)); continue
   fi
   if [ "$apply" != "--apply" ]; then
