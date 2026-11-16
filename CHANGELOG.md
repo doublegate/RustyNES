@@ -1,8 +1,7 @@
 # Changelog
 
-This is the concise, readable summary of notable changes to RustyNES — a few
-tight highlights per release, and **the complete list of releases**. The format
-is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and the
+This is the record of notable, user-visible changes to RustyNES, newest first,
+and **the complete list of releases**. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 **Where the deep per-release detail lives, stated accurately.**
@@ -61,7 +60,6 @@ cycle-accurate core later replaced.
   are no longer tracked; `ref-docs/2026-11-15-sdram-datasheet-sources.md`
   gives their public download locations. The iOS store copyright line no
   longer says "MIT OR Apache-2.0".
-
 - **Rust 1.100.0** (from 1.99.1), with the libretro buildbot on the same
   release (`.gitlab-ci.yml`), the workspace `rust-version`, the two
   standalone manifests, the Worker image's base and the comments that name
@@ -90,11 +88,10 @@ cycle-accurate core later replaced.
   the newest and the newest successful one of each environment that still
   exists (the live one while a newer deployment is in flight or failed), never
   one still running, failing closed if any listing fails; an environment that
-  has been deleted keeps none of its deployments. It reads
-  them through GraphQL and deleting them in batches of 50 mutations (300 in 31
-  seconds, against about five minutes for the first 360 one REST call at a
-  time), and
-  `scripts/ci/prune-preview-environments.sh` deletes a preview environment once
+  has been deleted keeps none of its deployments. It reads them through
+  GraphQL and deletes them in batches of 50 mutations (300 in 31 seconds,
+  against about five minutes for the first 360 at one REST call at a time),
+  and `scripts/ci/prune-preview-environments.sh` deletes a preview environment once
   its branch is gone and no open pull request uses it. Deleting an environment
   needs the Administration permission, which the workflow's own token cannot
   have, so that job needs an `ENV_CLEANUP_TOKEN` secret (a fine-grained token
@@ -164,8 +161,9 @@ cycle-accurate core later replaced.
   services: wrangler 4.160.1, the Workers vitest plugin 1.8.0 and current
   Workers types; CI tests them on Node 26, now the active LTS. The RA proxy
   image moves to Python 3.15. CI: taiki-e/install-action 2.90.3; the ruff
-  pre-commit hook 0.17.4. The Rust toolchain stays at 1.99.1, still the
-  newest stable release, and nothing user-visible changes in emulation:
+  pre-commit hook 0.17.4. This sweep left the Rust toolchain at 1.99.1, then
+  the newest stable release (the move to 1.100.0 is the entry above), and
+  nothing user-visible changes in emulation:
   the full suite with the commercial corpus passes with no golden,
   snapshot or frame moved, so the emulation epoch stays 10.
 - **CI (contributors): the cargo cache keeps dependencies again.** It had
@@ -1731,6 +1729,11 @@ bitstreams are unchanged.
   512 KiB), but
   nothing ever reset the flag, so after the first change the comparison
   ran every second again. A failed write is still retried.
+- **New MiSTer bitstreams at fitter seed 7**, on-die and off-die, each
+  compiled twice to the same bytes: a release candidate, not
+  hardware-verified. The co-simulation ladder reads 260 passed, 0 failed, 3
+  expected failures on-die and 263 / 0 / 3 off-die (detail, md5s and timing
+  margins in `.github/release-notes/v3.3.0.md`).
 - **The IRQ-timing trace goldens are a test now** (the `irq-timing-trace`
   developer feature). The fixture rewrote its 21 committed traces on every
   run and compared nothing, so they caught no regression; 19 of them no

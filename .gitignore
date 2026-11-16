@@ -1,81 +1,55 @@
 # =============================================================================
 # .gitignore — RustyNES
-# (negations `!` must follow the broad rule they re-include — order matters)
+#
+# ORDER MATTERS: a `!` negation re-includes only what the rules ABOVE it
+# ignored, and a later rule ignores again. Keep a new rule on the correct side
+# of the negations it interacts with (the golden, coverage and nestest
+# re-includes below).
+#
+# A bare pattern (no `/` except a trailing one) matches at ANY depth. Before
+# adding one, check it against the tree: `git ls-files -ci --exclude-standard`
+# lists the tracked files an ignore rule would hide.
 # =============================================================================
 
 # --- Rust / Cargo ---
 /target/
-/target/doc/
-/target/criterion/
-# Nested per-crate target/ dirs (build output; the root /target/ rule is anchored).
+# Nested per-crate target/ dirs (the root /target/ rule is anchored).
 crates/*/target/
 **/*.rs.bk
 *.bench
-# This workspace ships a binary app — commit the lock (re-include it).
-#
-# `Cargo.lock` with no slash matches at ANY depth, so the re-include below has
-# to name every lockfile we keep. That was written when there was exactly one.
-# `crates/rustynes-cosim` is EXCLUDED from the workspace, so it resolves its own
-# dependency graph into its own lockfile — which this rule was silently
-# ignoring, leaving CI to re-resolve it on every run. That crate emits the
-# goldens an external NES implementation is verified against, and its manifest
-# records the emulator version, not the resolve, so a dependency moving under it
-# would be invisible in exactly the artifact meant to establish provenance.
+# Track the lockfiles of the binary workspace and of `crates/rustynes-cosim`,
+# which is excluded from the workspace and resolves its own graph. The cosim
+# crate emits the goldens an external NES implementation is verified against,
+# so its resolve is provenance and must not move unrecorded (v2.4.2). The bare
+# `Cargo.lock` matches at any depth: name every lockfile that is kept.
 Cargo.lock
 !/Cargo.lock
 !/crates/rustynes-cosim/Cargo.lock
 
-# Golden-export output. `nes_golden_export` writes these wherever `--out` points,
-# and none of them belong in the tree: they are reproducible from a pinned
-# commit, and a committed copy is a copy that drifts.
-#
-# The re-include below is not decoration. A BARE pattern matches at any depth,
-# which is exactly how `Cargo.lock` silently ignored the excluded crate's
-# lockfile until v2.4.2 -- so the committed golden trees are named explicitly,
-# and a binary golden deliberately added there will not be swallowed.
+# --- Golden-export output ---
+# `nes_golden_export` and the sibling's gates write these wherever `--out`
+# points. They are reproducible from a pinned commit, so none belong in the
+# tree. When a co-simulation rung adds a format, add its suffix here (the list
+# fell behind four times); check with
+#   for s in ckpt obs boot index_fb ram ram_init fetch apu dut; do
+#     git check-ignore -q "x.$s.bin" || echo "NOT IGNORED: $s"; done
+# `*.ram.bin` does not match `<stem>.ram_init.bin`; both are needed.
 *.ckpt.bin
 *.obs.bin
 *.boot.bin
 *.index_fb.bin
 *.ram.bin
-# Three artifacts this list had grown apart from, found by testing each suffix
-# against `git check-ignore` rather than by reading the list. `*.ram.bin` does
-# NOT match `<stem>.ram_init.bin` -- the suffixes differ -- so the seeded work
-# RAM every gate now requires was never covered; `irq.csv` has been uncovered
-# since v2.4.2; `fetch.bin` arrived with v2.5.4. Each was verified to match
-# nothing tracked before being added.
 *.ram_init.bin
 *.fetch.bin
 *.irq.csv
-# A FIFTH, found the same way in v2.6.5. The sibling's `cpu-bus-gate` writes
-# `<rom>.dut.bin` -- the DUT's own capture, compared against `<rom>.obs.bin` --
-# and its output path is a variable, so a run pointed at this tree offers a file
-# this list did not name. A 134 M-cycle window is 2.0 GB. Verified to match
-# nothing tracked before being added.
 *.dut.bin
-# A FOURTH, found the same way and for the same reason: `apu.bin` arrived with
-# rung 4 (the 2A03's per-cycle channel levels) at v2.5.9 and was never added, so
-# every APU golden the sibling's gates consume has been offered for commit since.
-# Verified to match nothing tracked before being added.
-#
-# The pattern here is now four for four: this list grows when a rung adds a
-# format, and nothing makes it. Checking is one line --
-#   for s in ckpt obs boot index_fb ram ram_init fetch apu; do
-#     git check-ignore -q "x.$s.bin" || echo "NOT IGNORED: $s"; done
-# -- and reading the list instead is what missed the previous three.
 *.apu.bin
-# Broader than its siblings, and knowingly so: `nes_golden_export` names this
-# `<rom-stem>.manifest.txt`, with no suffix that distinguishes it from any other
-# manifest. Nothing tracked matches it today. If a manifest ever needs tracking,
-# re-include it explicitly rather than narrowing this -- a bare pattern matching
-# at any depth is what the note above is about.
+# Deliberately broad: the exporter names it `<rom-stem>.manifest.txt`. If a
+# manifest ever needs tracking, re-include it explicitly.
 *.manifest.txt
+# The committed golden trees, named so a golden added there is not swallowed.
 !/golden/**
 !/crates/rustynes-test-harness/golden/**
-
-# (The vendored TriCNES harness used to be BUILT in place under golden/, and two
-# negations here kept its bin/ + obj/ out. It left the repository in v3.0.1, so
-# they went with it.)
 
 # --- Native build & FFI artifacts ---
 *.so
@@ -85,12 +59,9 @@ Cargo.lock
 *.a
 *.lib
 *.pdb
-# Apple debug symbols. The libretro Apple jobs (osx / ios / tvos) and the iOS
-# xcframework build emit `<name>.dylib.dSYM` bundles next to the library, and
-# the buildbot additionally zips them for upload — `*.dylib` above covers the
-# library but neither the bundle directory nor the archive. Building any Apple
-# libretro target locally (`crates/rustynes-libretro/Makefile`) leaves both in
-# the working tree.
+# Apple debug symbols: the libretro Apple jobs and the iOS xcframework build
+# leave `<name>.dylib.dSYM` bundles (and the buildbot's zip of them) beside the
+# library.
 *.dSYM/
 *.dSYM.zip
 
@@ -99,34 +70,30 @@ Cargo.lock
 /dist/
 *.wasm
 wasm-pack.log
-# trunk build output (regenerated by `trunk build`; never committed).
 /crates/rustynes-frontend/web/dist/
-# v1.5.0 Workstream G — the Emscripten rcheevos→wasm side module
-# (`scripts/cheevos/build_rcheevos_wasm.sh` output). The `.wasm` (above) +
-# `.js` glue are build artifacts: rebuild on demand, never commit. The hand-
-# written loader (`ra_glue.js`) + the dir's README ARE committed.
+# The Emscripten rcheevos side module's JS glue
+# (`scripts/cheevos/build_rcheevos_wasm.sh`); the hand-written `ra_glue.js` and
+# the directory's README are tracked.
 /crates/rustynes-frontend/web/cheevos/rcheevos.js
 
-# --- Node.js (web frontend) ---
+# --- Node.js ---
 node_modules/
 package-lock.json
-# v3.4.0 — the hosted services (`services/hosted/`) are deployed from CI-tested
-# code, so their lockfile IS committed: `npm ci` must reproduce the exact
-# dependency tree the tests ran against (the same reasoning as `Cargo.lock`).
-!/services/hosted/package-lock.json
-# wrangler's local dev state (miniflare storage, temp bundles), and local
-# secrets for `wrangler dev` (never committed).
-/services/hosted/.wrangler/
-/services/hosted/.dev.vars
 yarn.lock
 pnpm-lock.yaml
+# The hosted services are deployed from CI-tested code, so `npm ci` must
+# reproduce the tree the tests ran against: their lockfile is tracked.
+!/services/hosted/package-lock.json
+# wrangler's local dev state and `wrangler dev` secrets.
+/services/hosted/.wrangler/
+/services/hosted/.dev.vars
 
-# --- Python (helper scripts under scripts/, icon generator under assets/) ---
+# --- Python ---
 __pycache__/
 *.pyc
 .venv/
 venv/
-# Icon generator default output dir (regenerated by make_icon.py).
+# Icon generator default output (make_icon.py).
 /assets/RustyNES_Icon/out/
 
 # --- Platform packages ---
@@ -135,15 +102,13 @@ venv/
 *.flatpak
 *.msi
 *.appx
-# insta reference snapshots also end in `.snap`; the ROM suites compare against
-# these committed fixtures, so re-include them (overrides the Snapcraft `*.snap`).
+# insta's committed reference snapshots also end in `.snap`: re-include them
+# (`/**/` also matches zero directories). Pending or rejected ones
+# (`.snap.new`) are accepted or deleted, never committed.
 !**/snapshots/**/*.snap
-!**/snapshots/*.snap
-# ...but insta's pending/rejected snapshots (`.snap.new`) are transient — accept
-# them into `.snap` (`cargo insta accept`) or delete; never commit.
 *.snap.new
 
-# --- Fuzzing (commit the harnesses; ignore the build/corpus) ---
+# --- Fuzzing (commit the harnesses; ignore the build and corpus) ---
 fuzz/
 !/fuzz/
 /fuzz/target/
@@ -153,39 +118,33 @@ fuzz/
 corpus/
 artifacts/
 
-# --- ROMs & media (copyright) ---
-# The broad `*.nes`/`*.fds` rules ignore ALL ROMs; re-include the committable
-# test-ROM suites under tests/roms/ (licences per file in REUSE.toml and
-# tests/roms/LICENSES.md), then HARD-exclude the commercial
-# dumps + the large fetched clone (NEVER committed — Nintendo copyright).
+# --- ROMs, disks, music, patches (copyright) ---
+# All ROMs are ignored; the committable test-ROM suites under tests/roms/ are
+# re-included (licences per file in REUSE.toml and tests/roms/LICENSES.md).
+# Commercial dumps, BestEffort boot-smoke ROMs included, live under
+# tests/roms/external/ and are NEVER committed.
 *.nes
 *.fds
 !/tests/roms/**/*.nes
-/tests/roms/external/
-# The same path as a SYMLINK (how a git worktree points at the main tree's
-# dumps): a pattern ending in `/` matches only a directory, so the link showed
-# as untracked in every agent worktree and could be staged by accident (v2.9.8).
+# No trailing slash: a git worktree reaches the main tree's dumps through a
+# SYMLINK at this path, which a `dir/` pattern does not match (v2.9.8).
 /tests/roms/external
 /tests/roms/nes-test-roms/
 /game-roms/
-
-# coverage tool's cached library-header scan (developer-local; ~25k headers)
-/scripts/coverage/.library-index.json
 *.qd
 *.nsf
 *.nsfe
 *.nsf2
-# User-supplied palette files (v1.1.0 .pal loading) — none committed
+# User-supplied palettes; none are committed.
 *.pal
-# ROM soft-patches (v1.2.0 ingest: auto-applied .ips/.ups/.bps beside a ROM).
-# User-supplied, copyright-adjacent — never committed (mirrors the ROM policy).
+# ROM soft-patches (auto-applied beside a ROM) and the live-patch recorder's
+# RAM-pin sidecar: user material, handled like the ROMs.
 *.ips
 *.ups
 *.bps
-# v3.7.0 live-patch recorder: the RAM-pin sidecar written beside a .bps.
 *.pins.toml
 
-# --- TAS movie files (may contain copyrighted content) ---
+# --- TAS movies (may contain copyrighted content) ---
 *.rnm
 *.rnmproj
 *.rnmb
@@ -194,21 +153,20 @@ artifacts/
 *.bk2
 *.tasproj
 
-# --- Save / state / input / dumps / cheats ---
+# --- Saves, states, input recordings, dumps, cheats ---
 *.rns
 *.sav
 *.srm
 *.state
 *.savestate
 *.snapshot
-*.quick*.state
 *.rec
 *.input
 *.ram
 *.dump
 *.cht
 
-# --- Game database files ---
+# --- Game databases ---
 *.db
 *.sqlite
 *.sqlite-journal
@@ -217,28 +175,27 @@ artifacts/
 *.dat
 *.xml
 !assets/**/*.xml
-# v1.2.0 in-app ROM-Database editor writes a user overlay to the OS data dir;
-# ignore a stray copy if the app is ever run from the repo root.
+# The ROM-Database editor's user overlay, if the app is run from the repo root.
 game_db_user.txt
+# The NES 2.0 DB the Game Genie re-key reads at build time.
+scripts/gg/nes20db.xml
 
 # --- Logs / debug / test output ---
 *.log
-# Keep the kevtris nestest golden trace despite the broad *.log ignore.
+# The kevtris nestest golden trace is tracked despite `*.log`.
 !/tests/roms/nestest/nestest.log
-*.test.log
 *.golden
 test-output/
 /tests/captures/
 /tests/framework/enhanced-validator/target/
-/tests/framework/*.exe
 /tests/framework/test_rom_validator
 
 # --- Coverage / profiling ---
 *.gcno
 *.gcda
 coverage/
-# ...but NOT the committed coverage tooling (the `coverage/` rule above is for
-# code-coverage artifact dirs; the cache JSON stays ignored via its rule above).
+# `coverage/` is for coverage-artifact dirs, not the committed tooling; the
+# tooling's library-header cache and bytecode stay ignored.
 !/scripts/coverage/
 !/scripts/coverage/**
 /scripts/coverage/.library-index.json
@@ -248,54 +205,50 @@ perf.data
 perf.data.old
 flamegraph.svg
 /perf-logs/
-# PGO / profile-guided-optimization artifacts (v1.2.0 pgo.yml + scripts/pgo/).
-# The instrument/train profiles are regenerated by the recipe; never committed.
+# PGO profiles (pgo.yml, scripts/pgo/), regenerated by the recipe.
 *.profraw
 *.profdata
 /pgo-data/
-/target/pgo/
 
-# --- Documentation (build output + local-only references) ---
+# --- Documentation build output and local-only references ---
 /docs/_site/
-# Engine-development audit history (the C1 IRQ saga, DMA investigations, the
-# v2.0 promotion logs, ...) — kept locally, NOT in the public repo. The v1.0.0
-# synthesis handoff lives at docs/v1.0.0-synthesis-handoff-*.md instead.
+# MkDocs Material's social-card and privacy plugin cache (`mkdocs build`).
+/.cache/
+# Engine-development audit history, kept locally, not in the public repo.
 /docs/audit/
-# Large local NESdev wiki mirror (~208M, reference only).
+# The local NESdev wiki mirror (~208 MB, reference only).
 /nesdev_wiki/
+# Third-party Alliance Memory SDRAM datasheets, marked "Confidential": kept on
+# disk only, never redistributed (ref-docs/2026-11-15-sdram-datasheet-sources.md).
+/ref-docs/Datasheets/*.pdf
 
-# --- Reference projects (external cloned repos) — REFERENCE FIREWALL ---
+# --- REFERENCE FIREWALL ---
 # ref-proj/ held local clones of reference emulators used ONLY as black-box
-# behavioral oracles. Their licenses are project-specific: Mesen2, puNES, FCEUX,
-# and GeraNES are copyleft (GPL), and reproducing that source makes RustyNES a
-# derivative work (which it now is, GPL-3.0-or-later); TriCNES is MIT. The
-# directory has been REMOVED from disk and stays ignored here as a firewall guard
-# so the copyleft source can never re-enter the working tree. Do NOT re-clone
-# reference-emulator source into the repo; implement hardware behavior from
-# docs/test ROMs. (The MIT TriCNES source was vendored until v3.0.1 and now lives
-# outside the repository at ~/reference-oracles/; guardrails section 3a.) See
-# docs/ai-emulator-provenance-guardrails.md and the "MOST IMPORTANT RULE" of AGENTS.md.
+# behavioural oracles. Mesen2, puNES, FCEUX and GeraNES are GPL; reproducing
+# their source is what made RustyNES a derivative work (now GPL-3.0-or-later).
+# The directory was REMOVED from disk and stays ignored as a guard so that
+# source can never re-enter the working tree. Do NOT re-clone reference-emulator
+# source into the repo; implement hardware behaviour from docs and test ROMs.
+# (TriCNES, MIT, lives outside the repository at ~/reference-oracles/;
+# guardrails section 3a.) See docs/ai-emulator-provenance-guardrails.md and the
+# "MOST IMPORTANT RULE" of AGENTS.md.
 /ref-proj/
 
-# --- Temporary files ---
+# --- Temporary, merge and backup files ---
 /tmp/
 /temp/
 *.tmp
-
-# --- Merge / patch artifacts (git conflict + `git apply --reject` leftovers) ---
+# git conflict and `git apply --reject` leftovers.
 *.orig
 *.rej
-# Pre-edit backups. The workspace rules have an agent copy a file aside before
-# instrumenting it (`cp file file.bak`, `<file>.preedit`) so cleanup restores
-# its own snapshot rather than a `git checkout` over uncommitted work. Those
-# copies are never commit material. Checked in v2.9.6: nothing tracked matches.
+# Pre-edit snapshots (`cp file file.bak`, `<file>.preedit`) an agent takes
+# before instrumenting a file.
 *.bak
 *.preedit
-# insta's pending inline-snapshot file (the `.snap.new` rule below covers the
-# file-snapshot equivalent).
+# insta's pending inline-snapshot file.
 *.pending-snap
 
-# --- Environment ---
+# --- Environment / secrets ---
 .env
 .env.local
 
@@ -313,40 +266,30 @@ flamegraph.svg
 Thumbs.db
 Desktop.ini
 
-# --- Android (v1.8.0) ---
-# The android/ Gradle module has its own .gitignore (build/, .gradle/, jniLibs/,
-# keystore.properties, local.properties, the wrapper jar); these belt-and-suspenders
-# rules cover the same outputs if a tool scans from the repo root. The committed
-# Gradle wrapper (gradlew[.bat] + gradle-wrapper.jar) and keystore.properties.example
-# are intentionally tracked.
+# --- Android ---
+# android/ has its own .gitignore; these cover the same outputs for a tool
+# scanning from the root. The Gradle wrapper and keystore.properties.example
+# are tracked.
 android/**/build/
 **/.gradle/
 android/local.properties
-# Release upload-signing secrets (v2.0.4 signing config: `rootProject.file(
-# "keystore.properties")` or the `RUSTYNES_UPLOAD_*` env vars). Ignore the props
-# file anywhere, plus any keystore blob — a maintainer secret, NEVER committed.
-# The tracked `keystore.properties.example` template is intentionally kept.
+android/app/src/main/jniLibs/
+# Upload-signing secrets: the properties file at any depth, and any keystore.
 keystore.properties
-android/keystore.properties
 *.jks
 *.keystore
-android/app/src/main/jniLibs/
 
-# --- iOS (v1.9.0 "Sunrise") ---
-# The xcframework + the UniFFI-generated Swift surface + the XcodeGen-generated
-# Xcode project are all BUILD ARTIFACTS (regenerated by
-# scripts/build-ios-xcframework.sh); never committed. The hand-written SwiftUI
-# sources, project.yml, Info.plist, entitlements, PrivacyInfo, the bridging
-# header, and ios/Generated/.gitkeep ARE tracked.
+# --- iOS ---
+# The xcframework, the UniFFI-generated Swift and the XcodeGen project are
+# build artifacts (scripts/build-ios-xcframework.sh). The SwiftUI sources,
+# project.yml, Info.plist, entitlements, PrivacyInfo, the bridging header and
+# ios/Generated/.gitkeep are tracked.
 ios/RustyNESFFI.xcframework/
 ios/Generated/RustyNESCore.swift
 ios/RustyNES.xcodeproj/
 ios/build/
 *.ipa
-# fastlane local output (the generated docs + the last-run report). The Play
-# Console listing under `fastlane/metadata/` (v2.0.4 — title / descriptions /
-# changelogs, en-US + es-ES) is version-controlled source and IS tracked; only the
-# generated report / README / test output below are ignored.
+# fastlane output; the store listing under fastlane/metadata/ is tracked.
 fastlane/report.xml
 fastlane/README.md
 fastlane/test_output/
@@ -354,58 +297,18 @@ fastlane/test_output/
 # --- Pre-commit ---
 .pre-commit-cache/
 
-# --- AI assistant local files ---
+# --- AI assistants and agent scratch ---
 CLAUDE.local.md
 /.claude/
+.agents/
 WARP.md
 /.warp/
-
-# Local scratch / salvage working dir (data/docs/logs pulled from /tmp triage); not
-# part of the repo.
-/salvaged/
-# v3.2.0: an AI agent's /tmp-salvage scratch from the agy/Codex remediation
-# branch (session transcripts, a /tmp listing, the author's address). Kept in the
-# gitignored salvaged/ above; it must never be committed under this name either.
-/salvaged_tmp/
-
-# NOTE: BestEffort boot-smoke ROMs (homebrew/unlicensed/multicart) are no longer
-# a separate tree — they live under the already-ignored tests/roms/external/
-# alongside every other staged dump (the coverage harness discovers ONE external/
-# ROM tree; only the *screenshots* are tier-split, into screenshots/besteffort/).
-
-# --- Wiki (Separate Repo) ---
-# RustyNES.wiki/ is a standalone clone of the GitHub Wiki repo
-# (github.com/doublegate/RustyNES.wiki.git) checked out inside this tree to
-# author/build the wiki; it carries its own .git and must never be committed
-# into the main repository.
-/RustyNES.wiki/
-
-# Game Genie header-robust re-key: NES 2.0 DB is a build-time input, never committed
-scripts/gg/nes20db.xml
-scripts/gg/__pycache__/
-
-# Antigravity PR reviewer: scratch workspace for the on-disk diff handoff. When a PR's
-# diff is too large to inline in the prompt, scripts/agy-review.sh writes it here so agy
-# can READ it with its file tools instead of the review being truncated to the argv
-# ceiling. Created and removed within a single run; never committed.
+# The Antigravity PR reviewer's on-disk diff handoff (scripts/agy-review.sh),
+# created and removed within one run.
 /.agy-review-work/
-
-# AccuracyCoin sub-test ROM builds. `scripts/accuracycoin-build/build_sub_test_rom.py`
-# defaults its scratch to /tmp, but `--build-dir` can point in-tree, and the nesasm
-# toolchain drops listing/symbol sidecars beside whatever it assembles. The ROMs it
-# produces under tests/roms/AccuracyCoin/sub-tests/ ARE committed (with their
-# BUILD-PROVENANCE.tsv); the intermediates never are.
-/accuracycoin-build/
-tests/roms/**/*.lst
-tests/roms/**/*.fns
-tests/roms/**/*.nl
-.agents/
-
-# Agent review scratch in the repo root: PR-thread dumps and one-shot patch scripts
-# an agent writes while working a review round (`cr_*`, `fix_*.py`, `*_comments.json`,
-# `threads.json`, `pr_*.txt`). Thirteen of them sat untracked after #544, one
-# `git add -A` from landing in history. Root-anchored so nothing under `scripts/` or
-# `crates/` can match.
+# Review-round scratch an agent writes in the root: PR-thread dumps and one-shot
+# patch scripts (thirteen sat untracked after #544). Root-anchored so nothing
+# under scripts/ or crates/ matches.
 /cr_*.json
 /cr_*.txt
 /fix_*.py
@@ -413,10 +316,20 @@ tests/roms/**/*.nl
 /threads.json
 /unresolved_threads.txt
 /pr_*.txt
+# Local salvage of /tmp scratch, never part of the repo under either name
+# (salvaged_tmp/ held session transcripts and the author's address, v3.2.0).
+/salvaged/
+/salvaged_tmp/
 
-# MkDocs Material's social-card and privacy plugins write their download/render
-# cache here on every local `mkdocs build` (web.yml builds the handbook in CI).
-/.cache/
+# --- Wiki (separate repository) ---
+# A clone of github.com/doublegate/RustyNES.wiki.git, with its own .git.
+/RustyNES.wiki/
 
-# Third-party Alliance Memory SDRAM datasheets, marked "Confidential": kept on disk only, never redistributed (see ref-docs/2026-11-15-sdram-datasheet-sources.md).
-/ref-docs/Datasheets/*.pdf
+# --- AccuracyCoin sub-test ROM builds ---
+# The built ROMs under tests/roms/AccuracyCoin/sub-tests/ are tracked (with
+# BUILD-PROVENANCE.tsv); an in-tree `--build-dir` and the nesasm listing and
+# symbol sidecars are not.
+/accuracycoin-build/
+tests/roms/**/*.lst
+tests/roms/**/*.fns
+tests/roms/**/*.nl
