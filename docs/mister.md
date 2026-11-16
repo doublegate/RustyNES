@@ -139,12 +139,18 @@ Enforcement is mechanical rather than dispositional: the repositories stay
 physically outside the workspace, and CI carries a path denylist plus an
 identifier grep - the same shape as the `/ref-proj/` guard.
 
-> **Enforcement as found on 2026-11-15.** The sibling's `.github/workflows/ci.yml`
-> carries the path denylist (it fails if a directory named `NES_MiSTer` or
-> `fpganes` is in the tree) and a check that every RTL file carries a
-> `GPL-3.0-or-later` SPDX identifier. No identifier grep for a black-boxed
-> core's names was found there or in this repository's workflows. The rule
-> above is unchanged; the gap is recorded for the maintainer.
+> **What the identifier grep is (2026-11-15).** Until v3.7.1 the sibling's CI
+> carried only the path denylist (it fails if a directory named `NES_MiSTer`
+> or `fpganes` is in the tree) and an SPDX-header check; the grep was claimed
+> here and not built. v3.7.1 adds it: `tb/check_hdl_firewall.py`, run with its
+> self-test in the sibling's CI, fails when a black-boxed core's name,
+> repository path or author's handle appears in `rtl/`, `tb/` or the Quartus
+> build inputs. **It is a tripwire for references, not evidence that nothing
+> was copied.** It cannot match those cores' module, signal or constant names,
+> since listing them would mean reading their source; logic transcribed with
+> every name changed passes it. Independence rests on the rule and on review,
+> as [ADR 0037's amendment of 2026-11-15](adr/0037-mister-fpga-core-independent-hdl-implementation.md#amendment-2026-11-15-what-the-identifier-grep-does-and-does-not-catch)
+> records.
 
 The same rule, as the project states it in
 [`agents/provenance-firewall.md`](agents/provenance-firewall.md) and the sibling
