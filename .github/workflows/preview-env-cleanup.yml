@@ -72,6 +72,11 @@ jobs:
     permissions:
       contents: read
       deployments: write
+      # `GET /repos/{repo}/environments` (prune-deployments.sh's list of live
+      # environments) is an Actions-read endpoint for GITHUB_TOKEN. Without it
+      # the listing is refused, the script fails closed, and the cleanup
+      # deletes nothing on every run (CodeRabbit on #666).
+      actions: read
     steps:
       - uses: actions/checkout@v7
         with:
