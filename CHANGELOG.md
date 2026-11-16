@@ -25,6 +25,14 @@ cycle-accurate core later replaced.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The preview-deployment cleanup runs at all.** Its first run on `main`
+  (v3.7.1's merge) failed both jobs with exit 126: the two scripts were
+  committed without the executable bit, because the trees they came from have
+  `core.fileMode=false`, so a `chmod` never reached git. The workflow now runs
+  them with `bash`, and the bit is set in git too.
+
 ## [3.7.1] - 2026-11-15 - "Imprint" (every file labelled with its holder and licence, the notices the apps owe, the MiSTer core's FDS and battery-save fixes, and a fresh spectator id per hosted match)
 
 ### Changed
