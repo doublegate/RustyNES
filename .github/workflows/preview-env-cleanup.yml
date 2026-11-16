@@ -85,7 +85,11 @@ jobs:
       - name: Delete inactive deployments
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci/prune-deployments.sh "$GITHUB_REPOSITORY" --apply
+        # `bash <script>`, not `./<script>`: the scripts are committed from trees
+        # with core.fileMode=false (the workspace's NAS rule), where a chmod
+        # never reaches git, so the executable bit cannot be relied on. v3.7.1's
+        # first run on main failed both jobs with exit 126 for exactly that.
+        run: bash scripts/ci/prune-deployments.sh "$GITHUB_REPOSITORY" --apply
 
   environments:
     name: Delete stale preview environments
@@ -110,4 +114,4 @@ jobs:
             echo "$msg" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          scripts/ci/prune-preview-environments.sh "$GITHUB_REPOSITORY" --apply
+          bash scripts/ci/prune-preview-environments.sh "$GITHUB_REPOSITORY" --apply
