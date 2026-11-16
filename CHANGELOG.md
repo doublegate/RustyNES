@@ -1,8 +1,7 @@
 # Changelog
 
-This is the concise, readable summary of notable changes to RustyNES — a few
-tight highlights per release, and **the complete list of releases**. The format
-is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and the
+This is the record of notable, user-visible changes to RustyNES, newest first,
+and **the complete list of releases**. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 **Where the deep per-release detail lives, stated accurately.**
@@ -25,6 +24,8 @@ releases), and `v0.1.0`–`v0.8.6` are the original pre-1.0 engine that the
 cycle-accurate core later replaced.
 
 ## [Unreleased]
+
+## [3.7.1] - 2026-11-15 - "Imprint" (every file labelled with its holder and licence, the notices the apps owe, the MiSTer core's FDS and battery-save fixes, and a fresh spectator id per hosted match)
 
 ### Changed
 
@@ -59,7 +60,6 @@ cycle-accurate core later replaced.
   are no longer tracked; `ref-docs/2026-11-15-sdram-datasheet-sources.md`
   gives their public download locations. The iOS store copyright line no
   longer says "MIT OR Apache-2.0".
-
 - **Rust 1.100.0** (from 1.99.1), with the libretro buildbot on the same
   release (`.gitlab-ci.yml`), the workspace `rust-version`, the two
   standalone manifests, the Worker image's base and the comments that name
@@ -75,6 +75,30 @@ cycle-accurate core later replaced.
   image's MinGW does not ship, so its Windows x64 job now builds that import
   library (three functions from `api-ms-win-core-synch-l1-2-0.dll`) with
   `dlltool` before the build.
+- **Preview deployments and their environments no longer pile up**
+  (`.github/workflows/preview-env-cleanup.yml`). The Docs7 documentation
+  previews deploy each pull request's branch to an environment named
+  `Docs7 Preview: <branch>`; GitHub never deletes an environment and only marks
+  a superseded deployment inactive, so by 2026-11-15 the repository held 668
+  deployments and 37 environments, 33 of them previews of long-merged branches.
+  Those 33 environments and 665 superseded deployments were deleted (the newest
+  deployment of each live environment kept: the Pages site, Docs7 Production,
+  the open release branch's preview). On every branch deletion, daily and on
+  demand, `scripts/ci/prune-deployments.sh` now deletes every deployment but
+  the newest and the newest successful one of each environment that still
+  exists (the live one while a newer deployment is in flight or failed), never
+  one still running, failing closed if any listing fails; an environment that
+  has been deleted keeps none of its deployments. It reads them through
+  GraphQL and deletes them in batches of 50 mutations (300 in 31 seconds,
+  against about five minutes for the first 360 at one REST call at a time),
+  and `scripts/ci/prune-preview-environments.sh` deletes a preview environment once
+  its branch is gone and no open pull request uses it. Deleting an environment
+  needs the Administration permission, which the workflow's own token cannot
+  have, so that job needs an `ENV_CLEANUP_TOKEN` secret (a fine-grained token
+  for this repository with Administration: read and write), kept in a
+  `preview-cleanup` environment whose deployment branches are limited to
+  `main`, so GitHub withholds it from any other branch's copy of the
+  workflow; it says so in its run summary until the secret exists.
 - **A pull request's CI caches are deleted when it closes**
   (`.github/workflows/cache-cleanup.yml`). They could never be restored
   again, but counted against the repository's 10 GB cache limit until
@@ -137,8 +161,9 @@ cycle-accurate core later replaced.
   services: wrangler 4.160.1, the Workers vitest plugin 1.8.0 and current
   Workers types; CI tests them on Node 26, now the active LTS. The RA proxy
   image moves to Python 3.15. CI: taiki-e/install-action 2.90.3; the ruff
-  pre-commit hook 0.17.4. The Rust toolchain stays at 1.99.1, still the
-  newest stable release, and nothing user-visible changes in emulation:
+  pre-commit hook 0.17.4. This sweep left the Rust toolchain at 1.99.1, then
+  the newest stable release (the move to 1.100.0 is the entry above), and
+  nothing user-visible changes in emulation:
   the full suite with the commercial corpus passes with no golden,
   snapshot or frame moved, so the emulation epoch stays 10.
 - **CI (contributors): the cargo cache keeps dependencies again.** It had
@@ -222,6 +247,47 @@ moves a frame, a sample or a bus cycle, so the emulation epoch stays 10.
   the player left netplay, because a peer that had not opted in never
   answers. The forensics report now says the peer sent no state, and the
   session is released.
+
+### The MiSTer core (`RustyNES_MiSTer`)
+
+- **The FDS drive, from the v3.7.0 known issues and five review rounds.** A
+  side's end stops the head instead of writing into the next side, and
+  `$4030.D6` reports the end of head, on a real image's zero fill too; a write
+  after a read paused inside a block stores every byte (8 of 19 were dropped);
+  a write after a motor restart waits for ready; the host port is free while
+  the motor is stopped (a `.sav` load and a write-back both hung); a side the
+  image lacks gives no disk, and a download too short for a side is refused.
+- **Disk and battery saves.** An unsaved disk write or battery save survives a
+  console reset before the OSD opens (the battery case lost saves in every
+  MiSTer release so far); a later cartridge can no longer be saved into the
+  previous one's vdisk; no save transfer starts on the clock a download begins.
+- **Save states from v3.7.0's off-die build are refused**: the save engine's
+  layout changed (fingerprint `D4E792FE` to `6C9E7051`). The Lite build's
+  fingerprint is unchanged.
+- **Known issues** (`T-MISTER-SAVE-XFER-ACROSS-LOAD`, v3.7.2):
+  - A battery write-back or load already under way when a new cartridge loads
+    keeps going. Its remaining blocks can be written into the NEW game's `.sav`,
+    and a load can write the old game's save into the new game's running
+    PRG-RAM. The window is the few milliseconds a transfer takes after the OSD
+    opens; to stay clear of it, wait a moment after closing the OSD before
+    loading another game.
+  - An OSD save requested on the exact clock a `.sav` mount arrives writes the
+    old RAM into the newly mounted file before loading it.
+  - Two FDS cases outside any BIOS or game path: a write to a side's end then a
+    read without a motor restart reads the next side's bytes; an FDS save
+    abandoned by a size-0 mount may lose its unsaved flag, so those writes are
+    not saved.
+- New bitstreams for both builds, a release candidate: no hardware has run
+  any MiSTer bitstream.
+
+### Notes
+
+- **Deferred to v3.7.2:** the parallel coverage boot's timing measurement
+  (`T-TEST-COVERAGE-PARALLEL`; the code shipped in v3.7.0's follow-up, only
+  the quiet-host timing run is outstanding, and the cut day's seed sweep
+  held the host) and the `test-roms` LTO A/B (`T-CI-TESTROMS-LTO`; CI needs
+  a dispatch input for the profile override first). Neither changes an
+  assertion.
 
 ## [3.7.0] - 2026-11-10 - "Spindle" (the Famicom Disk System on the MiSTer core, spectators through the hosted relay, desync forensics and live ROM patching)
 
@@ -1663,6 +1729,11 @@ bitstreams are unchanged.
   512 KiB), but
   nothing ever reset the flag, so after the first change the comparison
   ran every second again. A failed write is still retried.
+- **New MiSTer bitstreams at fitter seed 7**, on-die and off-die, each
+  compiled twice to the same bytes: a release candidate, not
+  hardware-verified. The co-simulation ladder reads 260 passed, 0 failed, 3
+  expected failures on-die and 263 / 0 / 3 off-die (detail, md5s and timing
+  margins in `.github/release-notes/v3.3.0.md`).
 - **The IRQ-timing trace goldens are a test now** (the `irq-timing-trace`
   developer feature). The fixture rewrote its 21 committed traces on every
   run and compared nothing, so they caught no regression; 19 of them no

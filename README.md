@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v3.7.0-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.100-orange.svg" alt="Rust: 1.100"></a><br>
+  <a href="https://github.com/doublegate/RustyNES/actions"><img src="https://github.com/doublegate/RustyNES/workflows/CI/badge.svg" alt="Build Status"></a> <a href="#license"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg" alt="License: GPL-3.0-or-later"></a> <a href="https://github.com/doublegate/RustyNES/releases"><img src="https://img.shields.io/badge/version-v3.7.1-blue.svg" alt="Version"></a> <a href="rust-toolchain.toml"><img src="https://img.shields.io/badge/rust-1.100-orange.svg" alt="Rust: 1.100"></a><br>
   <a href="#accuracy"><img src="https://img.shields.io/badge/AccuracyCoin-100%25%20(147%2F147)-brightgreen.svg" alt="AccuracyCoin"></a> <a href="#accuracy"><img src="https://img.shields.io/badge/nestest-0--diff-brightgreen.svg" alt="nestest"></a> <a href="docs/mappers.md"><img src="https://img.shields.io/badge/mapper%20families-208-informational.svg" alt="Mapper families"></a> <a href="https://doublegate.github.io/RustyNES/"><img src="https://img.shields.io/badge/play-in%20browser-success.svg" alt="Try in browser"></a><br>
   <a href="#platforms"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Web%20%7C%20Android%20%7C%20iOS%20%7C%20RetroArch-lightgrey.svg" alt="Platform"></a>
 </p>
@@ -29,12 +29,6 @@ Android, iOS and RetroArch, all on one bit-deterministic core.
 
 **[Play it in your browser](https://doublegate.github.io/RustyNES/)**, no
 install required.
-
-**Upgrading from v2.x?** v3.0.0 "Cornerstone" is a major release. Save states
-and movies made by earlier versions are refused, netplay needs both sides on the
-same emulation epoch, and saves are keyed to the ROM without its header.
-[The v3.0.0 release notes](.github/release-notes/v3.0.0.md) list every change by
-audience: players, RetroArch, mobile and the Rust crates.
 
 > **Development note: AI-assisted.** RustyNES is built with LLM tooling under a
 > human-directed, test-driven workflow, with public test ROMs as the oracle. See
@@ -93,9 +87,9 @@ audience: players, RetroArch, mobile and the Rust crates.
 
 Pre-built binaries for every release are on the
 [Releases page](https://github.com/doublegate/RustyNES/releases): Linux `x86_64`,
-macOS (Apple silicon) and Windows `x86_64`. From v2.9.7 they are the full
-native build: RetroAchievements, Lua scripting, HD packs, A/V recording (with
-`ffmpeg` on your `PATH`) and the debugger telemetry are all included.
+macOS (Apple silicon) and Windows `x86_64`. They are the full native build:
+RetroAchievements, Lua scripting, HD packs, A/V recording (with `ffmpeg` on
+your `PATH`) and the debugger telemetry are all included.
 
 ```bash
 # Linux / macOS
@@ -105,7 +99,10 @@ Expand-Archive rustynes-<tag>-x86_64-pc-windows-msvc.zip; .\rustynes.exe path\to
 ```
 
 Launch it without a ROM and use **F12**, the File menu, or drag and drop a
-`.nes` / `.fds` onto the window.
+`.nes`, `.fds`, `.unf` or `.zip` onto the window. The macOS archive also holds
+a `RustyNES.app`, signed ad hoc rather than notarized: allow it once in System
+Settings > Privacy & Security, or run
+`xattr -dr com.apple.quarantine RustyNES.app`.
 
 ### Build from source
 
@@ -172,7 +169,7 @@ in `crates/rustynes-frontend/web`.
 - **Self-flashing homebrew boards** (GTROM, UNROM 512) emulate their SST39SF040
   flash chip, so games that save by rewriting their own ROM keep those saves.
 - **Battery saves** persist on desktop, Android and iOS, and in the browser
-  (`IndexedDB`, from v2.9.7).
+  (`IndexedDB`).
 - **Famicom Disk System** with a user-supplied `disksys.rom`, and **UNIF** boards
   mapped to their iNES numbers.
 - **Header corrections on every platform:** a built-in game database fixes known
@@ -203,7 +200,7 @@ in `crates/rustynes-frontend/web`.
 - **TAStudio:** a piano-roll editor with a save-state greenzone, lag log,
   markers and branches, and movie import from FCEUX, BizHawk and others.
   Movies record every input the core takes, expansion devices, the microphone,
-  Vs. coins, disk swaps and barcode scans included (`.rnm` format 7).
+  Vs. coins, disk swaps and barcode scans included.
 - **Speedrun timing:** splits from RAM conditions, timed in master-clock cycles,
   with a fixed-layout memory interface for splitters
   ([`docs/memory-export-interface.md`](docs/memory-export-interface.md)), and
@@ -293,29 +290,27 @@ to player 1 automatically.
 
 | Suite | Result |
 | --- | --- |
-| **AccuracyCoin** | **147/147 (100.00%)** at upstream `66e87112` since v3.6.2, read from RAM rather than the screen. The v3.1.0 re-sync to `f5f41dc2` (146/146) showed that the 144/144 reported before it was overstated: the older ROM's `Misaligned OAM behavior` fail path fell through to a pass, hiding a real failure the re-sync found and fixed |
+| **AccuracyCoin** | **147/147 (100.00%)** at upstream `66e87112`, read from RAM rather than the screen |
 | `nestest` | 0-diff against the Nintendulator log |
 | blargg `cpu_interrupts_v2` | 5/5, and the unstable-store tests 6/6 |
 | blargg APU (NTSC and PAL) | 11/11 and 10/10 |
 | blargg `apu_test` frame-counter probes | 10/10 |
-| blargg MMC3 (`mmc3_test_2`) | 5/6 strict, including `4-scanline_timing` (all 13 sub-tests) since v3.0.0; `6-MMC3_alt` tests the NEC revision, which the Sharp default is not, by design |
+| blargg MMC3 (`mmc3_test_2`) | 5/6 strict, `4-scanline_timing` included (all 13 sub-tests); `6-MMC3_alt` tests the NEC revision, which the Sharp default is not, by design |
 | `region_timing` | 4/4, including PAL's 3.2:1 ratio |
 | Holy Mapperel | every committed variant reports detail code `0000` |
-| Commercial-ROM oracle | 99 titles, SHA-256-pinned, byte-identical frames |
+| Commercial-ROM oracle | SHA-256-pinned dumps you supply, checked for byte-identical frames and audio |
 
-The last MMC3 interrupt-timing residual, `mmc3_test_2/4-scanline_timing`, closed
-in v3.0.0 (T-MMC3-BG-A12): every sub-test of the battery's MMC3 suite now passes
-except the deliberate other-revision case. Every remaining known approximation is
-listed, with its evidence, in [`docs/accuracy-ledger.md`](docs/accuracy-ledger.md),
-and the per-suite detail is in [`docs/STATUS.md`](docs/STATUS.md).
-
-When a document and a passing test ROM disagree, the ROM wins: that is this
-project's definition of cycle-accurate.
+[`docs/STATUS.md`](docs/STATUS.md) is the single source of truth for the
+per-suite counts; every remaining known approximation is listed, with its
+evidence, in [`docs/accuracy-ledger.md`](docs/accuracy-ledger.md). When a
+document and a passing test ROM disagree, the ROM wins: that is this project's
+definition of cycle-accurate.
 
 **Mapper tiers.** Of the 208 families, 181 are *accuracy-gated*: 51 Core and 130
 Curated, each backed by a test ROM, a commercial dump, or a precise register
 description with a synthetic fixture. The other 27 are *BestEffort*: their
 documentation is thin, and a CI gate keeps them out of every accuracy claim.
+[`docs/mappers.md`](docs/mappers.md) gives each family's tier and evidence.
 
 ---
 
@@ -367,9 +362,12 @@ detailed in [`docs/architecture.md`](docs/architecture.md) and
 | `rustynes-hdpack`, `rustynes-gfx-shaders` | HD packs and the shared WGSL shaders |
 | `rustynes-mobile`, `rustynes-android`, `rustynes-ios` | The mobile bridge and platform glue |
 | `rustynes-libretro` | The RetroArch core |
+| `rustynes-gamedb` | The per-game header-correction database |
 | `rustynes-mcp` | A Model Context Protocol server over the headless core (`rustynes-mcp`) |
 | `rustynes-dap` | A Debug Adapter Protocol server and GDB stub for cc65 / llvm-mos homebrew (`rustynes-dap`) |
+| `rustynes-probe` | Deterministic re-simulation: replay under a variation and find the first divergence |
 | `rustynes-test-harness` | Integration tests and the accuracy oracles |
+| `rustynes-cosim` | The co-simulation oracle for the MiSTer core (outside the workspace) |
 
 ---
 
@@ -392,33 +390,39 @@ detailed in [`docs/architecture.md`](docs/architecture.md) and
 
 ## Current release
 
-RustyNES's current release is **v3.7.0 "Spindle"** (2026-11-10) — the Famicom Disk System on the MiSTer core, spectators who join a match through the hosted relay, opt-in desync forensics, live ROM edits recorded as BPS patches, and the mobile extras. Built on **v3.6.2 "Latchkey"** (2026-11-06) — the latest AccuracyCoin, passed in full (147 of 147), and *Rad Racer*'s stray tiles at the right of the road and the horizon hidden by a switchable per-game correction that departs from hardware on purpose, raising the emulation epoch to 10. Built on **v3.6.1 "Threshold"** (2026-11-05) — every dependency at its newest compatible release in one change, the MMC5's background-fetch window ended where rendering ends in both cores, the MMC5 split's first two tiles taken from the right row, a TAStudio project bounded by its decoded size, and, on the MiSTer core, save states tied to their region and the MMC5 on PAL and Dendy. Built on **v3.6.0 "Octave"** (2026-10-28) — the noise channel plays at its documented pitch (about an octave higher than before, in every game that uses it; epoch 8), NSF files play again, the MiSTer core runs PAL and Dendy consoles at full speed, and a source-level homebrew debugger, audio stems, NSF ripping and libretro Core Options v2 arrive. Built on **v3.5.1 "Reprise"** (2026-10-23) — the MMC5's split-screen and extended-attribute CHR banks apply only while the PPU renders, in both cores, a key held while it is rebound is released, and devices and pipes are refused as files to open. Built on **v3.5.0 "Chorus"** (2026-10-22) — creator tools: movies record every input the core takes (.rnm format 7), Lua gains WebSockets and real shared memory, an MCP server, speedrun auto-timing and dump checks arrive, the MMC5 scanline IRQ is fixed (epoch 6), and the MiSTer core adds the MMC5, VRC6, Namco 163, VRC7 (silent) and Bandai FCG boards, off the die only. Built on **v3.4.2 "Countersign"** (2026-10-20) — the RetroArch core loads on Apple Silicon Macs again. Built on **v3.4.1 "Beacon"** (2026-10-19) — the hosted netplay lobby live with the browser and mobile builds pointing at it (the TURN relay deployed but held off: Cloudflare kept honouring expired and revoked credentials), the browser RetroAchievements build fixed (web RA held until RetroAchievements answers the integration request), version-named MiSTer release assets, and the MiSTer save engine's cartridge-change defects and v3.4.0's two build findings fixed. Built on **v3.4.0 "Waypoint"** (2026-10-18) — netplay authenticated and three and four players on the desktop, RetroAchievements hardcore held to RA's full block list, the hosted services shipped as code (deployed in v3.4.1), the window thread's CPU halved, and the MiSTer core's headline build made the off-die one, with save states, rewind and Phase F3a's boards. Built on **v3.3.0 "Plumbline"** (2026-10-16) — v3.2.0's leftovers settled and its claims re-measured: CHR-RAM writes go through the bank registers on seven boards, mapper 71 decodes its bank select as documented, v3.1.x Bandai states load again, a v3.2.0 performance figure is withdrawn, the IRQ trace goldens became a test, and, in simulation, the MiSTer core's off-die build reads CHR-RAM back and loads CHR correctly. Built on **v3.2.0 "Confluence"** (2026-10-15) — every v3.2.0 branch in both repositories brought into one release: 17 mapper families (208 in all), the VRC4 IRQ fix, an AI remediation branch audited change by change, netplay protocol 8, slim libretro states, and sixteen more boards on the MiSTer core. Built on **v3.1.0 "Bellwether"** (2026-10-08) — the AccuracyCoin re-sync and an honest 146/146, the CPU overclock and the sprite-limit option in movies and netplay, PAL emphasis, the alternate MMC3, rewind and run-ahead on the Vs. cabinet, and the MiSTer core matched to all of it. Built on **v3.0.1 "Mortar"** (2026-10-07) — a maintenance release: one game's graphics fixed, the MiSTer core's last MMC3 rule exception tested, Rust 1.99 everywhere, every unanswered bot review answered, and the plan to v4.0.0. Built on **v3.0.0 "Cornerstone"** (2026-10-06) — the API major: every break since v2.x in one place, a core timing epoch for movies and netplay, the last MMC3 timing gap closed in both cores, and a release-candidate MiSTer core. Built on **v2.9.9 "Ballast"** (2026-10-04) — the release candidate for v3.0.0: the audits re-run, MMC3 and MMC5 by their documentation, audio exact across save states, and the MiSTer core moved onto it. Built on **v2.9.8 "Vanguard"** (2026-10-02) — the preparation release for v3.0.0: v3.0.0's breaking changes landed early (a save identity that ignores the header, old states and movies refused, movies and netplay that record the machine, the API removals), every staged game was booted and the defects found were fixed, and the game database's corrections reach every platform. Built on **v2.9.7 "Tandem"** (2026-09-30) — the desktop's features on the web and on phones, the release binaries built with every native feature, and a PPU A12 fix found by real games: Acclaim's MC-ACC games, the J.Y. ASIC and mapper 91 now count at their documented rates. Built on **v2.9.6 "Roster"** (2026-09-30) — seventeen mapper families written from their NESdev pages (174 → 191), GTROM promoted to Curated with a modelled flash chip whose saves persist, mapper 4's NES 2.0 submappers corrected (MMC6, NEC, MC-ACC, T9552), and the local commercial suites re-baselined after drifting unread since about v2.0.0.
+RustyNES's current release is **v3.7.1 "Imprint"** (2026-11-15). What it
+changed is in [`CHANGELOG.md`](CHANGELOG.md), which lists every release back to
+v0.1.0, and in the [release notes](.github/release-notes/); the binaries are on
+the [Releases page](https://github.com/doublegate/RustyNES/releases).
 
-**v3.0.0 is the API major** ([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)).
-It gathers every breaking change since v2.x, most of them made early in v2.9.8 and
-v2.9.9, and adds the last: movies and netplay carry an emulation epoch
-([ADR 0045](docs/adr/0045-a-core-timing-epoch-guards-movies-and-netplay.md)), and
-four more public structs became `#[non_exhaustive]`. Its
-[release notes](.github/release-notes/v3.0.0.md) restate every break by audience.
-
-The per-release detail, back to v0.1.0, is in [`CHANGELOG.md`](CHANGELOG.md) and
-on the [Releases page](https://github.com/doublegate/RustyNES/releases).
+**Compatibility.** `.rnm` movies and netplay sessions carry the emulation
+epoch they were made under
+([ADR 0045](docs/adr/0045-a-core-timing-epoch-guards-movies-and-netplay.md)). A
+release that changes what the emulator produces raises it, and a movie or peer
+from a different epoch is refused with its reason rather than replayed wrong.
+Save states are not tied to the epoch; they carry their own format version,
+and a state a release can no longer read is refused, which its CHANGELOG entry
+says.
 
 ---
 
 ## Roadmap
 
-**v3.0.0 has shipped**: the API major with a release-candidate MiSTer core
-([ADR 0043](docs/adr/0043-v3-is-the-api-major-and-a-release-candidate-core.md)).
-Next is **v3.x, hardware verification**: the MiSTer core on a SuperStation One,
-the mobile apps on real devices, and the fixes each produces
-([`v3.x-hardware-verification-plan.md`](to-dos/plans/v3.x-hardware-verification-plan.md)).
-A change that alters what the emulator produces raises the emulation epoch, so
-v3.x releases that emulate identically still share movies and netplay.
+The plan is [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md), with one plan file per
+release in [`to-dos/plans/`](to-dos/plans/README.md), indexed by the
+[v3.1-to-v4.0 line plan](to-dos/plans/v3.1-to-v4.0-line-plan.md). In outline:
 
-The full plan is [`to-dos/ROADMAP.md`](to-dos/ROADMAP.md), with one plan per
-release in [`to-dos/plans/`](to-dos/plans/README.md). A free mobile store listing
-may follow later, with no monetization of any kind.
+- **v3.7.2:** the MiSTer core's open save-transfer issue and the deferred
+  timing runs.
+- **v3.8.0:** the residuals, and the rest of the console on the MiSTer core.
+- **v3.9.0:** the MiSTer RTL feature freeze and its release-candidate pair.
+- **The hardware release** (the last v3.9.x): the MiSTer core on a SuperStation
+  One and the mobile apps on real devices, with the fixes each produces
+  ([`v3.x-hardware-verification-plan.md`](to-dos/plans/v3.x-hardware-verification-plan.md)).
+- **v4.0.0:** the remaining public enums made `#[non_exhaustive]`, and MiSTer
+  feature parity.
+
+A free mobile store listing may follow, with no monetization of any kind.
 
 ---
 
@@ -431,14 +435,13 @@ ported to an FPGA: what can be built is a new implementation checked against thi
 one, cycle by cycle.
 
 Its co-simulation ladder covers the 6502, the bus and interrupts, the 2C02, the
-2A03, AccuracyCoin parity and twenty-one iNES mappers. Each release attaches a
-timing-closed bitstream pair; v3.3.0's (on-die and off-die, both at fitter seed 7,
-each compiled twice to the same bytes) is a **release candidate, not
-hardware-verified**. Its co-simulation ladder reads 260 passed, 0 failed, 3
-expected failures on-die and 263 / 0 / 3 off-die. **No hardware has run any
-bitstream yet**, so a booting core, a synced display, audible sound and a working
-pad are not claimed. The details, and what
-each rung can and cannot verify, are in [`docs/mister.md`](docs/mister.md).
+2A03, AccuracyCoin parity, the mappers it implements, save states and the
+Famicom Disk System. Each release attaches a timing-closed bitstream pair, an
+off-die build and an on-die "Lite" build, as a **release candidate, not
+hardware-verified**; the release notes give each pair's ladder result and
+timing margins. **No hardware has run any bitstream yet**, so a booting core, a
+synced display, audible sound and a working pad are not claimed. The details,
+and what each rung can and cannot verify, are in [`docs/mister.md`](docs/mister.md).
 
 <p align="center">
   <img src="screenshots/mister-montage.png" alt="Six commercial titles rendered by the MiSTer core's RTL under Verilator, each byte-identical to this emulator" width="800">
@@ -485,13 +488,17 @@ and [`docs/ai-emulator-provenance-guardrails.md`](docs/ai-emulator-provenance-gu
 Reference emulators are black-box oracles: their output may be compared, and their
 source is never read.
 
-Permissive components (emu2413, TriCNES, `rcheevos`, blip_buf and the bundled
-fonts) are credited in `NOTICE`. The test ROMs under `tests/roms/` are CC0, MIT,
+Permissive components (emu2413, TriCNES, `rcheevos`, blip_buf,
+`rust-libretro-sys`, `libretro.h`, Lua, ares and the bundled fonts) are credited
+in `NOTICE`. The test ROMs under `tests/roms/` are CC0, MIT,
 zlib or similarly permissive where their authors licensed them; blargg's and
 kevtris's suites and the ROMs mirrored from `christopherpow/nes-test-roms` state no
 licence and are redistributed as test material that the GPL does not cover
 ([`tests/roms/LICENSES.md`](tests/roms/LICENSES.md)). **No commercial ROMs are
 included**: dumps for the commercial-ROM oracle must come from cartridges you own.
+Screenshots of commercial games, including two images in this README, show
+their publishers' artwork, which the GPL does not cover and no licence here
+grants.
 
 The tree follows the [REUSE 3.3](https://reuse.software/spec-3.3/) specification:
 every file's copyright and licence are stated in its own SPDX header or in

@@ -1,0 +1,113 @@
+# Delete what preview deployments leave behind (2026-11-15).
+#
+# The Docs7 GitHub App deploys every pull request's branch to an environment
+# named "Docs7 Preview: <branch>", and GitHub Pages and the Copilot agent add
+# deployments of their own. GitHub never deletes an environment or a
+# deployment: a superseded deployment is only marked inactive, and an
+# environment, created the first time a deployment names it, stays forever. By
+# 2026-11-15 this repository held 668 deployments and 37 environments, 33 of
+# them previews of branches long merged and deleted.
+#
+# Two jobs, because they need different credentials:
+#
+# - `deployments` deletes every INACTIVE deployment except the newest one of each
+#   environment that still exists, plus every deployment whose environment is
+#   gone. It keeps each environment's newest SUCCESS deployment as well (the
+#   live one, while a newer one is in flight or after it failed) and never
+#   touches one in a transient state. It needs `deployments: write`, which
+#   GITHUB_TOKEN has.
+# - `environments` deletes a "Docs7 Preview: <branch>" environment once <branch>
+#   no longer exists and no open pull request has it as its head, and nothing
+#   else. Deleting an environment needs the repository's Administration
+#   permission (write), which GITHUB_TOKEN cannot be granted, so it uses
+#   ENV_CLEANUP_TOKEN: a fine-grained personal access token scoped to this
+#   repository with Administration: read and write. Without it the job says so
+#   and changes nothing.
+#
+# WHERE THE TOKEN LIVES. ENV_CLEANUP_TOKEN is a secret of the `preview-cleanup`
+# ENVIRONMENT, not a repository secret, and that environment's deployment branch
+# policy allows the default branch only. Then GitHub itself withholds the token
+# from a run on any other ref -- a branch whose copy of this file was edited and
+# dispatched by hand included -- whatever that copy says. The `if:` on each job
+# skips a run on another ref as well, before it starts. (Security review,
+# 2026-11-15: workflow_dispatch can run any branch's version of a workflow.) The
+# environment adds one deployment per run; the `deployments` job deletes all but
+# its newest.
+#
+# Every trigger runs this workflow as it is on the DEFAULT branch -- a branch
+# deletion, the schedule and a dispatch all do -- so no pull request's code ever
+# runs with the token. There is deliberately no `pull_request` trigger.
+name: Preview environment cleanup
+
+on:
+  # A merged pull request's branch is deleted, which is when its preview goes
+  # stale.
+  delete:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-env-cleanup
+  cancel-in-progress: false
+
+jobs:
+  deployments:
+    name: Delete inactive deployments
+    # After `environments`, so one run removes a stale preview's environment AND
+    # its deployments (listed before, the environment still existed and its
+    # newest deployment was kept until the next run), and so this sees the
+    # deployment that job's own `environment:` just created. `!cancelled()`: it
+    # runs when that job is skipped or fails too (Antigravity on #666), but not
+    # after a run is cancelled, which `always()` would still start it for.
+    needs: environments
+    if: >-
+      !cancelled()
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && (github.event_name != 'delete' || github.event.ref_type == 'branch')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      deployments: write
+      # `GET /repos/{repo}/environments` (prune-deployments.sh's list of live
+      # environments) is an Actions-read endpoint for GITHUB_TOKEN. Without it
+      # the listing is refused, the script fails closed, and the cleanup
+      # deletes nothing on every run (CodeRabbit on #666).
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Delete inactive deployments
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/ci/prune-deployments.sh "$GITHUB_REPOSITORY" --apply
+
+  environments:
+    name: Delete stale preview environments
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+      && (github.event_name != 'delete' || github.event.ref_type == 'branch')
+    # The token is this environment's secret; its branch policy is main only.
+    environment: preview-cleanup
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Delete stale preview environments
+        env:
+          GH_TOKEN: ${{ secrets.ENV_CLEANUP_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            msg="ENV_CLEANUP_TOKEN is not set in the preview-cleanup environment: no environment was deleted. Add a fine-grained token scoped to this repository with Administration: read and write as that environment's secret, with the environment limited to the default branch (see this workflow's header)."
+            echo "::warning::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          scripts/ci/prune-preview-environments.sh "$GITHUB_REPOSITORY" --apply
