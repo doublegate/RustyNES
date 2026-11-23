@@ -1227,7 +1227,7 @@ jobs:
           toolchain: nightly
           apt: "false"
           cache-key: fuzz
-      - uses: taiki-e/install-action@v2.90.3
+      - uses: taiki-e/install-action@v2.90.6
         with:
           tool: cargo-fuzz
       - name: Build and run every fuzz target
@@ -1291,7 +1291,7 @@ jobs:
         with:
           components: llvm-tools-preview
           cache-key: coverage
-      - uses: taiki-e/install-action@v2.90.3
+      - uses: taiki-e/install-action@v2.90.6
         with:
           tool: cargo-llvm-cov
       - run: cargo llvm-cov --workspace --lib --summary-only --fail-under-lines 70
