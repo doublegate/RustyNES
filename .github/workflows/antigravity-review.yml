@@ -97,17 +97,30 @@ jobs:
           # needs on demand, so a full history clone would be paid on every run for a path
           # most runs never take.
           fetch-depth: 1
-          # No checkout should persist credentials: agy executes with the repo as its
-          # workspace, so a token left in .git/config would be reachable by anything the
-          # review runs. The large-diff fallback still performs an authenticated fetch, but
+          # No checkout should persist credentials: a token left in .git/config would be
+          # readable by anything that can read the checkout. (agy itself now runs from a
+          # private sandbox outside it, with no job credentials in its environment.) The large-diff fallback still performs an authenticated fetch, but
           # supplies the token per command via `http.extraheader` rather than persisting it.
           persist-credentials: false
 
-      # The template's first-install BOOTSTRAP steps are deliberately omitted here: the reviewer
-      # is already on this repository's default branch, so they could never fire, and their
-      # PR-head checkout trips CodeQL's actions/untrusted-checkout (high) on every scan.
-      # Re-add them only for a repository that has never had the reviewer on its default branch.
+      # The template's first-install BOOTSTRAP steps are deliberately omitted: the reviewer is
+      # already on this repository's default branch, so they could never fire, and their
+      # PR-head checkout trips CodeQL's actions/untrusted-checkout (high). Re-add them only for
+      # a repository that has never had the reviewer on its default branch.
+      # If the default branch has no reviewer (it was removed, or a fresh install), report it as a visible
+      # warning and skip, rather than a red check that only means "not installed yet". Only the
+      # absence of the script is tolerated; any failure inside it is not.
+      - name: Check the reviewer is present
+        id: reviewer
+        run: |
+          if [ -f scripts/agy-review.sh ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Antigravity review skipped::scripts/agy-review.sh is not on the default branch yet, so this PR cannot be reviewed. Reviews run once the reviewer is merged."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Run Antigravity review
+        if: steps.reviewer.outputs.present == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # --- optional overrides (uncomment to change) ---
@@ -116,7 +129,7 @@ jobs:
           # A large diff goes to agy as a file, and reading it at high effort costs 6-8
           # minutes almost whatever its size (1.15 MB: 465 s; 426 KB timed out three times at
           # 397 s under the old 240 s/MiB scaling). The scaling is now 900 s/MiB (the
-          # script's AGY_TIMEOUT_SECONDS_PER_MIB), so 900 s here is reached from ~650 KB.
+          # script's AGY_TIMEOUT_SECONDS_PER_MIB), so with the 10m base 900 s here is reached from ~340 KB.
           AGY_PRINT_TIMEOUT_MAX_SECONDS: "900"  # per-attempt cap (default 1800)
           # Also set here, not only as the script's default: a pull_request run takes
           # this file from the PR branch but the script from the default branch, so a
