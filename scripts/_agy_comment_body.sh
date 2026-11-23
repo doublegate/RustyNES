@@ -98,11 +98,16 @@ agy_body_archive() {
 # count restarted at 0 every run -- so a later round that dropped nothing erased the disclosure
 # (agy review of Rusty2600 #53). Only that one region is searched, so a note quoted inside a
 # round's review text is never mistaken for the real one.
+# Bodies written before the note moved out of the sentinels carry it INSIDE, between START and the
+# first round mark (the preamble agy_body_archive discards). When the current location has none,
+# that legacy preamble is read too -- up to the first round mark only, so a note quoted inside a
+# round's text is still never counted -- or a migrated comment would lose its disclosure.
 agy_body_dropped_count() {
-  awk -v sec="$AGY_ARCHIVE_SECTION" -v s="$AGY_ARCHIVE_START" '
+  awk -v sec="$AGY_ARCHIVE_SECTION" -v s="$AGY_ARCHIVE_START" -v r="$AGY_ROUND_MARK" '
     $0 == sec { between = 1; next }
-    $0 == s   { exit }
-    between && match($0, /^<sub>[0-9]+ earlier round\(s\) dropped/) {
+    $0 == s   { between = 0; pre = 1; next }
+    pre && $0 == r { exit }
+    (between || pre) && match($0, /^<sub>[0-9]+ earlier round\(s\) dropped/) {
       n = substr($0, 6); sub(/[^0-9].*$/, "", n); print n + 0; found = 1; exit
     }
     END { if (!found) print 0 }'

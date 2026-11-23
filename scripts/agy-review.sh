@@ -261,7 +261,7 @@ agy_redact_credentials() {
         groups="${core//[^(]/}"; n=$(( 2 + ${#groups} ))
         buf="$(sed -E "s#${lead:-()}${core}${trail:-()}#\\1[REDACTED: ${kind}]\\${n}#g" "$f" && printf x)" || return 1
       fi
-      printf '%s' "${buf%x}" > "$f"
+      printf '%s' "${buf%x}" > "$f" || return 1   # a failed rewrite must stop the post, not pass a truncated file
     done < <(agy_credential_patterns)
     : "$pass"
   done
@@ -550,23 +550,24 @@ cleanup() {
       [ -n "$f" ] && doomed+=("$f")
     done
   fi
-  [ ${#doomed[@]} -gt 0 ] && rm -f -- "${doomed[@]}"
-  # agy's private working directory (see `agy_sandbox` below). It is this run's own `mktemp -d`,
-  # outside the checkout, so removing it whole cannot touch anything else. Kept on dry run (it holds
-  # the handed-off diff that dry run exists to expose).
-  if [ -n "${agy_sandbox:-}" ] && [ -d "$agy_sandbox" ] \
-     && { [ -z "$keep_set" ] || [ -z "${agy_diff_file:-}" ]; }; then
-    rm -rf -- "$agy_sandbox"   # an inline dry run has nothing in it to keep
-  fi
   # `|| true`: under set -e a failed kill (the proxy already exited) would otherwise end this trap
-  # before the jail home and runtime dirs below are removed.
+  # before anything below is removed. They are stopped FIRST, so a removal that fails (a
+  # non-writable leftover on a hand run) can never leave a proxy running.
   [ -n "${agy_proxy_pid:-}" ] && { kill "$agy_proxy_pid" 2>/dev/null || true; }
   [ -n "${agy_egress_pid:-}" ] && { kill "$agy_egress_pid" 2>/dev/null || true; }
   # Reap them before their runtime dir goes, so no in-flight log write races the removal.
   [ -n "${agy_proxy_pid:-}" ] && { wait "$agy_proxy_pid" 2>/dev/null || true; }
   [ -n "${agy_egress_pid:-}" ] && { wait "$agy_egress_pid" 2>/dev/null || true; }
-  [ -n "${agy_jail_home:-}" ] && [ -d "$agy_jail_home" ] && rm -rf -- "$agy_jail_home"
-  [ -n "${agy_jail_rt:-}" ] && [ -d "$agy_jail_rt" ] && rm -rf -- "$agy_jail_rt"
+  [ ${#doomed[@]} -gt 0 ] && { rm -f -- "${doomed[@]}" || true; }
+  # agy's private working directory (see `agy_sandbox` below). It is this run's own `mktemp -d`,
+  # outside the checkout, so removing it whole cannot touch anything else. Kept on dry run (it holds
+  # the handed-off diff that dry run exists to expose).
+  if [ -n "${agy_sandbox:-}" ] && [ -d "$agy_sandbox" ] \
+     && { [ -z "$keep_set" ] || [ -z "${agy_diff_file:-}" ]; }; then
+    rm -rf -- "$agy_sandbox" || true   # an inline dry run has nothing in it to keep
+  fi
+  [ -n "${agy_jail_home:-}" ] && [ -d "$agy_jail_home" ] && { rm -rf -- "$agy_jail_home" || true; }
+  [ -n "${agy_jail_rt:-}" ] && [ -d "$agy_jail_rt" ] && { rm -rf -- "$agy_jail_rt" || true; }
   if [ -n "${agy_refs_created:-}" ] && [ -n "${PR:-}" ]; then
     # Hooks and fsmonitor disabled: these git calls run after agy, with the job token in the
     # environment, so they must not execute anything a compromised checkout could have planted.

@@ -225,6 +225,11 @@ check "a body without a dropped note reads as 0" "0" \
 check "a dropped note quoted inside a ROUND is not counted" "0" \
   "$(printf '%s\n%s\n%s\n<sub>9 earlier round(s) dropped to stay under GitHub'"'"'s comment size limit.</sub>\n%s\n' \
        "$MARKER" "$AGY_ARCHIVE_START" "$AGY_ROUND_MARK" "$AGY_ARCHIVE_END" | agy_body_dropped_count)"
+# Round 14 (CodeRabbit on RustyNES #671): a legacy body kept the note INSIDE the sentinels, ahead
+# of the first round mark; that count must carry forward too.
+check "a legacy dropped note inside START, before the first round, is read back" "4" \
+  "$(printf '%s\nNEW\n%s\n%s\n<sub>4 earlier round(s) dropped to stay under GitHub'"'"'s comment size limit.</sub>\n%s\nR\n%s\n' \
+       "$MARKER" "$AGY_ARCHIVE_SECTION" "$AGY_ARCHIVE_START" "$AGY_ROUND_MARK" "$AGY_ARCHIVE_END" | agy_body_dropped_count)"
 check "the assembled comment carries the cumulative dropped total" "yes" \
   "$(grep -q 'prior_dropped' "$SCRIPT_DIR/agy-review.sh" && grep -q 'dropped + prior_dropped\|prior_dropped + dropped' "$SCRIPT_DIR/agy-review.sh" && echo yes || echo no)"
 check "a pre-migration wrapper and its stray close are still removed" "$clean_quote" \
@@ -1055,6 +1060,15 @@ stop_line="$(grep -n '^for _pp in "\${agy_egress_pid:-}" "\${agy_proxy_pid:-}"; 
 sum_line="$(grep -n '^# Egress summary: verdict COUNTS only' "$SCRIPT" | head -1 | cut -d: -f1 || true)"
 check "both proxies are stopped once agy is done, before the egress summary" "yes" \
   "$([ -n "$stop_line" ] && [ -n "$sum_line" ] && [ "$stop_line" -lt "$sum_line" ] && echo yes || echo no)"
+cl_src="$(sed -n '/^cleanup() {/,/^}/p' "$SCRIPT" | grep -v '^ *#')"   # code lines only
+cl_kill="$(grep -n 'kill "\$agy_proxy_pid"' <<<"$cl_src" | head -1 | cut -d: -f1 || true)"
+cl_rm="$(grep -nE '\brm -(f|rf) ' <<<"$cl_src" | head -1 | cut -d: -f1 || true)"
+check "cleanup stops the proxies before any removal" "yes" \
+  "$([ -n "$cl_kill" ] && [ -n "$cl_rm" ] && [ "$cl_kill" -lt "$cl_rm" ] && echo yes || echo no)"
+check "no removal in cleanup can abort the trap" "0" \
+  "$(grep -E '\brm -(f|rf) ' <<<"$cl_src" | grep -cv '|| true' || true)"
+check "a failed redaction rewrite returns failure" "1" \
+  "$(grep -c "printf '%s' \"\\\${buf%x}\" > \"\\\$f\" || return 1" "$SCRIPT")"
 check "cleanup ignores a failed kill of either proxy (set -e safe)" "2" \
   "$(grep -cE '^  \[ -n "\$\{agy_(proxy|egress)_pid:-\}" \] && \{ kill "\$agy_(proxy|egress)_pid" 2>/dev/null \|\| true; \}$' "$SCRIPT")"
 # Round-4 review fixes.
@@ -1191,7 +1205,7 @@ check "the allowlist function was found in agy-review.sh" "yes" "$([ -n "$env_fn
 env_out="$(
   export GH_TOKEN=x GITHUB_TOKEN=x ACTIONS_RUNTIME_TOKEN=x ACTIONS_ID_TOKEN_REQUEST_TOKEN=x \
          RUNNER_TEMP=/t NPM_TOKEN=x DATABASE_URL='postgres://u:pw@h/db' SOME_SETTING=x \
-         HOME=/home/u PATH=/usr/bin DBUS_SESSION_BUS_ADDRESS=unix:path=/b XDG_RUNTIME_DIR=/run/u \
+         HOME=/home/runner PATH=/usr/bin DBUS_SESSION_BUS_ADDRESS=unix:path=/b XDG_RUNTIME_DIR=/run/u \
          EXTRA_OK=1 AGY_ENV_PASSTHROUGH='BAD=NAME 1 1FOO * ../x EXTRA_OK'
   eval "$env_fn"
   args=( env )

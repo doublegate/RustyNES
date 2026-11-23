@@ -257,9 +257,11 @@ yours to accept:
   `scripts/agy-review.sh`, which asks the permissions API for the commenter and
   fails closed; the script also re-checks that the PR is not from a fork, because
   the `issue_comment` payload has no head-repo field for the `if:` to gate on.
-- **First-install bootstrap:** as shipped, on a repository whose default branch
-  has no reviewer yet, the workflow runs the PR head's scripts once, only for a
-  same-repo branch whose author has write access *at run time*. Remove the
+- **First-install bootstrap (the template's workflow only):** as shipped in the
+  template, on a repository whose default branch has no reviewer yet, the
+  workflow runs the PR head's scripts once, only for a same-repo branch whose
+  author has write access *at run time*. A vendored copy without those steps
+  never runs the PR branch's scripts, for any author. Remove the
   bootstrap steps once the reviewer is on the default branch (they also trip
   CodeQL's `actions/untrusted-checkout`); most repositories carrying this
   reviewer have done so. Without them, a PR opened while the default branch has
