@@ -518,7 +518,7 @@ dependencies {
     // 2025.09.01" and close "Bumped from 2024.12.01" while the line below read
     // 2026.08.00 — three versions in a comment whose only job is to explain the
     // one on the next line. A comment that duplicates a pin drifts from it.
-    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
+    val composeBom = platform("androidx.compose:compose-bom:2026.11.01")
     implementation(composeBom)
     implementation("androidx.core:core-ktx:1.19.1")
     // v1.8.8 "Atlas" (Workstream B): per-app language. AppCompat 1.6.0+ supplies the
